@@ -24,6 +24,7 @@ export const engineNames: Record<string, string> = {
   'sdwebui': 'Stable Diffusion web UI',
   'soniox': 'Soniox',
   'speechmatics': 'Speechmatics',
+  'venice': 'Venice',
   'whisper': 'Whisper',
   'xai': 'xAI',
 }

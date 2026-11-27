@@ -403,6 +403,10 @@ declare global {
         getAppInfo(filepath: string): ExternalApp
         save(opts: FileSaveParams): string
         download(opts: FileDownloadParams): string
+        mediaOpen(workspaceId: string): Promise<string>
+        mediaAppend(id: string, chunk: Uint8Array): Promise<void>
+        mediaFinish(id: string): Promise<string>
+        mediaAbort(id: string): Promise<void>
         write(filePath: string, content: string): boolean
         delete(filepath: string): boolean
         find(name: string): string

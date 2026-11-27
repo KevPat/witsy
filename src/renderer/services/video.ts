@@ -6,7 +6,10 @@ import Replicate, { FileOutput } from 'replicate'
 import { anyDict, MediaCreationEngine, MediaCreator, MediaReference } from 'types/index'
 import { download, saveFileContents } from './download'
 import { engineNames } from './llms/base'
+import { createIpcMediaSink } from './media_sink'
 import { store } from './store'
+import { VeniceVideoModelMeta } from './venice'
+import { generateVeniceVideo, VeniceVideoError } from './venice_video'
 
 // Type definitions for OpenAI Video API
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -45,6 +48,9 @@ export default class VideoCreator implements MediaCreator {
     if (!checkApiKey || store.config.engines.falai.apiKey) {
       engines.push({ id: 'falai', name: engineNames.falai })
     }
+    if (!checkApiKey || store.config.engines.venice?.apiKey) {
+      engines.push({ id: 'venice', name: engineNames.venice })
+    }
     return engines
   }
 
@@ -63,9 +69,18 @@ export default class VideoCreator implements MediaCreator {
       return this.openai(model, parameters, reference)
     } else if (engine == 'xai') {
       return this.xai(model, parameters, reference)
+    } else if (engine == 'venice') {
+      return this.venice(model, parameters, reference)
     } else {
       throw new Error('Unsupported engine')
     }
+  }
+
+  private activeAbort: AbortController | null = null
+
+  cancel(): void {
+    this.activeAbort?.abort()
+    this.activeAbort = null
   }
 
   async replicate(model: string, parameters: anyDict): Promise<any> {
@@ -442,6 +457,68 @@ export default class VideoCreator implements MediaCreator {
   //
   //   return { url: fileUrl }
   // }
+
+  async venice(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+
+    const apiKey = store.config.engines.venice?.apiKey || ''
+    const controller = new AbortController()
+    this.activeAbort = controller
+    const sink = createIpcMediaSink(store.config.workspaceId)
+    const meta = this.veniceModelMeta(model)
+    const imageRequired = meta?.modelType === 'image-to-video' || (!meta && model.includes('image-to-video'))
+
+    try {
+      console.log(`[venice] creating video with model ${model}`)
+      const url = await generateVeniceVideo({
+        apiKey,
+        model,
+        prompt: parameters?.prompt || '',
+        duration: parameters?.duration,
+        resolution: parameters?.resolution,
+        aspectRatio: parameters?.aspect_ratio,
+        durations: meta?.durations,
+        resolutions: meta?.resolutions,
+        aspectRatios: meta?.aspectRatios,
+        promptCharacterLimit: meta?.promptCharacterLimit,
+        imageRequired,
+        imageDataUrl: imageRequired ? this.veniceImageDataUrl(reference) : undefined,
+      }, {
+        sink,
+        signal: controller.signal,
+      })
+      return { url }
+    } catch (error) {
+      try {
+        await sink.abort()
+      } catch {
+        // The partial file may already be closed.
+      }
+      if (error instanceof VeniceVideoError && error.code === 'cancelled') {
+        return { cancelled: true, error: 'cancelled' }
+      }
+      console.error('[venice] video generation failed')
+      const message = error instanceof Error ? error.message : 'Video generation failed with Venice'
+      return { error: message || 'Video generation failed with Venice' }
+    } finally {
+      if (this.activeAbort === controller) this.activeAbort = null
+    }
+  }
+
+  private veniceModelMeta(model: string): VeniceVideoModelMeta | undefined {
+    const engine = store.config.engines.venice
+    const lists = [
+      ...(engine?.models?.video || []),
+      ...(engine?.models?.videoEdit || []),
+    ]
+    const found = lists.find((item) => item.id === model) as unknown as { meta?: VeniceVideoModelMeta } | undefined
+    return found?.meta
+  }
+
+  private veniceImageDataUrl(reference?: MediaReference[]): string | undefined {
+    const image = reference?.find((item) => item?.mimeType?.startsWith('image/') && item.contents)
+    if (!image) return undefined
+    return `data:${image.mimeType};base64,${image.contents}`
+  }
 
   async blobToBase64(blob: Blob): Promise<string>{
     return new Promise((resolve, reject) => {

@@ -60,6 +60,10 @@ export const FILE = {
   WRITE_FILE: 'write-file',
   NORMALIZE_PATH: 'normalize-path',
   OPEN_IN_EXPLORER: 'open-in-explorer',
+  MEDIA_OPEN: 'media-open',
+  MEDIA_APPEND: 'media-append',
+  MEDIA_FINISH: 'media-finish',
+  MEDIA_ABORT: 'media-abort',
 } as const;
 
 export const CONFIG = {
