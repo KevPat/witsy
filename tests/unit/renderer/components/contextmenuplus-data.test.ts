@@ -181,6 +181,24 @@ describe('ContextMenuPlus - Data-Driven Mode', () => {
     expect(clicked).toBe(true)
   })
 
+  // Regression guard for the swapped document keydown/keyup handlers.
+  it.fails('navigates on document keydown when focus is outside the menu', async () => {
+    const items: MenuItem[] = [
+      { id: 'item1', label: 'First Item', onClick: () => {} },
+      { id: 'item2', label: 'Second Item', onClick: () => {} },
+    ]
+
+    wrapper = await mountMenu(items)
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+    }))
+    await nextTick()
+
+    const firstItem = document.querySelector('.context-menu .item')
+    expect(firstItem?.classList.contains('selected')).toBe(true)
+  })
+
   it('renders footer items for submenus', async () => {
     const items: MenuItem[] = [
       {

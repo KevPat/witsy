@@ -207,6 +207,35 @@ test('History', async () => {
     
 })
 
+// Regression guard for the same key event being handled by both the component
+// root and the document listener.
+test.fails('History arrow navigation advances one item per keydown', async () => {
+  const mediaChat = store.history.chats.find(chat => chat.uuid === kMediaChatId)!
+  mediaChat.messages.push(Message.fromJson({
+    uuid: '3',
+    role: 'user',
+    type: 'image',
+    createdAt: 3,
+    content: 'prompt3',
+    engine: 'replicate',
+    model: 'replicate1',
+    attachment: new Attachment('', 'image/jpeg', 'file://url3.jpg')
+  }))
+
+  const wrapper = mount(DesignStudio, { attachTo: document.body })
+  await wrapper.find('.button-group button:nth-child(2)').trigger('click')
+  const history = wrapper.findComponent({ name: 'History' })
+  await history.find('.message:nth-child(1)').trigger('click')
+  expect(wrapper.vm.selection[0].uuid).toBe('3')
+
+  history.find('.message:nth-child(1)').element.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'ArrowDown',
+    bubbles: true,
+  }))
+  await wrapper.vm.$nextTick()
+  expect(wrapper.vm.selection[0].uuid).toBe('2')
+})
+
 test('Generates - Basic', async () => {
 
   const wrapper: VueWrapper<any> = mount(DesignStudio)
