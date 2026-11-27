@@ -48,3 +48,121 @@ jobs:
           logoColor: rgb(255, 255, 255)
           color: rgb(51, 203, 85)
           namedLogo: vitest
+
+  package-windows-x64:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Github checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Dependencies
+        run: npm ci
+        env:
+          PREBUILDS_ONLY: "1"
+      # Same certificate as the signed v3.5.2 Setup.exe: CN=Kochava Inc.,
+      # SHA1 5DABFFF2455B1937D25EA3B51CFC8E5EC508CAFC.
+      # build-win32-x64.yml loads it with smctl. forge.config.ts signWithParams
+      # and build/sign_binaries.ts signWindowsBinaries then use
+      # SM_CODE_SIGNING_CERT_SHA1_HASH. The private key is not in this repo.
+      - name: Check DigiCert signing secrets
+        id: signing
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        shell: bash
+        run: |
+          missing=0
+          for name in SM_HOST SM_API_KEY SM_CLIENT_CERT_PASSWORD SM_CODE_SIGNING_CERT_SHA1_HASH SM_CLIENT_CERT_FILE_B64; do
+            if [ -z "${!name}" ]; then
+              echo "Signing secret not set: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "DigiCert certificate is not configured. The Windows package will be unsigned."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup DigiCert Code Signing Tools
+        id: digicert
+        if: steps.signing.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: digicert/ssm-code-signing@v1.0.0
+      - name: Setup Certificate
+        id: certfile
+        if: steps.signing.outputs.enabled == 'true' && steps.digicert.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+      - name: Set DigiCert Environment Variables
+        if: steps.signing.outputs.enabled == 'true' && steps.certfile.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV"
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV"
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV"
+      - name: Sync Certificates
+        id: certsync
+        if: steps.signing.outputs.enabled == 'true' && steps.certfile.outcome == 'success'
+        continue-on-error: true
+        run: smctl windows certsync
+        shell: cmd
+      - name: Enable installer signing
+        if: steps.certsync.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" >> "$GITHUB_ENV"
+          echo "WINDOWS_CODE_SIGNED=true" >> "$GITHUB_ENV"
+      - name: Build Windows package
+        run: ./build/build.ps1
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+      - name: Mark unsigned packages
+        if: env.WINDOWS_CODE_SIGNED != 'true'
+        shell: pwsh
+        run: |
+          $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
+          if ($arch -eq 'amd64') { $arch = 'x64' }
+          $dirs = @(
+            "out/make/squirrel.windows/$arch",
+            "out/make/zip/win32/$arch"
+          )
+          foreach ($dir in $dirs) {
+            if (-not (Test-Path $dir)) { continue }
+            Get-ChildItem $dir -File | Where-Object { $_.Extension -in '.exe', '.nupkg', '.zip' } | ForEach-Object {
+              if ($_.Name -match '-unsigned(\.|$)') { return }
+              if ($_.Name -like '*.Setup.exe') {
+                $newName = $_.Name -replace '\.Setup\.exe$', '-unsigned.Setup.exe'
+              } elseif ($_.Name -like '*-full.nupkg') {
+                $newName = $_.Name -replace '-full\.nupkg$', '-full-unsigned.nupkg'
+              } else {
+                $newName = $_.BaseName + '-unsigned' + $_.Extension
+              }
+              Rename-Item $_.FullName $newName
+              Write-Host "Renamed $($_.Name) -> $newName"
+            }
+          }
+          $releases = "out/make/squirrel.windows/$arch/RELEASES"
+          if (Test-Path $releases) {
+            (Get-Content $releases -Raw) -replace '-full\.nupkg', '-full-unsigned.nupkg' | Set-Content $releases -NoNewline
+          }
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: witsy-win32-x64
+          if-no-files-found: error
+          path: |
+            out/make/squirrel.windows/x64/*.exe
+            out/make/squirrel.windows/x64/*.nupkg
+            out/make/squirrel.windows/x64/RELEASES
+            out/make/zip/win32/x64/*.zip

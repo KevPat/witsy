@@ -11,7 +11,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { execSync } from 'child_process';
 import prePackage from './build/prepackage';
 import { purgeAutolib, purgeLibnut, purgeOnnxRuntime } from './build/purge_native';
-import { signDarwinBinaries } from './build/sign_binaries';
+import { signDarwinBinaries, signWindowsBinaries } from './build/sign_binaries';
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -92,11 +92,10 @@ const config: ForgeConfig = {
             signDarwinBinaries(buildPath, arch);
           }
 
-          // Sign Windows binaries (for ZIP distribution)
-          // NOT STABLE YET
-          // if (platform === 'win32') {
-          //   signWindowsBinaries(buildPath, arch);
-          // }
+          // Sign Windows binaries before the zip and the Squirrel installer are built.
+          if (platform === 'win32') {
+            signWindowsBinaries(buildPath, arch);
+          }
 
           callback();
         } catch (error: any) {
