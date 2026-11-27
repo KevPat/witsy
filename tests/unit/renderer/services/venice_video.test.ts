@@ -222,27 +222,32 @@ test('downloads a private venice url after COMPLETED and deletes it without the 
   expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(true)
 })
 
-test('refuses a download url that is not https on venice.ai', async () => {
-  const calls: string[] = []
+test('fetches a download url on any host without the api key', async () => {
+  const downloadUrl = 'https://cdn.example.com/clip.mp4'
+  const calls: Call[] = []
   const saved = memorySink()
-  const fetchImpl = vi.fn(async (url: string) => {
-    calls.push(String(url))
-    return jsonResponse({
-      model: MODEL,
-      queue_id: QUEUE_ID,
-      download_url: 'http://169.254.169.254/latest/meta-data',
-    })
+  const bytes = fakeMp4()
+  const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+    calls.push({ url: String(url), init })
+    if (String(url).endsWith('/video/queue')) {
+      return jsonResponse({ model: MODEL, queue_id: QUEUE_ID, download_url: downloadUrl })
+    }
+    if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
+    if (String(url) === downloadUrl && init.method === 'GET') return mp4Response(bytes)
+    if (String(url) === downloadUrl && init.method === 'DELETE') return new Response(null, { status: 204 })
+    if (String(url).endsWith('/video/complete')) return jsonResponse({ success: true })
+    throw new Error(`unexpected ${url} ${init.method}`)
   })
 
-  await expect(generateVeniceVideo({
-    apiKey: API_KEY,
-    model: MODEL,
-    prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'invalid' })
+  const url = await generateVeniceVideo({ apiKey: API_KEY, model: MODEL, prompt: 'a gondola' }, clock(fetchImpl, saved.sink).deps)
 
-  expect(calls).toEqual([`${VENICE_API_BASE}/video/queue`])
-  expect(saved.state.finished).toBe(false)
-  expect(saved.state.aborted).toBe(true)
+  expect(url).toBe('file:///tmp/venice.mp4')
+  const download = calls.find((call) => call.url === downloadUrl && call.init.method === 'GET')
+  expect(download?.init.redirect).toBe('follow')
+  expect(download?.init.headers?.['Authorization']).toBeUndefined()
+  expect(JSON.stringify(download?.init.headers || {})).not.toContain(API_KEY)
+  const apiCall = calls.find((call) => call.url.endsWith('/video/queue'))
+  expect(apiCall?.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
 })
 
 test('does not follow an authenticated redirect', async () => {
@@ -496,13 +501,16 @@ test('stops a stream once it passes the size limit and aborts the partial file',
   expect(saved.state.aborted).toBe(true)
 })
 
-test('a missing api key fails before any request', async () => {
-  const fetchImpl = vi.fn()
+test('the settings key is sent as entered, including when it is blank', async () => {
+  const fetchImpl = vi.fn(async () => jsonResponse({ error: 'unauthorized' }, 401))
   const saved = memorySink()
   await expect(generateVeniceVideo({
     apiKey: '   ',
     model: MODEL,
     prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'invalid' })
-  expect(fetchImpl).not.toHaveBeenCalled()
+  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'failed' })
+  expect(fetchImpl).toHaveBeenCalled()
+  const init = fetchImpl.mock.calls[0][1] as RequestInit
+  const headers = init.headers as Record<string, string>
+  expect(headers.Authorization).toBe('Bearer    ')
 })

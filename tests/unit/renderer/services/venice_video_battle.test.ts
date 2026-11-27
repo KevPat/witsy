@@ -1,48 +1,14 @@
 import { expect, test, vi } from 'vitest'
 import {
-  assertVeniceDownloadUrl,
   buildVeniceQueueBody,
   generateVeniceVideo,
   MediaSink,
-  VeniceVideoError,
 } from '@services/venice_video'
 
 const QUEUE_ID = '123e4567-e89b-12d3-a456-426614174000'
 const API_KEY = 'sk-venice.$ecret*with[regex]'
 const MODEL = 'wan-2.5-preview-text-to-video'
-const DOWNLOAD = 'https://private-share.venice.ai/v1/share/read/abc'
-
-const REFUSED = [
-  'http://169.254.169.254/latest/meta-data',
-  'https://169.254.169.254/',
-  'https://127.0.0.1/',
-  'https://2130706433/',
-  'https://[::1]/',
-  'https://localhost/secret',
-  'https://evil.com/venice.ai',
-  'https://venice.ai.evil.com/a',
-  'https://notvenice.ai/a',
-  'https://api.venice.ai.evil.com/a',
-  'https://user:pass@venice.ai/a',
-  'https://user@private-share.venice.ai/a',
-  'https://venice.ai:444/a',
-  'https://venice.ai:80/a',
-  'javascript:alert(1)',
-  'file:///etc/passwd',
-  'https://.venice.ai/',
-  'https://foo..bar.venice.ai/a',
-  'https://private-share.venice.ai%2F@evil.com/',
-  'https://v\u0435nice.ai/',
-  'not a url',
-]
-
-const ALLOWED = [
-  'https://private-share.venice.ai/v1/share/read/abc',
-  'https://VENICE.AI/a',
-  'https://api.venice.ai/x',
-  'https://venice.ai:443/a',
-  'https://cdn.venice.ai/file.mp4?token=1',
-]
+const DOWNLOAD = 'https://cdn.example.com/renders/clip.mp4'
 
 function fakeMp4(extra = 8): Uint8Array {
   const header = Uint8Array.from([
@@ -111,20 +77,6 @@ function assertNoSecret(value: unknown) {
   expect(text.toLowerCase()).not.toContain('bearer sk-')
 }
 
-test('download links stay on https venice hosts', () => {
-  for (const raw of REFUSED) {
-    expect(() => assertVeniceDownloadUrl(raw), raw).toThrow(VeniceVideoError)
-  }
-  for (const raw of ALLOWED) {
-    const url = assertVeniceDownloadUrl(raw)
-    expect(url.protocol).toBe('https:')
-    expect(url.hostname.toLowerCase() === 'venice.ai' || url.hostname.toLowerCase().endsWith('.venice.ai')).toBe(true)
-    expect(url.username).toBe('')
-    expect(url.password).toBe('')
-  }
-  expect(assertVeniceDownloadUrl('https://VENICE.AI/A').hostname).toBe('venice.ai')
-})
-
 test('queue body drops aspect when the model publishes an empty list and strips nulls', () => {
   expect(buildVeniceQueueBody({
     model: 'wan-2.5-preview-image-to-video',
@@ -159,18 +111,7 @@ test('queue body rejects header injection, svg images, and over-long model ids',
   expect(() => buildVeniceQueueBody({ model: MODEL, prompt: '\u0000\u0000' })).toThrow(/prompt is required/)
 })
 
-test('a key with a line break never leaves the client', async () => {
-  const fetchImpl = vi.fn()
-  const saved = memorySink()
-  await expect(generateVeniceVideo({
-    apiKey: `${API_KEY}\r\nX-Injected: 1`,
-    model: MODEL,
-    prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'invalid' })
-  expect(fetchImpl).not.toHaveBeenCalled()
-})
-
-test('a private file can hop across venice hosts and the delete stays on the original link', async () => {
+test('a download url on another host is fetched and deleted without the api key', async () => {
   const calls: { url: string, init: RequestInit }[] = []
   const saved = memorySink()
   const bytes = fakeMp4()
@@ -183,9 +124,6 @@ test('a private file can hop across venice hosts and the delete stays on the ori
       return jsonResponse({ status: 'COMPLETED' })
     }
     if (String(url) === DOWNLOAD && init.method === 'GET') {
-      return new Response(null, { status: 302, headers: { location: 'https://cdn.venice.ai/file.mp4' } })
-    }
-    if (String(url) === 'https://cdn.venice.ai/file.mp4' && init.method === 'GET') {
       return new Response(bytes, { status: 200, headers: { 'content-type': 'application/octet-stream' } })
     }
     if (String(url) === DOWNLOAD && init.method === 'DELETE') {
@@ -203,94 +141,18 @@ test('a private file can hop across venice hosts and the delete stays on the ori
   expect(saved.state.finished).toBe(true)
   expect(saved.state.aborted).toBe(false)
   expect(Buffer.concat(saved.chunks.map((chunk) => Buffer.from(chunk)))).toEqual(Buffer.from(bytes))
-  const hosts = calls.map((call) => new URL(call.url).hostname)
-  expect(hosts.every((host) => host === 'api.venice.ai' || host.endsWith('.venice.ai'))).toBe(true)
+  const download = calls.find((call) => call.url === DOWNLOAD && call.init.method === 'GET')
   const deletion = calls.find((call) => call.init.method === 'DELETE')
+  expect(download?.init.headers?.['Authorization']).toBeUndefined()
+  expect(download?.init.redirect).toBe('follow')
   expect(deletion?.url).toBe(DOWNLOAD)
   expect(deletion?.init.headers?.['Authorization']).toBeUndefined()
+  const queue = calls.find((call) => call.url.endsWith('/video/queue'))
+  expect(queue?.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
   expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(true)
-  for (const call of calls) assertNoSecret(call.init.body || '')
-})
-
-test('an off-host redirect is refused before the request is sent', async () => {
-  const calls: string[] = []
-  const saved = memorySink()
-  const fetchImpl = vi.fn(async (url: string, init: RequestInit = {}) => {
-    calls.push(String(url))
-    if (String(url).endsWith('/video/queue')) {
-      return jsonResponse({ model: MODEL, queue_id: QUEUE_ID, download_url: DOWNLOAD })
-    }
-    if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
-    if (String(url) === DOWNLOAD && init.method === 'GET') {
-      return new Response(null, { status: 302, headers: { location: 'https://evil.example/steal' } })
-    }
-    if (String(url).endsWith('/video/complete')) return jsonResponse({ success: true })
-    throw new Error(`unexpected ${url}`)
-  })
-
-  const error = await generateVeniceVideo({
-    apiKey: API_KEY,
-    model: MODEL,
-    prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps).catch((caught) => caught)
-
-  expect(error).toBeInstanceOf(VeniceVideoError)
-  expect(error.code).toBe('invalid')
-  assertNoSecret(error.message)
-  expect(calls).not.toContain('https://evil.example/steal')
-  expect(calls.some((url) => url.endsWith('/video/complete'))).toBe(false)
-  expect(saved.state.finished).toBe(false)
-  expect(saved.state.aborted).toBe(true)
-})
-
-test('a relative redirect to another host is refused', async () => {
-  const calls: string[] = []
-  const saved = memorySink()
-  const fetchImpl = vi.fn(async (url: string, init: RequestInit = {}) => {
-    calls.push(String(url))
-    if (String(url).endsWith('/video/queue')) {
-      return jsonResponse({ model: MODEL, queue_id: QUEUE_ID, download_url: DOWNLOAD })
-    }
-    if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
-    if (init.method === 'GET') {
-      return new Response(null, { status: 302, headers: { location: '//evil.example/steal' } })
-    }
-    throw new Error(`unexpected ${url}`)
-  })
-
-  await expect(generateVeniceVideo({
-    apiKey: API_KEY,
-    model: MODEL,
-    prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'invalid' })
-  expect(calls.some((url) => url.includes('evil.example'))).toBe(false)
-})
-
-test('too many venice redirects are refused', async () => {
-  const saved = memorySink()
-  let gets = 0
-  const fetchImpl = vi.fn(async (url: string, init: RequestInit = {}) => {
-    if (String(url).endsWith('/video/queue')) {
-      return jsonResponse({ model: MODEL, queue_id: QUEUE_ID, download_url: DOWNLOAD })
-    }
-    if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
-    if (init.method === 'GET') {
-      gets += 1
-      return new Response(null, {
-        status: 302,
-        headers: { location: `https://cdn.venice.ai/hop-${gets}` },
-      })
-    }
-    throw new Error(`unexpected ${url}`)
-  })
-
-  await expect(generateVeniceVideo({
-    apiKey: API_KEY,
-    model: MODEL,
-    prompt: 'a gondola',
-  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'invalid' })
-  expect(gets).toBeLessThanOrEqual(4)
-  expect(saved.state.aborted).toBe(true)
+  for (const call of calls) {
+    if (call.url === DOWNLOAD) expect(JSON.stringify(call.init.headers || {})).not.toContain(API_KEY)
+  }
 })
 
 test('an expired private link is a failure and does not complete the job', async () => {

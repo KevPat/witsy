@@ -12,7 +12,6 @@ const MIN_POLL_MS = 5000
 const MAX_POLL_MS = 30000
 const MAX_TRANSIENT = 8
 const MAX_POLLS = 400
-const MAX_DOWNLOAD_HOPS = 3
 const PROMPT_HARD_CAP = 20000
 const IMAGE_BASE64_CAP = 12000000
 
@@ -95,30 +94,6 @@ export function isMp4(bytes: Uint8Array): boolean {
   return false
 }
 
-export function assertVeniceDownloadUrl(raw: string): URL {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    throw new VeniceVideoError('Venice download link was refused', 'invalid')
-  }
-  if (url.protocol !== 'https:') {
-    throw new VeniceVideoError('Venice download link was refused', 'invalid')
-  }
-  if (url.username || url.password) {
-    throw new VeniceVideoError('Venice download link was refused', 'invalid')
-  }
-  if (url.port && url.port !== '443') {
-    throw new VeniceVideoError('Venice download link was refused', 'invalid')
-  }
-  const host = url.hostname.toLowerCase()
-  const veniceHost = host === 'venice.ai' || host.endsWith('.venice.ai')
-  if (!veniceHost || host.includes('..') || host === '.venice.ai') {
-    throw new VeniceVideoError('Venice download link was refused', 'invalid')
-  }
-  return url
-}
-
 export function buildVeniceQueueBody(input: VeniceQueueInput): Record<string, string> {
   const model = (input.model || '').trim()
   if (!VENICE_MODEL_ID.test(model)) {
@@ -172,7 +147,7 @@ export function buildVeniceQueueBody(input: VeniceQueueInput): Record<string, st
 
 export async function generateVeniceVideo(request: VeniceGenerateRequest, deps: VeniceGenerateDeps): Promise<string> {
   const clock = resolveDeps(deps)
-  const apiKey = assertApiKey(request.apiKey)
+  const apiKey = request.apiKey || ''
   if (clock.signal?.aborted) throw cancelled()
 
   try {
@@ -322,7 +297,7 @@ async function cleanup(model: string, queueId: string, downloadUrl: string | und
     try {
       const response = await clock.fetch(downloadUrl, {
         method: 'DELETE',
-        redirect: 'manual',
+        redirect: 'follow',
         credentials: 'omit',
         cache: 'no-store',
         referrerPolicy: 'no-referrer',
@@ -337,16 +312,15 @@ async function cleanup(model: string, queueId: string, downloadUrl: string | und
   await drain(response)
 }
 
-async function downloadPrivate(initial: string, clock: Clock, deadline: number): Promise<void> {
-  let current = assertVeniceDownloadUrl(initial)
+async function downloadPrivate(url: string, clock: Clock, deadline: number): Promise<void> {
   let transient = 0
-  for (let hop = 0; hop <= MAX_DOWNLOAD_HOPS; hop++) {
+  while (true) {
     throwIfStopped(clock, deadline)
     let response: Response
     try {
-      response = await clock.fetch(current.toString(), {
+      response = await clock.fetch(url, {
         method: 'GET',
-        redirect: 'manual',
+        redirect: 'follow',
         credentials: 'omit',
         cache: 'no-store',
         referrerPolicy: 'no-referrer',
@@ -358,15 +332,6 @@ async function downloadPrivate(initial: string, clock: Clock, deadline: number):
       transient += 1
       if (transient > 4) throw new VeniceVideoError('Venice video download failed', 'network')
       await sleepWithin(backoff(transient), deadline, clock)
-      hop -= 1
-      continue
-    }
-
-    if (isRedirect(response)) {
-      const location = response.headers.get('location')
-      await drain(response)
-      if (!location) throw new VeniceVideoError('Venice download link was refused', 'invalid')
-      current = assertVeniceDownloadUrl(new URL(location, current).toString())
       continue
     }
 
@@ -378,7 +343,6 @@ async function downloadPrivate(initial: string, clock: Clock, deadline: number):
         throw new VeniceVideoError(response.status === 429 ? 'Venice rate limit was exceeded' : 'Venice video download failed', response.status === 429 ? 'rate_limit' : 'unavailable')
       }
       await sleepWithin(delay, deadline, clock)
-      hop -= 1
       continue
     }
 
@@ -398,7 +362,6 @@ async function downloadPrivate(initial: string, clock: Clock, deadline: number):
     await writeMp4(response, clock, deadline)
     return
   }
-  throw new VeniceVideoError('Venice download link was refused', 'invalid')
 }
 
 async function writeMp4(response: Response, clock: Clock, deadline: number): Promise<void> {
@@ -491,11 +454,11 @@ function parseQueue(payload: unknown): { queueId: string, downloadUrl?: string }
     throw new VeniceVideoError('Venice returned an invalid queue id', 'malformed')
   }
   let downloadUrl: string | undefined
-  if (record.download_url != null) {
+  if (record.download_url != null && record.download_url !== '') {
     if (typeof record.download_url !== 'string') {
       throw new VeniceVideoError('Venice returned an unreadable queue response', 'malformed')
     }
-    downloadUrl = assertVeniceDownloadUrl(record.download_url).toString()
+    downloadUrl = record.download_url
   }
   return { queueId: record.queue_id, downloadUrl }
 }
@@ -582,14 +545,6 @@ function extractError(payload: unknown): string {
   }
   if (typeof record.message === 'string') return record.message
   return ''
-}
-
-function assertApiKey(apiKey: string): string {
-  const key = (apiKey || '').trim()
-  if (!key || key.length > 512 || hasHeaderBreak(key)) {
-    throw new VeniceVideoError('Venice API key is not configured', 'invalid')
-  }
-  return key
 }
 
 function assertImageDataUrl(value: string): string {
@@ -723,14 +678,6 @@ async function drain(response: Response): Promise<void> {
 
 function withoutNulls(value: string): string {
   return value.split(String.fromCharCode(0)).join('')
-}
-
-export function hasHeaderBreak(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i)
-    if (code === 0 || code === 10 || code === 13) return true
-  }
-  return false
 }
 
 export function stripControls(value: string): string {

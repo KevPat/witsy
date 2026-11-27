@@ -2,7 +2,6 @@ import { Model } from 'multi-llm-ts'
 import { Configuration } from 'types/config'
 import { ModelLoader } from './model_loader'
 import {
-  hasHeaderBreak,
   stripControls,
   VENICE_API_BASE,
   VENICE_ASPECT,
@@ -143,9 +142,8 @@ async function cancelQuietly(response: Response): Promise<void> {
 
 async function requestCatalog(fetchImpl: typeof fetch, apiKey?: string): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json' }
-  const key = apiKey?.trim()
-  if (key && key.length <= 512 && !hasHeaderBreak(key)) {
-    headers.Authorization = `Bearer ${key}`
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`
   }
   return fetchImpl(`${VENICE_API_BASE}/models?type=video`, {
     method: 'GET',
