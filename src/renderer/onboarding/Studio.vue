@@ -119,7 +119,7 @@ const loadModels = (engine: string) => {
       let loadResult = false
       
       // Use explicit instantiation for engines that need it
-      if (['replicate', 'falai', 'huggingface', 'sdwebui'].includes(engine)) {
+      if (['replicate', 'falai', 'huggingface', 'sdwebui', 'venice'].includes(engine)) {
         const modelLoader = ModelLoaderFactory.create(store.config, engine)
         loadResult = await modelLoader.loadModels()
       } else {

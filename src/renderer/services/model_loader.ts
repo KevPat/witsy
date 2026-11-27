@@ -5,6 +5,7 @@ import HuggingFace from './huggingface'
 import LlmFactory from './llms/llm'
 import Replicate from './replicate'
 import SDWebUI from './sdwebui'
+import Venice from './venice'
 
 export interface ModelLoader {
   loadModels(): Promise<boolean>
@@ -37,6 +38,8 @@ export default class ModelLoaderFactory {
       return new Replicate(config)
     } else if (engine === 'falai') {
       return new Falai(config)
+    } else if (engine === 'venice') {
+      return new Venice(config)
     } else {
       return new LlmModelLoader(config, engine)
     }

@@ -33,6 +33,7 @@ import LogoOllama from '@assets/ollama.svg?component'
 import LogoOpenAI from '@assets/openai.svg?component'
 import LogoOpenRouter from '@assets/openrouter.svg?component'
 import LogoReplicate from '@assets/replicate.svg?component'
+import LogoVenice from '@assets/venice.svg?component'
 import LogoXAI from '@assets/xai.svg?component'
 import { BookHeartIcon } from 'lucide-vue-next'
 
@@ -57,6 +58,7 @@ const logos: { [key: string]: any } = {
   openai: LogoOpenAI,
   openrouter: LogoOpenRouter,
   replicate: LogoReplicate,
+  venice: LogoVenice,
   xai: LogoXAI,
 }
 

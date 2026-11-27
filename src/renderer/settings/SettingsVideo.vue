@@ -39,6 +39,7 @@
         <label>{{ t('settings.engines.apiKey') }}</label>
         <InputObfuscated v-if="engine === 'falai'" v-model="falaiAPIKey" @blur="save" />
         <InputObfuscated v-if="engine === 'replicate'" v-model="replicateAPIKey" @blur="save" />
+        <InputObfuscated v-if="engine === 'venice'" v-model="veniceAPIKey" @blur="save" />
       </div>
 
       <div class="form-field">
@@ -49,6 +50,7 @@
           </Combobox>
           <a v-if="engine === 'replicate'" href="https://replicate.com/collections/text-to-video" target="_blank">{{ t('settings.plugins.video.replicate.aboutModels') }}</a>
           <a v-if="engine === 'falai'" href="https://fal.ai/models?categories=text-to-video" target="_blank">{{ t('settings.plugins.video.falai.aboutModels') }}</a>
+          <a v-if="engine === 'venice'" href="https://docs.venice.ai/models/video" target="_blank" rel="noopener noreferrer">{{ t('settings.plugins.video.venice.aboutModels') }}</a>
         </div>
       </div>
 
@@ -74,6 +76,7 @@ const engine = ref(null)
 const model = ref(null)
 const replicateAPIKey = ref(null)
 const falaiAPIKey = ref(null)
+const veniceAPIKey = ref(null)
 
 const engines = computed(() => VideoCreator.getEngines(false))
 const models = computed(() => store.config.engines[engine.value]?.models?.video || [])
@@ -84,6 +87,7 @@ const load = () => {
   model.value = store.config.plugins.video.model || ''
   replicateAPIKey.value = store.config.engines.replicate?.apiKey || ''
   falaiAPIKey.value = store.config.engines.falai?.apiKey || ''
+  veniceAPIKey.value = store.config.engines.venice?.apiKey || ''
 }
 
 const onChangeEngine = async () => {
@@ -116,6 +120,9 @@ const save = () => {
   store.config.plugins.video.model = model.value
   store.config.engines.replicate.apiKey = replicateAPIKey.value
   store.config.engines.falai.apiKey = falaiAPIKey.value
+  if (store.config.engines.venice) {
+    store.config.engines.venice.apiKey = veniceAPIKey.value
+  }
   store.saveSettings()
 }
 

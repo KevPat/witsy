@@ -860,9 +860,12 @@
     "moreAboutModelParameters": "Learn about this model parameters",
     "moreAboutSDWebUIParameters": "Learn about SDWebUI parameters",
     "parameters": {
+      "aspectRatio": "Aspect ratio",
+      "duration": "Duration",
       "height": "Height",
       "negativePrompt": "Negative Prompt",
       "quality": "Quality",
+      "resolution": "Resolution",
       "replicateInputImage": "Enter <media> as a value for the parameter matching the input image of the model.",
       "size": "Size",
       "style": "Style",
@@ -3130,6 +3133,9 @@
           "aboutModels": "More about Replicate models"
         },
         "title": "Text-to-Video",
+        "venice": {
+          "aboutModels": "More about Venice video models"
+        },
         "videoModel": "Video model"
       },
       "youtube": {

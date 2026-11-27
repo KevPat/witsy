@@ -39,6 +39,7 @@ import * as commands from './commands';
 import * as config from './config';
 import * as experts from './experts';
 import * as file from './file';
+import * as mediaFile from './media_file';
 import * as google from './google';
 import * as history from './history';
 import * as i18n from './i18n';
@@ -458,6 +459,37 @@ export const installIpc = (
 
   ipcMain.on(IPC.FILE.SAVE_FILE, (event, payload) => {
     event.returnValue = file.writeFileContents(app, JSON.parse(payload));
+  });
+
+  const mediaSenders = new Set<number>();
+  const watchMediaSender = (sender: Electron.WebContents) => {
+    if (mediaSenders.has(sender.id)) return;
+    mediaSenders.add(sender.id);
+    sender.once('destroyed', () => {
+      mediaSenders.delete(sender.id);
+      void mediaFile.abortMediaForSender(sender.id);
+    });
+  };
+
+  ipcMain.handle(IPC.FILE.MEDIA_OPEN, async (event, workspaceId: unknown) => {
+    if (typeof workspaceId !== 'string') throw new Error('Invalid workspace');
+    watchMediaSender(event.sender);
+    return mediaFile.openMediaFile(app, workspaceId, event.sender.id);
+  });
+
+  ipcMain.handle(IPC.FILE.MEDIA_APPEND, async (event, id: unknown, chunk: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid media session');
+    await mediaFile.appendMediaChunk(id, event.sender.id, chunk);
+  });
+
+  ipcMain.handle(IPC.FILE.MEDIA_FINISH, async (event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('Invalid media session');
+    return mediaFile.finishMediaFile(id, event.sender.id);
+  });
+
+  ipcMain.handle(IPC.FILE.MEDIA_ABORT, async (event, id: unknown) => {
+    if (typeof id !== 'string') return;
+    await mediaFile.abortMediaFile(id, event.sender.id);
   });
 
   ipcMain.on(IPC.FILE.DOWNLOAD, async (event, payload) => {

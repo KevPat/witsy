@@ -14,7 +14,7 @@
             <button :class="{active: mode === 'history'}" @click="mode = 'history'">{{ t('designStudio.history.title') }}</button>
           </div>
         </div>
-        <Settings :class="{ hidden: mode !== 'create' }" ref="settings" :current-media="currentMedia" :is-generating="isGenerating" @upload="onUpload" @draw="onDraw" @generate="onMediaGenerationRequest" />
+        <Settings :class="{ hidden: mode !== 'create' }" ref="settings" :current-media="currentMedia" :is-generating="isGenerating" @upload="onUpload" @draw="onDraw" @generate="onMediaGenerationRequest" @cancel="onCancelGeneration" />
         <History :class="{ hidden: mode !== 'history' }" :history="history" :selected-messages="selection" @select-message="selectMessage" @context-menu="showContextMenu" />
       </main>
     </div>
@@ -83,6 +83,8 @@ const mode = ref<'create'|'history'>('create')
 const chat = ref<Chat>(null)
 const selection = ref<Message[]>([])
 const isGenerating = ref(false)
+const activeVideo = ref<VideoCreator | null>(null)
+let generationToken = 0
 const undoStack = ref<Message[]>([])
 const redoStack = ref<Message[]>([])
 
@@ -127,8 +129,16 @@ onMounted(() => {
 
 })
 
+const onCancelGeneration = () => {
+  generationToken += 1
+  activeVideo.value?.cancel()
+  activeVideo.value = null
+  isGenerating.value = false
+}
+
 onBeforeUnmount(() => {
   store.removeListener('workspaceSwitched', initializeChat)
+  onCancelGeneration()
 })
 
 const initializeChat = () => {
@@ -648,6 +658,7 @@ const onMediaGenerationRequest = async (data: {
   }
 
   // reset
+  const myToken = ++generationToken
   isGenerating.value = true
   if (!isEditing) {
     selection.value = []
@@ -657,6 +668,7 @@ const onMediaGenerationRequest = async (data: {
     redoStack.value = []
   }
 
+  let creator: ImageCreator | VideoCreator | null = null
   try {
 
     // we need to convert params who look like numbers to numbers
@@ -673,8 +685,9 @@ const onMediaGenerationRequest = async (data: {
     })
 
     // generate
-    const creator = data.mediaType === 'image' ? new ImageCreator() : new VideoCreator()
-    const media = await creator.execute(data.engine, data.model, {
+    creator = data.mediaType === 'image' ? new ImageCreator() : new VideoCreator()
+    if (creator instanceof VideoCreator) activeVideo.value = creator
+    const media = await creator?.execute(data.engine, data.model, {
       prompt: data.prompt,
       ...params
     }, attachReference ? [
@@ -685,7 +698,10 @@ const onMediaGenerationRequest = async (data: {
       })) : [])
     ] : undefined)
 
+    if (myToken !== generationToken) return
+
     // check
+    if (media?.cancelled) return
     if (!media?.url) {
       throw new Error(media.error)
     }
@@ -743,6 +759,8 @@ const onMediaGenerationRequest = async (data: {
 
   } catch (e) {
 
+    if (myToken !== generationToken) return
+
     // replicate special
     try {
       if (e.response?.status === 422) {
@@ -773,7 +791,8 @@ const onMediaGenerationRequest = async (data: {
     })
   
   } finally {
-    isGenerating.value = false
+    if (creator instanceof VideoCreator && activeVideo.value === creator) activeVideo.value = null
+    if (myToken === generationToken) isGenerating.value = false
   }
 }
 

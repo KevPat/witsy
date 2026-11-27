@@ -23,7 +23,8 @@ export default class extends Plugin {
       (this.config.engine == 'google' && store.config?.engines?.google?.apiKey?.trim().length > 0) ||
       (this.config.engine == 'xai' && store.config?.engines?.xai?.apiKey?.trim().length > 0) ||
       (this.config.engine == 'replicate' && store.config?.engines?.replicate?.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'falai' && store.config?.engines?.falai?.apiKey?.trim().length > 0)
+      (this.config.engine == 'falai' && store.config?.engines?.falai?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'venice' && store.config?.engines?.venice?.apiKey?.trim().length > 0)
     )
   }
 

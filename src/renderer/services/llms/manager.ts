@@ -22,7 +22,7 @@ export default class LlmManager extends LlmManagerBase {
   }
 
   getNonChatEngines(): string[] {
-    return [ 'huggingface', 'replicate', 'elevenlabs', 'sdwebui', 'falai', 'gladia', 'nvidia', 'fireworks', 'speechmatics', 'soniox', 'minimax' ]
+    return [ 'huggingface', 'replicate', 'elevenlabs', 'sdwebui', 'falai', 'gladia', 'nvidia', 'fireworks', 'speechmatics', 'soniox', 'minimax', 'venice' ]
   }
 
   isEngineLocal(engine: string): boolean {

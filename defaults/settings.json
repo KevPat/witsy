@@ -479,6 +479,45 @@
         "chat": "",
         "image": ""
       }
+    },
+    "venice": {
+      "apiKey": "",
+      "models": {
+        "chat": [],
+        "image": [],
+        "video": [
+          {
+            "id": "wan-2.5-preview-text-to-video",
+            "name": "Wan 2.5 Preview (text to video)",
+            "meta": {
+              "modelType": "text-to-video",
+              "durations": ["5s", "10s"],
+              "resolutions": ["480p", "720p", "1080p"],
+              "aspectRatios": ["16:9", "9:16", "1:1"],
+              "promptCharacterLimit": 2500
+            }
+          }
+        ],
+        "videoEdit": [
+          {
+            "id": "wan-2.5-preview-image-to-video",
+            "name": "Wan 2.5 Preview (image to video)",
+            "meta": {
+              "modelType": "image-to-video",
+              "durations": ["5s", "10s"],
+              "resolutions": ["480p", "720p", "1080p"],
+              "aspectRatios": [],
+              "promptCharacterLimit": 2500
+            }
+          }
+        ]
+      },
+      "model": {
+        "chat": "",
+        "image": "",
+        "video": "wan-2.5-preview-text-to-video",
+        "videoEdit": "wan-2.5-preview-image-to-video"
+      }
     }
   },
   "skills": {

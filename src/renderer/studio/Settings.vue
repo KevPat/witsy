@@ -42,6 +42,7 @@
             </select>
             <RefreshButton :on-refresh="getModels" />
           </div>
+          <a v-if="engine === 'venice'" href="https://docs.venice.ai/models/video" target="_blank" rel="noopener noreferrer">{{ t('settings.plugins.video.venice.aboutModels') }}</a>
         </template>
       
       </div>
@@ -137,6 +138,7 @@
     </main>
     
     <footer>
+      <button v-if="isGenerating" name="cancel" type="button" @click="emit('cancel')">{{ t('common.cancel') }}</button>
       <button name="generate" class="cta" type="button" @click="generateMedia()" :disabled="isGenerating">
         <BrushIcon />
         {{ isGenerating ? t('designStudio.generating') : isEditing ? t('common.edit') : t('designStudio.generate') }}
@@ -175,6 +177,7 @@ import ImageCreator from '@services/image'
 import ModelLoaderFactory from '@services/model_loader'
 import { baseURL as SDWebUIBaseURL } from '@services/sdwebui'
 import { kReferenceParamValue, store } from '@services/store'
+import { VeniceVideoModelMeta } from '@services/venice'
 import VideoCreator from '@services/video'
 import promptsLibrary from './prompts.json'
 
@@ -196,7 +199,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['upload', 'generate', 'draw'])
+const emit = defineEmits(['upload', 'generate', 'draw', 'cancel'])
 
 const editor = ref(null)
 const mediaType= ref<DesignStudioMediaType>('image')
@@ -342,6 +345,16 @@ const onDetach = (attachment: Attachment) => {
   attachments.value = attachments.value.filter((a: Attachment) => a !== attachment)
 }
 
+const veniceConstraints = computed((): VeniceVideoModelMeta | null => {
+  if (engine.value !== 'venice') return null
+  const lists = [
+    ...(store.config.engines.venice?.models?.video || []),
+    ...(store.config.engines.venice?.models?.videoEdit || []),
+  ]
+  const found = lists.find((item) => item.id === model.value) as unknown as { meta?: VeniceVideoModelMeta } | undefined
+  return found?.meta || null
+})
+
 const customParams = computed((): Parameter[] => {
 
   // openai dall-e-2
@@ -409,6 +422,21 @@ const customParams = computed((): Parameter[] => {
   //   ]
   // }
 
+  if (engine.value === 'venice' && mediaType.value === 'video') {
+    const meta = veniceConstraints.value
+    const durations = meta?.durations?.length ? meta.durations : ['5s', '10s']
+    const resolutions = meta?.resolutions?.length ? meta.resolutions : ['480p', '720p', '1080p']
+    const fields: Parameter[] = [
+      { label: t('designStudio.parameters.duration'), key: 'duration', type: 'select', values: durations },
+      { label: t('designStudio.parameters.resolution'), key: 'resolution', type: 'select', values: resolutions },
+    ]
+    const aspects = meta ? meta.aspectRatios : ['16:9', '9:16', '1:1']
+    if (aspects.length) {
+      fields.push({ label: t('designStudio.parameters.aspectRatio'), key: 'aspect_ratio', type: 'select', values: aspects })
+    }
+    return fields
+  }
+
   // hugingface all models
   if (engine.value === 'huggingface') {
       return [
@@ -445,7 +473,7 @@ const modelHasParams = computed(() => {
 })
 
 const canTransform = computed(() => {
-  return ['falai', 'replicate'].includes(engine.value) ||
+  return ['falai', 'replicate', 'venice'].includes(engine.value) ||
     //(engine.value === 'google' && mediaType.value === 'image' && !props.currentMedia?.isVideo()) ||
     (engine.value === 'openai' && model.value.startsWith('gpt-image-') && mediaType.value === 'image' && !props.currentMedia?.isVideo()) ||
     (engine.value === 'google' && (model.value.includes('-image') || model.value.includes('nano-banana')) && mediaType.value === 'image' && !props.currentMedia?.isVideo()) ||
