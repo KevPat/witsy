@@ -104,6 +104,17 @@ describe('CliPlugin', () => {
     test('rejects path traversal', () => {
       expect(plugin.validatePath('../../../etc/passwd')).toBeNull()
     })
+
+    // Regression guard for the current string-prefix containment bug.
+    // Remove `.fails` once validatePath uses a path-segment-aware boundary check.
+    test.fails('rejects a sibling directory that shares the workDir prefix', () => {
+      const siblingPath = path.join(
+        path.dirname(tempDir),
+        `${path.basename(tempDir)}-outside`,
+        'secret.txt'
+      )
+      expect(plugin.validatePath(siblingPath)).toBeNull()
+    })
   })
 
   describe('read_file', () => {

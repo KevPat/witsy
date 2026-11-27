@@ -40,3 +40,34 @@ test('installMenu', () => {
   expect(Menu.buildFromTemplate).toHaveBeenCalled()
   expect(Menu.setApplicationMenu).toHaveBeenLastCalledWith({})
 })
+
+if (process.platform !== 'darwin') {
+  // Regression guard for macOS-only Command accelerators on Windows and Linux.
+  test.fails('Edit menu uses Control shortcuts outside macOS', () => {
+    installMenu(app, {
+      quit: vi.fn(),
+      checkForUpdates: vi.fn(),
+      quickPrompt: vi.fn(),
+      openMain: vi.fn(),
+      scratchpad: vi.fn(),
+      settings: vi.fn(),
+      studio: vi.fn(),
+      forge: vi.fn(),
+      backupExport: vi.fn(),
+      backupImport: vi.fn(),
+      importMarkdown: vi.fn(),
+      importOpenAI: vi.fn(),
+    }, null)
+
+    const calls = vi.mocked(Menu.buildFromTemplate).mock.calls
+    const template = calls[calls.length - 1][0] as any[]
+    const editMenu = template[1]
+    const accelerators = editMenu.submenu
+      .map((item: any) => item.accelerator)
+      .filter(Boolean)
+
+    expect(accelerators).toContain('Control+F')
+    expect(accelerators).toContain('Control+Shift+F')
+    expect(accelerators.some((accelerator: string) => accelerator.includes('Command'))).toBe(false)
+  })
+}

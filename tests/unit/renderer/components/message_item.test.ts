@@ -386,6 +386,19 @@ test('Assistant artifact with HTML preview (non-transient)', async () => {
 
 })
 
+// Regression guard for the current sandbox escape. Scripts are allowed for
+// previews, so the iframe must not also inherit the application origin.
+test.fails('HTML preview isolates untrusted scripts from the application origin', async () => {
+  store.config.appearance.chat.autoPreview.html = true
+  const wrapper = await mount(botMessageToolArtifactHtml2)
+  const iframe = wrapper.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+  const sandboxTokens = iframe.attributes('sandbox').split(/\s+/)
+  expect(sandboxTokens).toContain('allow-scripts')
+  expect(sandboxTokens).not.toContain('allow-same-origin')
+})
+
 test('Assistant artifact with HTML preview (DOCTYPE)', async () => {
 
   // Enable HTML auto-preview
@@ -973,6 +986,26 @@ test('Search highlight multiple matches', async () => {
   const wrapper = await mount(botMessageText)
   const marks = wrapper.findAll('mark')
   expect(marks.length).toBe(3)
+})
+
+// Regression guard for the current raw-RegExp construction.
+test.fails('Search treats regular-expression metacharacters as literal text', async () => {
+  const botMessageText = new Message('assistant', 'Version 1.2')
+  searchState.filter.value = '.'
+  const wrapper = await mount(botMessageText)
+  const marks = wrapper.findAll('mark')
+  expect(marks.length).toBe(1)
+  expect(marks[0].text()).toBe('.')
+})
+
+// Regression guard for highlighting the serialized HTML instead of text nodes.
+test.fails('Search highlighting preserves generated link markup', async () => {
+  const botMessageText = new Message('assistant', '[Alpha](https://example.com)')
+  searchState.filter.value = 'a'
+  const wrapper = await mount(botMessageText)
+  const link = wrapper.find('a')
+  expect(link.exists()).toBe(true)
+  expect(link.attributes('href')).toBe('https://example.com')
 })
 
 test('Search highlight in table block', async () => {

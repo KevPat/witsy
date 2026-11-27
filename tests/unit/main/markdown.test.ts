@@ -14,6 +14,24 @@ test('does not render html', () => {
   expect(html).toContain('<p>&lt;h1&gt;Hello World&lt;/h1&gt;</p>')
 })
 
+test('escapes event handlers in untrusted HTML', () => {
+  const html = renderMarkdown('<img src=x onerror=alert(1)>')
+  expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  expect(html).not.toContain('<img')
+})
+
+test('does not create javascript links', () => {
+  const html = renderMarkdown('[click](javascript:alert(1))')
+  expect(html).not.toContain('<a')
+  expect(html).not.toContain('href=')
+})
+
+test('does not restore malformed tool tags with injected attributes', () => {
+  const html = renderMarkdown('<tool id="safe" onmouseover="alert(1)"></tool>')
+  expect(html).toContain('&lt;tool')
+  expect(html).not.toContain('<tool')
+})
+
 // test('renders deeplinks', () => {
 //   const markdown = 'Click <a href="#section">here</a>'
 //   const html = renderMarkdown(markdown)
