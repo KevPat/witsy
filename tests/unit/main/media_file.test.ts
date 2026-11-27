@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, expect, test, vi } from 'vitest'
-import { abortMediaFile, appendMediaChunk, finishMediaFile, MAX_CHUNK_BYTES, openMediaFile } from '@main/media_file'
+import { abortMediaFile, abortMediaForSender, appendMediaChunk, finishMediaFile, MAX_CHUNK_BYTES, openMediaFile } from '@main/media_file'
 
 vi.mock('electron', () => {
   return {
@@ -75,4 +75,37 @@ test('abort removes the partial and a non-buffer chunk is refused', async () => 
   await abortMediaFile(id, 3)
   const images = path.join(app.getPath('userData'), 'workspaces', WORKSPACE, 'images')
   expect(fs.readdirSync(images)).toEqual([])
+})
+
+test('a short file is deleted instead of being published', async () => {
+  const app = testApp()
+  const id = await openMediaFile(app, WORKSPACE, 4)
+  await appendMediaChunk(id, 4, Buffer.from('short'))
+  await expect(finishMediaFile(id, 4)).rejects.toThrow('Video file was empty')
+  const images = path.join(app.getPath('userData'), 'workspaces', WORKSPACE, 'images')
+  expect(fs.readdirSync(images)).toEqual([])
+  await expect(finishMediaFile(id, 4)).rejects.toThrow('Media session not found')
+})
+
+test('closing one renderer keeps another renderer session', async () => {
+  const app = testApp()
+  const kept = await openMediaFile(app, WORKSPACE, 1)
+  const dropped = await openMediaFile(app, WORKSPACE, 2)
+  await appendMediaChunk(kept, 1, Buffer.from('0123456789abcdef'))
+  await appendMediaChunk(dropped, 2, Buffer.from('0123456789abcdef'))
+  await abortMediaForSender(2)
+  const url = await finishMediaFile(kept, 1)
+  expect(url.startsWith('file://')).toBe(true)
+  await expect(finishMediaFile(dropped, 2)).rejects.toThrow('Media session not found')
+  const images = path.join(app.getPath('userData'), 'workspaces', WORKSPACE, 'images')
+  expect(fs.readdirSync(images)).toHaveLength(1)
+})
+
+test('an uppercase workspace id stays inside that workspace', async () => {
+  const app = testApp()
+  const id = await openMediaFile(app, WORKSPACE.toUpperCase(), 8)
+  await appendMediaChunk(id, 8, Buffer.from('0123456789abcdef'))
+  const url = await finishMediaFile(id, 8)
+  expect(url).toContain(WORKSPACE.toUpperCase())
+  expect(fs.existsSync(url.slice('file://'.length))).toBe(true)
 })
