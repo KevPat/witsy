@@ -28,6 +28,11 @@ jobs:
       - name: Allow Chromium's user namespace sandbox (Ubuntu 24.04 restricts it by default)
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: No core dump handler (the crash suites kill renderers on purpose)
+        if: runner.os == 'Linux'
+        run: |
+          sudo systemctl stop apport.service || true
+          sudo sysctl -w kernel.core_pattern=core
       - name: Use Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
