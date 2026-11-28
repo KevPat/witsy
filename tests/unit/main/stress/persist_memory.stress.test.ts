@@ -147,7 +147,7 @@ describe('memory', () => {
     expect(await contents(new MemoryManager(app))).toEqual([...facts, 'first'].sort())
   })
 
-  bug('facts stored concurrently by two windows on a new install are all kept', async () => {
+  test('facts stored concurrently by two windows on a new install are all kept', async () => {
     // every call sees no database yet and creates and opens its own index; each one then writes index.json with its own fact, and every call reports success
     const memory = new MemoryManager(app)
     const facts = Array.from({ length: 12 }, (_, i) => `concurrent fact ${i}`)
@@ -171,7 +171,7 @@ describe('memory', () => {
     expect(await outcome(call(new MemoryManager(app)))).toHaveProperty('value')
   })
 
-  bug('a memory folder left without its index does not disable the memory for good', async () => {
+  test('a memory folder left without its index does not disable the memory for good', async () => {
     // the folder alone makes open() succeed, so the index is never created again: store() fails every time and list() rejects
     fs.mkdirSync(memoryDir(), { recursive: true })
     const memory = new MemoryManager(app)
