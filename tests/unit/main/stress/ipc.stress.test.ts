@@ -189,8 +189,8 @@ describe('IPC surface', () => {
     expect(silent).toEqual([])
   })
 
-  bug('every synchronous handler replies when its implementation throws', async () => {
-    // most handlers are `event.returnValue = impl(...)` with no try/catch: one exception leaves the calling window frozen
+  test('every synchronous handler replies when its implementation throws', async () => {
+    // most handlers are `event.returnValue = impl(...)` with no try/catch: safeIpcMain replies for them
     state.failing = true
     const silent: string[] = []
     for (const channel of syncChannels()) {
@@ -200,13 +200,13 @@ describe('IPC surface', () => {
     expect(silent).toEqual([])
   })
 
-  bug.each([
+  test.each([
     [undefined],
     [null],
     ['not json'],
     [42],
   ])('every synchronous handler replies to a malformed payload: %s', async (payload) => {
-    // JSON.parse and destructuring of the payload happen before returnValue is assigned
+    // JSON.parse and destructuring of the payload happen before returnValue is assigned: safeIpcMain replies for them
     const silent: string[] = []
     for (const channel of syncChannels()) {
       const { replied } = await invokeSync(channel, payload)
