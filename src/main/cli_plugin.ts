@@ -649,7 +649,22 @@ export default class CliPlugin extends Plugin {
     // If newContent is empty, delete the lines
     const newLines = newContent ? newContent.split('\n') : []
     const linesRemoved = end - start + 1
+
+    // Lines of a CRLF file still carry their '\r' (the split is on '\n'): give the new lines the
+    // same ending instead of mixing both styles. The last line of a file has no line break after it.
+    const crlfCount = (fileContent.match(/\r\n/g) || []).length
+    const useCrlf = crlfCount > allLines.length - 1 - crlfCount
+    const editsLastLine = end === allLines.length
+    if (useCrlf) {
+      for (let i = 0; i < newLines.length; i++) {
+        newLines[i] = newLines[i].replace(/\r$/, '') + '\r'
+      }
+    }
+
     allLines.splice(start - 1, linesRemoved, ...newLines)
+    if (useCrlf && editsLastLine && allLines.length > 0) {
+      allLines[allLines.length - 1] = allLines[allLines.length - 1].replace(/\r$/, '')
+    }
 
     fs.writeFileSync(filePath, allLines.join('\n'), 'utf-8')
     const newStats = fs.statSync(filePath)
@@ -717,10 +732,18 @@ export default class CliPlugin extends Plugin {
     return { success: true }
   }
 
+  private isWorkDir(fullPath: string): boolean {
+    return path.relative(path.resolve(this.config.workDirPath), path.resolve(fullPath)) === ''
+  }
+
   private deleteFile(targetPath: string): CliResponse {
     const filePath = this.validatePath(targetPath)
     if (!filePath) {
       return { success: false, error: `Path not allowed: ${targetPath}` }
+    }
+
+    if (this.isWorkDir(filePath)) {
+      return { success: false, error: 'Cannot delete the working directory itself' }
     }
 
     if (!fs.existsSync(filePath)) {
@@ -748,12 +771,22 @@ export default class CliPlugin extends Plugin {
       return { success: false, error: `Path not allowed: ${newTargetPath}` }
     }
 
+    if (this.isWorkDir(filePath)) {
+      return { success: false, error: 'Cannot move the working directory itself' }
+    }
+
     if (!fs.existsSync(filePath)) {
       return { success: false, error: `File not found: ${targetPath}` }
     }
 
     if (fs.existsSync(newFilePath)) {
       return { success: false, error: `File already exists: ${newTargetPath}` }
+    }
+
+    // Nothing can be moved below itself: refuse before any destination directory is created
+    const relative = path.relative(path.resolve(filePath), path.resolve(newFilePath))
+    if (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
+      return { success: false, error: `Cannot move ${targetPath} into itself: ${newTargetPath}` }
     }
 
     // Create parent directories for destination if needed

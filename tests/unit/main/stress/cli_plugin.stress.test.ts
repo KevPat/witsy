@@ -88,14 +88,14 @@ describe('CliPlugin path confinement', () => {
     expect(fs.existsSync(outside)).toBe(true)
   })
 
-  bug('delete_file refuses to delete the working directory itself', async () => {
+  test('delete_file refuses to delete the working directory itself', async () => {
     fs.writeFileSync(path.join(workDir, 'keep.txt'), 'keep')
     const result = await plugin.execute({ model: 'test' }, { action: 'delete_file', path: '.' })
     expect(result.success).toBe(false)
     expect(fs.existsSync(path.join(workDir, 'keep.txt'))).toBe(true)
   })
 
-  bug('move_file refuses to move the working directory itself', async () => {
+  test('move_file refuses to move the working directory itself', async () => {
     fs.writeFileSync(path.join(workDir, 'keep.txt'), 'keep')
     await plugin.execute({ model: 'test' }, { action: 'move_file', path: '.', newPath: '../proj-secrets/stolen' })
     expect(fs.existsSync(path.join(workDir, 'keep.txt'))).toBe(true)
@@ -216,7 +216,7 @@ describe('CliPlugin edits', () => {
     }
   })
 
-  bug('edit_file keeps CRLF line endings consistent', async () => {
+  test('edit_file keeps CRLF line endings consistent', async () => {
     // files created on Windows: the edited lines come back with LF only
     fs.writeFileSync(path.join(workDir, 'crlf.txt'), 'one\r\ntwo\r\nthree\r\n')
     await plugin.execute({ model: 'test' }, { action: 'edit_file', path: 'crlf.txt', start: 2, end: 2, content: 'TWO\nTWO-B' })

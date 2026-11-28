@@ -608,6 +608,112 @@ describe('CliPlugin', () => {
       expect(result.success).toBe(false)
       expect(result.error).toContain('modified')
     })
+
+    test('keeps CRLF line endings on the lines it writes', async () => {
+      const filePath = path.join(tempDir, 'crlf.txt')
+      fs.writeFileSync(filePath, 'one\r\ntwo\r\nthree\r\n')
+
+      const result = await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 2, end: 2, content: 'TWO\nTWO-B'
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.totalLines).toBe(5)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('one\r\nTWO\r\nTWO-B\r\nthree\r\n')
+    })
+
+    test('does not double the carriage return when the new content already uses CRLF', async () => {
+      const filePath = path.join(tempDir, 'crlf.txt')
+      fs.writeFileSync(filePath, 'one\r\ntwo\r\nthree\r\n')
+
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 1, end: 2, content: 'ONE\r\nTWO'
+      })
+
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('ONE\r\nTWO\r\nthree\r\n')
+    })
+
+    test('keeps a CRLF file without a final line break as it is', async () => {
+      const filePath = path.join(tempDir, 'crlf.txt')
+      fs.writeFileSync(filePath, 'one\r\ntwo\r\nthree')
+
+      // replace the last line: no line break may appear after it
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 3, end: 3, content: 'THREE\nFOUR'
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('one\r\ntwo\r\nTHREE\r\nFOUR')
+
+      // delete the last lines: the line that becomes the last one loses its line break
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 3, end: 4, content: ''
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('one\r\ntwo')
+
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 1, end: 2, content: ''
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('')
+    })
+
+    test('deletes lines of a CRLF file without touching the others', async () => {
+      const filePath = path.join(tempDir, 'crlf.txt')
+      fs.writeFileSync(filePath, 'one\r\ntwo\r\nthree\r\n')
+
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 2, end: 2, content: ''
+      })
+
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('one\r\nthree\r\n')
+    })
+
+    test('uses the dominant line ending of a mixed file and converts nothing else', async () => {
+      const filePath = path.join(tempDir, 'mixed.txt')
+
+      fs.writeFileSync(filePath, 'a\r\nb\nc\r\nd\r\ne')
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'mixed.txt', start: 3, end: 3, content: 'C1\nC2'
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('a\r\nb\nC1\r\nC2\r\nd\r\ne')
+
+      fs.writeFileSync(filePath, 'a\nb\r\nc\nd\ne')
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'mixed.txt', start: 3, end: 3, content: 'C1\nC2'
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('a\nb\r\nC1\nC2\nd\ne')
+    })
+
+    test('writes LF in files that have no line break or as many LF as CRLF', async () => {
+      const filePath = path.join(tempDir, 'single.txt')
+
+      fs.writeFileSync(filePath, 'only')
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'single.txt', start: 1, end: 1, content: 'first\nsecond'
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('first\nsecond')
+
+      fs.writeFileSync(filePath, 'a\r\nb\nc')
+      await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'single.txt', start: 3, end: 3, content: 'C1\nC2'
+      })
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('a\r\nb\nC1\nC2')
+    })
+
+    test('read_file and edit_file agree on the line numbers of a CRLF file', async () => {
+      const filePath = path.join(tempDir, 'crlf.txt')
+      fs.writeFileSync(filePath, 'one\r\ntwo\r\nthree\r\n')
+
+      const before = await plugin.execute({ model: 'test' }, { action: 'read_file', path: 'crlf.txt' })
+      expect(before.totalLines).toBe(4)
+
+      const edit = await plugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'crlf.txt', start: 3, end: 3, content: 'THREE\nFOUR'
+      })
+      expect(edit.totalLines).toBe(5)
+
+      const after = await plugin.execute({ model: 'test' }, { action: 'read_file', path: 'crlf.txt', start: 3, end: 4 })
+      expect(after.totalLines).toBe(5)
+      expect(after.content).toBe('   3→THREE\r\n   4→FOUR\r')
+    })
   })
 
   describe('delete_file', () => {
@@ -646,6 +752,36 @@ describe('CliPlugin', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('not found')
+    })
+
+    test('refuses to delete the working directory itself', async () => {
+      fs.mkdirSync(path.join(tempDir, 'sub'))
+      fs.writeFileSync(path.join(tempDir, 'keep.txt'), 'keep')
+
+      for (const target of ['.', './', 'sub/..', './sub/../.', tempDir, tempDir + path.sep, path.join(tempDir, 'sub', '..')]) {
+        const result = await plugin.execute({ model: 'test' }, {
+          action: 'delete_file',
+          path: target
+        })
+        expect(result.success, target).toBe(false)
+        expect(result.error, target).toContain('working directory')
+        expect(fs.readFileSync(path.join(tempDir, 'keep.txt'), 'utf-8')).toBe('keep')
+        expect(fs.existsSync(path.join(tempDir, 'sub'))).toBe(true)
+      }
+    })
+
+    test('still deletes what is inside the working directory', async () => {
+      fs.mkdirSync(path.join(tempDir, 'sub', 'deep'), { recursive: true })
+      fs.writeFileSync(path.join(tempDir, 'sub', 'deep', 'file.txt'), 'content')
+
+      const result = await plugin.execute({ model: 'test' }, {
+        action: 'delete_file',
+        path: './sub/deep/..'
+      })
+
+      expect(result.success).toBe(true)
+      expect(fs.existsSync(path.join(tempDir, 'sub'))).toBe(false)
+      expect(fs.existsSync(tempDir)).toBe(true)
     })
   })
 
@@ -703,6 +839,68 @@ describe('CliPlugin', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('not found')
+    })
+
+    test('refuses to move the working directory itself', async () => {
+      fs.mkdirSync(path.join(tempDir, 'sub'))
+      fs.writeFileSync(path.join(tempDir, 'keep.txt'), 'keep')
+
+      for (const source of ['.', './', 'sub/..', tempDir, tempDir + path.sep]) {
+        const result = await plugin.execute({ model: 'test' }, {
+          action: 'move_file',
+          path: source,
+          newPath: 'sub/moved'
+        })
+        expect(result.success, source).toBe(false)
+        expect(result.error, source).toContain('working directory')
+        expect(fs.readFileSync(path.join(tempDir, 'keep.txt'), 'utf-8')).toBe('keep')
+        expect(fs.readdirSync(path.join(tempDir, 'sub'))).toEqual([])
+      }
+    })
+
+    test('refuses to move a directory into itself', async () => {
+      fs.mkdirSync(path.join(tempDir, 'dir'))
+      fs.writeFileSync(path.join(tempDir, 'dir', 'file.txt'), 'content')
+
+      for (const destination of ['dir/inner', 'dir/a/b/dir', './dir/../dir/inner']) {
+        const result = await plugin.execute({ model: 'test' }, {
+          action: 'move_file',
+          path: 'dir',
+          newPath: destination
+        })
+        expect(result.success, destination).toBe(false)
+        expect(result.error, destination).toContain('into itself')
+        // nothing was moved and no destination directory was created
+        expect(fs.readdirSync(path.join(tempDir, 'dir'))).toEqual(['file.txt'])
+      }
+    })
+
+    test('refuses to move a file below itself', async () => {
+      fs.writeFileSync(path.join(tempDir, 'src.txt'), 'content')
+
+      const result = await plugin.execute({ model: 'test' }, {
+        action: 'move_file',
+        path: 'src.txt',
+        newPath: 'src.txt/copy.txt'
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('into itself')
+      expect(fs.readFileSync(path.join(tempDir, 'src.txt'), 'utf-8')).toBe('content')
+    })
+
+    test('moves a directory next to a name that only shares its prefix', async () => {
+      fs.mkdirSync(path.join(tempDir, 'dir'))
+      fs.writeFileSync(path.join(tempDir, 'dir', 'file.txt'), 'content')
+
+      const result = await plugin.execute({ model: 'test' }, {
+        action: 'move_file',
+        path: 'dir',
+        newPath: 'dir-2/..dir'
+      })
+
+      expect(result.success).toBe(true)
+      expect(fs.readFileSync(path.join(tempDir, 'dir-2', '..dir', 'file.txt'), 'utf-8')).toBe('content')
     })
   })
 
