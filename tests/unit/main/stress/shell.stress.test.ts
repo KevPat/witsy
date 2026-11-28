@@ -1,6 +1,6 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { analyzeCommand, executeCommand, validateWorkingDirectory } from '@/main/shell'
+import { analyzeCommand, executeCommand, normalizeTimeout, validateWorkingDirectory } from '@/main/shell'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -90,7 +90,7 @@ describe.runIf(isPosix)('shell executeCommand', () => {
     expect(ok.stdout.trim()).toBe('ran')
   })
 
-  bug('a timed out command does not leave its child processes running', async () => {
+  test('a timed out command does not leave its child processes running', async () => {
     // the timeout sends SIGTERM to the shell only; what the shell started keeps running
     const pidFile = path.join(dir, 'child.pid')
     const result = await executeCommand({
@@ -105,7 +105,34 @@ describe.runIf(isPosix)('shell executeCommand', () => {
     expect(alive).toBe(false)
   })
 
-  bug('a very large timeout does not kill the command immediately', async () => {
+  test('a timed out command whose children ignore the first signal is killed', async () => {
+    const pidFile = path.join(dir, 'child.pid')
+    const start = Date.now()
+    const result = await executeCommand({
+      command: `sh -c 'trap "" TERM; echo $$ > "${pidFile}"; sleep 20; sleep 20'`,
+      cwd: dir,
+      timeoutMs: 300,
+    })
+    expect(result.exitCode).toBe(124)
+    expect(Date.now() - start).toBeLessThan(6000)
+    const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim())
+    await vi.waitFor(() => expect(isAlive(pid)).toBe(false), { timeout: 2000, interval: 20 })
+  }, 10000)
+
+  test('a command that reads its input does not wait for one', async () => {
+    const result = await executeCommand({ command: 'cat; echo done', cwd: dir, timeoutMs: 5000 })
+    expect(result.success).toBe(true)
+    expect(result.stdout.trim()).toBe('done')
+  })
+
+  test.each([
+    [undefined, 15000], [null, 15000], ['', 15000], [' ', 15000], ['abc', 15000], [NaN, 15000], [0, 15000], [-5, 15000], [{}, 15000],
+    [1, 1], [1500.5, 1501], ['2000', 2000], [60000, 60000], [60001, 60000], [2 ** 31, 60000], [1e12, 60000], [Infinity, 60000], ['1e12', 60000],
+  ])('timeout %j is run as %i ms', (timeoutMs, expected) => {
+    expect(normalizeTimeout(timeoutMs)).toBe(expected)
+  })
+
+  test('a very large timeout does not kill the command immediately', async () => {
     // values above 2^31-1 overflow the timer and Node falls back to a 1ms timeout
     const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {})
     const result = await executeCommand({ command: 'sleep 0.3; echo done', cwd: dir, timeoutMs: 1e12 })
@@ -114,7 +141,7 @@ describe.runIf(isPosix)('shell executeCommand', () => {
     expect(result.stdout.trim()).toBe('done')
   })
 
-  bug('timeouts that are not integers are tolerated', async () => {
+  test('timeouts that are not integers are tolerated', async () => {
     // models regularly send "2000" or 1500.5 for a number parameter
     for (const timeoutMs of ['2000', 1500.5] as unknown as number[]) {
       const result = await executeCommand({ command: 'echo done', cwd: dir, timeoutMs })
@@ -122,7 +149,7 @@ describe.runIf(isPosix)('shell executeCommand', () => {
     }
   })
 
-  bug('exitCode is always a number', async () => {
+  test('exitCode is always a number', async () => {
     // error.code is the string "ENOENT" when the working directory does not exist
     const result = await executeCommand({ command: 'echo hi', cwd: path.join(dir, 'missing') })
     expect(result.success).toBe(false)
