@@ -1,6 +1,5 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { bug } from './bug'
 
 // The platform is pinned to win32 so the key tables are deterministic on every host (macOS CI,
 // this Linux machine, Windows developers). win32 delivers modifiers as plain down/up events.
@@ -82,7 +81,7 @@ describe('KeyMonitor modifier-only shortcuts', () => {
     expect(cb.chat.onUp).toHaveBeenCalledTimes(1)
   })
 
-  bug('does not fire a modifier-only shortcut that was released while another modifier was held', () => {
+  test('does not fire a modifier-only shortcut that was released while another modifier was held', () => {
     // fails today: handleModifierDown only marks the newly pressed modifier as "alone"; it never
     // clears the "alone" flag of modifiers already held, so Control still counts as pressed alone.
     const cb = startWith({ type: 'native', leftControl: true })
@@ -92,7 +91,7 @@ describe('KeyMonitor modifier-only shortcuts', () => {
     expect(cb.chat.onUp).not.toHaveBeenCalled()
   })
 
-  bug('seeded fuzz: modifier-only onUp fires only when the modifier was truly alone', () => {
+  test('seeded fuzz: modifier-only onUp fires only when the modifier was truly alone', () => {
     // fails today: same defect, surfaced over a randomised interleaving of Control/Shift presses.
     const cb = startWith({ type: 'native', leftControl: true })
 

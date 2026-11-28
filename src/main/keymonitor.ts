@@ -345,8 +345,17 @@ export default class KeyMonitor {
 
   // Common modifier down handling (both platforms)
   private handleModifierDown(keyCode: number): void {
+    // a modifier is "alone" only if no other modifier is held with it:
+    // pressing a second one makes a chord, and neither of them is alone any more
+    const chord = Array.from(this.heldModifiers).some(held => held !== keyCode)
     this.heldModifiers.add(keyCode)
-    this.modifierPressedAlone.set(keyCode, true)
+    if (chord) {
+      for (const held of this.heldModifiers) {
+        this.modifierPressedAlone.set(held, false)
+      }
+    } else {
+      this.modifierPressedAlone.set(keyCode, true)
+    }
 
     // Check single modifier-only shortcuts (onDown)
     this.checkModifierOnlyShortcuts(keyCode, 'down')

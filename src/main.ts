@@ -152,8 +152,9 @@ const installMenu = () => {
 }
 
 // this is going to be called later
+let refusedShortcutsNotified = '';
 const registerShortcuts = () => {
-  shortcuts.registerShortcuts(app, {
+  const refused = shortcuts.registerShortcuts(app, {
     prompt: PromptAnywhere.open,
     chat: () => window.openMainWindow({ queryParams: { view: 'chat' } }),
     command: () => Commander.initCommand(app),
@@ -166,6 +167,21 @@ const registerShortcuts = () => {
     forge: window.openAgentForgeWindow,
   });
   keyMonitor?.reload();
+
+  // tell the user about the shortcuts the OS refused (once per set: this runs at every settings change)
+  const accelerators = refused.map((shortcut) => shortcut.accelerator).join(', ');
+  if (accelerators !== refusedShortcutsNotified) {
+    refusedShortcutsNotified = accelerators;
+    if (refused.length && Notification.isSupported()) {
+      import('./main/i18n').then(({ useI18n }) => {
+        const t = useI18n(app);
+        new Notification({
+          title: t('automation.shortcutRefused.title'),
+          body: t('automation.shortcutRefused.text', { shortcuts: accelerators }),
+        }).show();
+      }).catch((error) => console.error('Error notifying refused shortcuts', error));
+    }
+  }
 }
 
 // quit at all costs

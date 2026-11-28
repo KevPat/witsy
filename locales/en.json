@@ -437,6 +437,10 @@
     "grabError": "An error occurred while trying to grab the text. Please check Privacy & Security settings.",
     "readAloud": {
       "emptyText": "Please highlight the text you want to read aloud."
+    },
+    "shortcutRefused": {
+      "text": "{shortcuts} could not be registered. Another application is probably using it. You can pick another shortcut in Settings.",
+      "title": "Shortcut not available"
     }
   },
   "autoupdate": {

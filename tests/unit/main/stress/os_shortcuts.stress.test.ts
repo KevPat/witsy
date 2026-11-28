@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { globalShortcut } from 'electron'
 import { disabledShortcutKey } from '@/types/index'
 import { registerShortcuts, shortcutAccelerator } from '@main/shortcuts'
-import { bug } from './bug'
 
 let config: any = { shortcuts: {} }
 
@@ -60,7 +59,7 @@ describe('registerShortcuts', () => {
     expect(globalShortcut.register).not.toHaveBeenCalled()
   })
 
-  bug('surfaces a registration the OS refuses (register returns false)', () => {
+  test('surfaces a registration the OS refuses (register returns false)', () => {
     // fails today: globalShortcut.register returns false (no throw) when the OS already owns the
     // accelerator; shortcuts.ts ignores the boolean, so the failure is silently swallowed.
     vi.mocked(globalShortcut.register).mockReturnValue(false as any)
