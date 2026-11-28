@@ -13,13 +13,16 @@ let monitorCb: ((ev: Ev) => void) | null = null
 
 vi.mock('@main/config', () => ({ loadSettings: vi.fn(() => settings) }))
 
-vi.mock('autolib', () => ({
+// keymonitor loads autolib through native_automation (P-02), which uses require() and is not reached by vi.mock('autolib')
+const autolibMock = vi.hoisted(() => ({
   default: {
-    startKeyMonitor: vi.fn((cb: (ev: Ev) => void) => { monitorCb = cb; return 0 }),
+    startKeyMonitor: vi.fn((cb: (ev: any) => void) => { monitorCb = cb; return 0 }),
     stopKeyMonitor: vi.fn(() => 0),
     isKeyMonitorRunning: vi.fn(() => false),
   },
 }))
+vi.mock('autolib', () => autolibMock)
+vi.mock('@main/native_automation', () => autolibMock)
 
 const callbackNames = ['prompt', 'chat', 'command', 'readaloud', 'dictation', 'audioBooth', 'scratchpad', 'realtime', 'studio', 'forge']
 const makeCallbacks = (): Record<string, Cb> =>
