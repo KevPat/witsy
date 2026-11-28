@@ -5,7 +5,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport, StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth'
 import { CompatibilityCallToolResultSchema } from '@modelcontextprotocol/sdk/types'
-import { exec } from 'child_process'
+import { ChildProcess, spawn } from 'child_process'
 import { app, App } from 'electron'
 import { PluginParameter, PluginTool } from 'multi-llm-ts'
 import { anyDict } from 'types/index'
@@ -23,6 +23,19 @@ export const LEGACY_SUFFIX_PATTERN = /___....$/
 // Collision handling constants
 const COLLISION_SUFFIX_SEPARATOR = '_'
 const MAX_TOOL_NAME_LENGTH = 64
+
+// Values that end up on the installer command line. Registry identifiers look like npm
+// package names ("exa", "@owner/server", "@owner/server@1.2.3"). Neither pattern accepts
+// whitespace, quotes, a leading dash or any character a shell (or cmd.exe) interprets.
+const INSTALL_SERVER_PATTERN = /^@?[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$/
+const INSTALL_API_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const INSTALL_VALUE_MAX_LENGTH = 256
+const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
+const INSTALL_FAILURES: McpInstallStatus[] = ['api_key_missing', 'not_found', 'error']
+
+const isInstallValue = (value: unknown, pattern: RegExp): value is string => {
+  return typeof value === 'string' && value.length <= INSTALL_VALUE_MAX_LENGTH && pattern.test(value)
+}
 
 type McpSdkTool = {
   name: string
@@ -288,8 +301,8 @@ export default class Mcp {
 
   installServer = async (registry: string, server: string, apiKey: string): Promise<McpInstallStatus> => {
 
-    const command = this.getInstallCommand(registry, server, apiKey)
-    if (!command) return 'error'
+    const argv = this.getInstallArgv(registry, server, apiKey)
+    if (!argv) return 'error'
 
     try {
 
@@ -298,55 +311,7 @@ export default class Mcp {
       this.monitor?.stop()
       this.logs[server] = this.logs[server] || []
 
-      await new Promise<McpInstallStatus>((resolve, reject) => {
-
-        let failTimeout: NodeJS.Timeout
-        const childProcess = exec(command)
-
-        childProcess.on('error', (error) => {
-          console.error(`[mcp] Error installing MCP server ${server}:`, error)
-          this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
-          reject('error')
-        })
-
-        childProcess.stderr.on('data', (data: Buffer) => {
-          const stderr = data.toString()
-          console.error(`[mcp] MCP install ${server} stderr:`, stderr)
-          this.logs[server].push(`MCP install ${server} stderr: ${stderr}`)
-
-          if (stderr.includes('Failed to install')) {
-            failTimeout = setTimeout(() => {
-              childProcess.kill()
-              reject('error')
-            }, 250)
-          }
-
-          if (stderr.includes('Server not found')) {
-            clearTimeout(failTimeout)
-            childProcess.kill()
-            reject('not_found')
-          }
-        
-        })
-
-        childProcess.stdout.on('data', (data: Buffer) => {
-          const stdout = data.toString()
-          console.log(`[mcp] MCP install ${server} stdout:`, stdout)
-          this.logs[server].push(`MCP install ${server} stdout: ${stdout}`)
-
-          if (stdout.includes('successfully installed')) {
-            resolve('success')
-          }
-
-          if (stdout.includes('Please enter your Smithery API key')) {
-            childProcess.kill()
-            reject('api_key_missing')
-          }
-
-        })
-    
-      
-      })
+      await this.runInstaller(server, argv)
 
       // now we should be able to connect
       const after = this.getServers()
@@ -359,22 +324,137 @@ export default class Mcp {
       return 'success'
 
     } catch (e) {
-      return e
+      return INSTALL_FAILURES.includes(e) ? e : 'error'
     } finally {
       this.startConfigMonitor()
     }
     
   }
 
-  getInstallCommand = (registry: string, server: string, apiKey: string): string|null => {  
-    if (registry === 'smithery') {
-      let command = `npx -y @smithery/cli@latest install ${server} --client witsy`
-      if (apiKey) {
-        command += ` --key ${apiKey}`
+  // settles on every path: known installer message, process exit, spawn error or timeout
+  private runInstaller = (server: string, argv: string[]): Promise<void> => {
+
+    return new Promise<void>((resolve, reject) => {
+
+      let settled = false
+      let failTimeout: NodeJS.Timeout = null
+      let installTimeout: NodeJS.Timeout = null
+      let childProcess: ChildProcess = null
+
+      const settle = (status: McpInstallStatus) => {
+        if (settled) return
+        settled = true
+        clearTimeout(failTimeout)
+        clearTimeout(installTimeout)
+        if (status === 'success') {
+          resolve()
+        } else {
+          childProcess?.kill()
+          reject(status)
+        }
       }
-      return command
+
+      try {
+
+        // npx is a .cmd shim on Windows, which only cmd.exe can start: the arguments
+        // were validated against a charset that means nothing to it, and no shell is used elsewhere
+        const [file, ...args] = process.platform === 'win32'
+          ? [process.env.comspec || 'cmd.exe', '/d', '/s', '/c', ...argv]
+          : argv
+        childProcess = spawn(file, args, { shell: false, windowsHide: true })
+
+      } catch (error) {
+        console.error(`[mcp] Error installing MCP server ${server}:`, error)
+        this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
+        settle('error')
+        return
+      }
+
+      installTimeout = setTimeout(() => {
+        console.error(`[mcp] MCP install ${server} timed out`)
+        this.logs[server].push(`MCP install ${server} timed out`)
+        settle('error')
+      }, INSTALL_TIMEOUT_MS)
+
+      childProcess.on('error', (error) => {
+        console.error(`[mcp] Error installing MCP server ${server}:`, error)
+        this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
+        settle('error')
+      })
+
+      childProcess.on('close', (code) => {
+        if (settled) return
+        if (code !== 0) {
+          console.error(`[mcp] MCP install ${server} exited with code ${code}`)
+          this.logs[server].push(`MCP install ${server} exited with code ${code}`)
+        }
+        settle(code === 0 ? 'success' : 'error')
+      })
+
+      childProcess.stderr.on('data', (data: Buffer) => {
+        const stderr = data.toString()
+        console.error(`[mcp] MCP install ${server} stderr:`, stderr)
+        this.logs[server].push(`MCP install ${server} stderr: ${stderr}`)
+
+        // leave some time for a more specific message
+        if (stderr.includes('Failed to install') && !settled) {
+          clearTimeout(failTimeout)
+          failTimeout = setTimeout(() => settle('error'), 250)
+        }
+
+        if (stderr.includes('Server not found')) {
+          settle('not_found')
+        }
+
+      })
+
+      childProcess.stdout.on('data', (data: Buffer) => {
+        const stdout = data.toString()
+        console.log(`[mcp] MCP install ${server} stdout:`, stdout)
+        this.logs[server].push(`MCP install ${server} stdout: ${stdout}`)
+
+        if (stdout.includes('successfully installed')) {
+          settle('success')
+        }
+
+        if (stdout.includes('Please enter your Smithery API key')) {
+          settle('api_key_missing')
+        }
+
+      })
+
+    })
+
+  }
+
+  // the installer command as an argument vector, or null when the registry is unknown
+  // or when a value that would end up on the command line is refused
+  private getInstallArgv = (registry: string, server: string, apiKey: string): string[]|null => {
+
+    if (registry !== 'smithery') {
+      return null
     }
-    return null
+
+    if (!isInstallValue(server, INSTALL_SERVER_PATTERN)) {
+      console.error('[mcp] Refused to install MCP server: the server name is not a valid registry identifier')
+      return null
+    }
+
+    if (apiKey && !isInstallValue(apiKey, INSTALL_API_KEY_PATTERN)) {
+      console.error(`[mcp] Refused to install MCP server ${server}: the API key contains unexpected characters`)
+      return null
+    }
+
+    return [
+      'npx', '-y', '@smithery/cli@latest', 'install', server, '--client', 'witsy',
+      ...(apiKey ? ['--key', apiKey] : [])
+    ]
+
+  }
+
+  // for display only: installServer never runs this string
+  getInstallCommand = (registry: string, server: string, apiKey: string): string|null => {
+    return this.getInstallArgv(registry, server, apiKey)?.join(' ') ?? null
   }
 
   editServer = async (server: McpServer): Promise<boolean> => {

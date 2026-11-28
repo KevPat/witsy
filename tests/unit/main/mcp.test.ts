@@ -1,5 +1,6 @@
 
-import { vi, test, expect, beforeEach } from 'vitest'
+import { vi, test, expect, beforeEach, afterEach, describe } from 'vitest'
+import { EventEmitter } from 'events'
 import type { McpServer } from '@/types/mcp'
 import { app } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -23,20 +24,28 @@ vi.mock('@main/i18n', () => ({
   useI18n: vi.fn(() => (key: string) => key)
 }))
 
-// mess with default / execSync so hack
-let command: string|null = null
+// installer process double: prints the success message unless a test drives it through `installer`
+type FakeInstaller = EventEmitter & { stdout: EventEmitter, stderr: EventEmitter, kill: () => void }
+let installer: FakeInstaller|null = null
+let installerOutput: string|null = 'successfully installed'
+let spawnError: Error|null = null
+const spawnCalls: { file: string, args: string[], options: any }[] = []
 vi.mock('child_process', async () => {
   return { default: {
-    exec: vi.fn((cmd) => { command = cmd; return {
-      on: vi.fn(),
-      stdout: { on: vi.fn((signal, callback) => {
-        console.log('stdout', signal, callback)
-        if (signal === 'data') {
-          callback('successfully installed')
-        }
-      }) },
-      stderr: { on: vi.fn() },
-    } })
+    spawn: vi.fn((file: string, args: string[], options: any) => {
+      spawnCalls.push({ file, args, options })
+      if (spawnError) throw spawnError
+      const child = new EventEmitter() as FakeInstaller
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.kill = vi.fn()
+      installer = child
+      if (installerOutput) {
+        const output = installerOutput
+        queueMicrotask(() => child.stdout.emit('data', Buffer.from(output)))
+      }
+      return child
+    })
   }}
 })
 
@@ -128,6 +137,10 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', async () => {
 
 beforeEach(() => {
   count = 1
+  installer = null
+  installerOutput = 'successfully installed'
+  spawnError = null
+  spawnCalls.length = 0
   config = JSON.parse(JSON.stringify(mcpConfig))
   mockConnect.mockResolvedValue(undefined)
   vi.clearAllMocks()
@@ -583,7 +596,246 @@ test('Install smithery', async () => {
   const mcp = new Mcp(app)
   expect(await mcp.getInstallCommand('smithery', 'server', 'key')).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
   expect(await mcp.installServer('smithery', 'server', 'key')).toBe('success')
-  expect(command).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
+  expect(spawnCalls).toHaveLength(1)
+  expect(spawnCalls[0].file).toBe('npx')
+  expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', 'server', '--client', 'witsy', '--key', 'key'])
+  expect(spawnCalls[0].options.shell).toBe(false)
+})
+
+describe('Install server', () => {
+
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const comspec = process.env.comspec
+
+  // lets the promise chain of installServer reach the installer
+  const settle = async () => {
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    installerOutput = null
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+    if (comspec === undefined) delete process.env.comspec
+    else process.env.comspec = comspec
+    vi.useRealTimers()
+  })
+
+  test.each([
+    ['exa'],
+    ['@smithery-ai/server-sequential-thinking'],
+    ['@JackKuo666/pubmed-mcp-server'],
+    ['@owner/server_name.js@1.2.3'],
+    ['owner/repo/server@latest'],
+  ])('accepts registry identifier %s', (server) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', server, '')).toBe(`npx -y @smithery/cli@latest install ${server} --client witsy`)
+  })
+
+  test.each([
+    ['server; echo INJECTED'],
+    ['server && echo INJECTED'],
+    ['server | echo INJECTED'],
+    ['$(echo INJECTED)'],
+    ['`echo INJECTED`'],
+    ['server\necho INJECTED'],
+    ['server --config /etc/passwd'],
+    ['--help'],
+    ['-y'],
+    ['server"'],
+    ['server\''],
+    ['%PATH%'],
+    ['server^&calc'],
+    ['!server!'],
+    ['../../server'],
+    ['@owner/'],
+    ['server@'],
+    [''],
+    ['a'.repeat(300)],
+    [{ toString: () => 'server' } as unknown as string],
+    [['server'] as unknown as string],
+    [undefined as unknown as string],
+  ])('refuses server name %j', async (server) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', server, '')).toBeNull()
+    expect(await mcp.installServer('smithery', server, 'key')).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test.each([
+    ['key`echo INJECTED`'],
+    ['key | echo INJECTED'],
+    ['key; echo INJECTED'],
+    ['$(echo INJECTED)'],
+    ['key --client other'],
+    ['--config'],
+    ['key"'],
+    ['%USERPROFILE%'],
+    ['key&calc'],
+    ['a'.repeat(300)],
+    [{ toString: () => 'key' } as unknown as string],
+  ])('refuses API key %j', async (apiKey) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', 'server', apiKey)).toBeNull()
+    expect(await mcp.installServer('smithery', 'server', apiKey)).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test('refuses an unknown registry', async () => {
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('unknown-registry', 'server', 'key')).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test('omits the key option without an API key', async () => {
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', '@owner/server', '')).toBe('success')
+    expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy'])
+  })
+
+  test('starts npx through cmd.exe with separate arguments on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    process.env.comspec = 'C:\\Windows\\System32\\cmd.exe'
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', '@owner/server', 'key-123')).toBe('success')
+    expect(spawnCalls[0].file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(spawnCalls[0].args).toStrictEqual(['/d', '/s', '/c', 'npx', '-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy', '--key', 'key-123'])
+    expect(spawnCalls[0].options.shell).toBe(false)
+    // nothing that cmd.exe or the Windows argument quoting would have to interpret
+    expect(spawnCalls[0].args.every((arg) => /^[A-Za-z0-9@/._-]+$/.test(arg))).toBe(true)
+  })
+
+  test('maps known installer messages to a status and stops the installer', async () => {
+    const mcp = new Mcp(app)
+    let pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Server not found'))
+    expect(await pending).toBe('not_found')
+    expect(installer!.kill).toHaveBeenCalled()
+    pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stdout.emit('data', Buffer.from('Please enter your Smithery API key'))
+    expect(await pending).toBe('api_key_missing')
+    expect(installer!.kill).toHaveBeenCalled()
+  })
+
+  test('reports an error shortly after a generic failure message', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    let status = 'pending'
+    mcp.installServer('smithery', 'server', '').then((s) => status = s)
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Failed to install server'))
+    await settle()
+    expect(status).toBe('pending')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(status).toBe('error')
+    expect(installer!.kill).toHaveBeenCalled()
+  })
+
+  test('a more specific message wins over the generic failure message', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Failed to install server'))
+    installer!.stderr.emit('data', Buffer.from('Server not found'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await pending).toBe('not_found')
+  })
+
+  test('settles with an error when the installer exits with a failure code', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('npm error code ENOTFOUND'))
+    installer!.emit('close', 1, null)
+    expect(await pending).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('exited with code 1')
+  })
+
+  test('settles with an error when the installer is killed', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.emit('close', null, 'SIGKILL')
+    expect(await pending).toBe('error')
+  })
+
+  test('settles with success when the installer exits cleanly without a known message', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stdout.emit('data', Buffer.from('done'))
+    installer!.emit('close', 0, null)
+    expect(await pending).toBe('success')
+  })
+
+  test('settles with an error when the installer cannot be started', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.emit('error', new Error('spawn npx ENOENT'))
+    expect(await pending).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('spawn npx ENOENT')
+  })
+
+  test('settles with an error when spawn throws', async () => {
+    spawnError = new Error('spawn EINVAL')
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('spawn EINVAL')
+  })
+
+  test('settles with an error and stops the installer when it never finishes', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    let status = 'pending'
+    mcp.installServer('smithery', 'server', '').then((s) => status = s)
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000)
+    expect(status).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60 * 1000)
+    expect(status).toBe('error')
+    expect(installer!.kill).toHaveBeenCalled()
+    expect(mcp.logs['server'].join('\n')).toContain('timed out')
+  })
+
+  test('settles with an error when the installed server cannot be read back', async () => {
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    const getServers = mcp.getServers
+    let calls = 0
+    mcp.getServers = () => {
+      if (++calls === 2) throw new Error('settings are corrupted')
+      return getServers()
+    }
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('error')
+  })
+
+  test('succeeds when the installer did not add a server to the settings', async () => {
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('success')
+    expect(StdioClientTransport).not.toHaveBeenCalled()
+  })
+
+  test('connects to the server the installer added to the settings', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', '@owner/server', '')
+    await settle()
+    config.mcpServers['@owner/server'] = { command: 'npx', args: ['-y', '@smithery/cli@latest', 'run', '@owner/server'] }
+    installer!.stdout.emit('data', Buffer.from('@owner/server successfully installed'))
+    expect(await pending).toBe('success')
+    expect(StdioClientTransport).toHaveBeenLastCalledWith(expect.objectContaining({
+      command: 'npx', args: ['-y', '@smithery/cli@latest', 'run', '@owner/server'],
+    }))
+    expect(mcp.clients.map(c => c.server.uuid)).toEqual(['owner/server'])
+  })
+
 })
 
 test('Create HTTP server with OAuth', async () => {
