@@ -1,4 +1,4 @@
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import { App, dialog } from 'electron'
 import extractZip from 'extract-zip'
 import fs from 'node:fs'
@@ -87,7 +87,7 @@ export const exportBackup = async (app: App): Promise<boolean> => {
 
     // Create a file to stream archive data to
     const output = fs.createWriteStream(backupPath)
-    const archive = archiver('zip', {
+    const archive = new ZipArchive({
       zlib: { level: 9 } // Compression level
     })
 

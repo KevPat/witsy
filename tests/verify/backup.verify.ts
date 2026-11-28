@@ -9,7 +9,7 @@
 //
 
 import { afterAll, expect, test } from 'vitest'
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import crypto from 'node:crypto'
 import extractZip from 'extract-zip'
 import fs from 'node:fs'
@@ -142,7 +142,7 @@ test('an older-format backup that holds keys restores none of them', async () =>
   const oldZip = path.join(dir, 'old-format-backup.zip')
   await new Promise<void>((resolve, reject) => {
     const output = fs.createWriteStream(oldZip)
-    const archive = archiver('zip')
+    const archive = new ZipArchive()
     output.on('close', () => resolve())
     archive.on('error', reject)
     archive.pipe(output)

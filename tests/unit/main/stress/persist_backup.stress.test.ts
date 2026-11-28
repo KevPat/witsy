@@ -1,6 +1,6 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import { app, dialog } from 'electron'
 import extractZip from 'extract-zip'
 import fs from 'node:fs'
@@ -89,8 +89,9 @@ vi.mock('@main/i18n', async (importOriginal) => {
 // the real archiver, unless a test installs a fake archive to play an error scenario
 const { fakeArchive } = vi.hoisted(() => ({ fakeArchive: { current: null as any } }))
 vi.mock('archiver', async (importOriginal) => {
-  const real: any = (await importOriginal<any>()).default
-  return { default: (...args: any[]) => fakeArchive.current ?? real(...args) }
+  const real: any = await importOriginal<any>()
+  // a constructor that returns an object: `new ZipArchive()` gets the fake or a real archive
+  return { ...real, ZipArchive: function (...args: any[]) { return fakeArchive.current ?? new real.ZipArchive(...args) } }
 })
 
 // deterministic PRNG so a failing fuzz case can be replayed
@@ -151,7 +152,7 @@ const restoreFromZip = async (zip: string): Promise<{ result: boolean, quit: num
 const makeZip = async (name: string, entries: Record<string, string>): Promise<string> => {
   const target = path.join(root, name)
   const output = fs.createWriteStream(target)
-  const archive = archiver('zip')
+  const archive = new ZipArchive()
   const closed = new Promise<void>((resolve, reject) => {
     output.on('close', () => resolve())
     archive.on('error', reject)

@@ -11,7 +11,9 @@ export default defineConfig((env) => {
   const define = getBuildDefine(forgeEnv);
   // a build made by the CI of a fork is updated from the releases of that fork: see getUpdateRepository in src/main/autoupdate.ts
   define.__WITSY_UPDATE_REPOSITORY__ = JSON.stringify(process.env.WITSY_UPDATE_REPOSITORY || process.env.GITHUB_REPOSITORY || '');
-  const mainExternal = external.filter((dependency) => dependency !== 'pdfjs-dist');
+  // bundled rather than loaded at run time: pdfjs-dist, and archiver, which is an ES module only since
+  // version 8 (the main process is CommonJS)
+  const mainExternal = external.filter((dependency) => dependency !== 'pdfjs-dist' && dependency !== 'archiver');
   const config: UserConfig = {
     build: {
       lib: {

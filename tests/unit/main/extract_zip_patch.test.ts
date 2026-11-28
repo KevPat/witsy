@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'vitest'
-import archiver from 'archiver'
+import { Archiver, ZipArchive } from 'archiver'
 import extractZip from 'extract-zip'
 import fs from 'fs'
 import os from 'os'
@@ -11,9 +11,9 @@ import path from 'path'
 
 let root: string
 
-const makeZip = async (zipPath: string, build: (archive: archiver.Archiver) => void) => {
+const makeZip = async (zipPath: string, build: (archive: Archiver) => void) => {
   const output = fs.createWriteStream(zipPath)
-  const archive = archiver('zip')
+  const archive = new ZipArchive()
   const done = new Promise<void>((resolve, reject) => {
     output.on('close', () => resolve())
     archive.on('error', reject)

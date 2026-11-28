@@ -7,7 +7,7 @@ import * as commands from '@main/commands'
 import { writeFileAtomicSync } from '@main/atomic'
 import defaultSettings from '@root/defaults/settings.json'
 import fs from 'fs'
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import extractZip from 'extract-zip'
 
 // Mock all dependencies
@@ -73,7 +73,7 @@ vi.mock('fs', () => ({
 }))
 
 vi.mock('archiver', () => ({
-  default: vi.fn()
+  ZipArchive: vi.fn()
 }))
 
 vi.mock('extract-zip', () => ({
@@ -112,7 +112,7 @@ describe('Backup functionality', () => {
         pointer: vi.fn(() => 1024)
       }
 
-      vi.mocked(archiver).mockReturnValue(mockArchive as any)
+      vi.mocked(ZipArchive).mockImplementation(function () { return mockArchive } as any)
 
       const mockOutput = {
         on: vi.fn((event, callback) => {
@@ -216,7 +216,7 @@ describe('Backup functionality', () => {
       vi.mocked(file.pickDirectory).mockReturnValue('/mock/export/dir')
       
       // Mock archiver to throw an error
-      vi.mocked(archiver).mockImplementation(() => {
+      vi.mocked(ZipArchive).mockImplementation(function () {
         throw new Error('Archiver creation failed')
       })
 
