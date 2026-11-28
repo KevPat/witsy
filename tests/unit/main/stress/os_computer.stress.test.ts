@@ -5,10 +5,13 @@ import nut from '@main/automations/computer_nut'
 import Computer from '@main/computer'
 import { bug } from './bug'
 
-const keyboard = { config: { autoDelayMs: 0 }, pressKey: vi.fn(async () => undefined), type: vi.fn(async () => undefined) }
+const keyboard = { config: { autoDelayMs: 0 }, pressKey: vi.fn(async () => undefined), releaseKey: vi.fn(async () => undefined), type: vi.fn(async () => undefined) }
 const mouse = { getPosition: vi.fn(), setPosition: vi.fn(), leftClick: vi.fn() }
 
-vi.mock('@nut-tree-fork/nut-js', () => ({ keyboard, mouse }))
+vi.mock('@nut-tree-fork/nut-js', async () => ({
+  keyboard, mouse,
+  Key: (await vi.importActual<typeof import('@nut-tree-fork/shared')>('@nut-tree-fork/shared')).Key,
+}))
 
 const display = { size: { width: 1920, height: 1080 }, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }
 
@@ -41,9 +44,9 @@ describe('computer_nut key mapping', () => {
     expect(keyboard.pressKey).toHaveBeenCalled()
   })
 
-  bug('a common key (Tab) can be pressed', async () => {
-    // fails today: keyMap only contains { Return: Enter }, so any other key name throws
-    // "Tried to press unknown key" and the computer-use key action silently fails.
+  test('a common key (Tab) can be pressed', async () => {
+    // failed before L-03: keyMap only contained { Return: Enter }, so any other key name threw
+    // "Tried to press unknown key" and the computer-use key action silently failed.
     await nut.isAvailable()
     const outcome = await nut.key('Tab').then(() => 'ok').catch((e: Error) => e.message)
     expect(outcome).toBe('ok')
