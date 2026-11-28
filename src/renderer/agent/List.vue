@@ -20,12 +20,12 @@
             v-if="viewMode === 'table'"
             v-tooltip="{ text: t('agent.forge.viewCards'), position: 'top-left' }"
             @click="setViewMode('cards')"
-          ><LayoutGridIcon /></ButtonIcon>
+           :label="t('agent.forge.viewCards')"><LayoutGridIcon /></ButtonIcon>
           <ButtonIcon
             v-else
             v-tooltip="{ text: t('agent.forge.viewTable'), position: 'top-left' }"
             @click="setViewMode('table')"
-          ><ListIcon /></ButtonIcon>
+           :label="t('agent.forge.viewTable')"><ListIcon /></ButtonIcon>
         </div>
       </div>
 
@@ -54,7 +54,7 @@
                 class="run"
                 v-tooltip="{ text: t('agent.help.run'), position: 'top-left' }"
                 @click="onAgentRun(agent)"
-              ><PlayIcon /></ButtonIcon>
+               :label="t('agent.help.run')"><PlayIcon /></ButtonIcon>
               <AgentExecutionsMenu
                 :executions="getRunningExecutions(agent.uuid)"
                 @stop="$emit('stop', $event)"
@@ -67,7 +67,7 @@
                 class="view"
                 v-tooltip="{ text: t('agent.help.view'), position: 'top-left' }"
                 @click="$emit('view', agent)"
-              ><EyeIcon /></ButtonIcon>
+               :label="t('agent.help.view')"><EyeIcon /></ButtonIcon>
               <AgentMenu
                 :agent="agent"
                 position="below-right"

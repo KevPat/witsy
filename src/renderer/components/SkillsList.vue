@@ -35,7 +35,7 @@
                 </div>
               </td>
               <td>
-                <ButtonIcon @click="removeSingleLocation(row.path)" v-if="!row.locked">
+                <ButtonIcon :label="t('common.delete')" @click="removeSingleLocation(row.path)" v-if="!row.locked">
                   <Trash2Icon />
                 </ButtonIcon>
               </td>
@@ -62,7 +62,7 @@
           </div>
 
           <div class="actions">
-            <ContextMenuTrigger class="toolbar-menu" position="below-right" :bordered="true">
+            <ContextMenuTrigger :label="t('common.actions')" class="toolbar-menu" position="below-right" :bordered="true">
               <template #menu>
                 <div class="item" @click="openLocationManager">{{ t('settings.plugins.skills.manageLocations') }}</div>
                 <div class="item" @click="refreshSkills">{{ t('settings.plugins.skills.refresh') }}</div>
@@ -85,13 +85,13 @@
                 {{ skill.name }}
               </div></td>
               <td class="skill-actions">
-                <ButtonIcon @click="editSkill(skill)" v-if="canEditSkill(skill)">
+                <ButtonIcon :label="t('common.edit')" @click="editSkill(skill)" v-if="canEditSkill(skill)">
                   <PencilIcon />
                 </ButtonIcon>
-                <ButtonIcon @click="viewSkill(skill)" v-else>
+                <ButtonIcon :label="t('common.view')" @click="viewSkill(skill)" v-else>
                   <EyeIcon />
                 </ButtonIcon>
-                <ButtonIcon @click="uninstallSkill(skill)">
+                <ButtonIcon :label="t('common.delete')" @click="uninstallSkill(skill)">
                   <Trash2Icon />
                 </ButtonIcon>
               </td>

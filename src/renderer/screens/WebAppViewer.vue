@@ -10,8 +10,8 @@
     <div v-if="!isLoading" class="webapp-toolbar">
       <ButtonIcon
         @click="goHome"
-        v-tooltip="{ text: 'Go to home page', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('webapps.navigation.home'), position: 'bottom' }"
+       :label="t('webapps.navigation.home')">
         <HomeIcon :size="16" />
       </ButtonIcon>
 
@@ -20,15 +20,15 @@
       <ButtonIcon
         @click="goBack"
         :disabled="!canGoBack"
-        v-tooltip="{ text: 'Go back', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('webapps.navigation.back'), position: 'bottom' }"
+       :label="t('webapps.navigation.back')">
         <ArrowLeftIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="goForward"
         :disabled="!canGoForward"
-        v-tooltip="{ text: 'Go forward', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('webapps.navigation.forward'), position: 'bottom' }"
+       :label="t('webapps.navigation.forward')">
         <ArrowRightIcon :size="16" />
       </ButtonIcon>
 
@@ -36,8 +36,8 @@
 
       <ButtonIcon
         @click="reload"
-        v-tooltip="{ text: 'Reload', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('webapps.navigation.reload'), position: 'bottom' }"
+       :label="t('webapps.navigation.reload')">
         <RotateCwIcon :size="16" />
       </ButtonIcon>
     </div>
@@ -57,6 +57,7 @@
 import { onMounted, onBeforeUnmount, ref, watch, computed } from 'vue'
 import Loader from '@components/Loader.vue'
 import ButtonIcon from '@components/ButtonIcon.vue'
+import { t } from '@services/i18n'
 import { ArrowLeftIcon, ArrowRightIcon, HomeIcon, RotateCwIcon } from 'lucide-vue-next'
 import { WebApp } from 'types/workspace'
 

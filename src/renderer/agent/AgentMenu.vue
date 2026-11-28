@@ -1,6 +1,6 @@
 
 <template>
-  <ContextMenuTrigger :position="position">
+  <ContextMenuTrigger :label="t('common.actions')" :position="position">
     <template #menu>
       <div class="item edit" @click="emit('edit', agent)">
         <PencilIcon /> {{ t('agent.help.edit') }}

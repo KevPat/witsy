@@ -2,7 +2,7 @@
   <div class="model-settings">
     <div class="header">
       <div class="title">{{ t('modelSettings.advancedSettings') }}</div>
-      <ButtonIcon class="close" @click="$emit('close')">
+      <ButtonIcon :label="t('common.close')" class="close" @click="$emit('close')">
         <SlidersHorizontalIcon />
       </ButtonIcon>
     </div>

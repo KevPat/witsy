@@ -1,23 +1,40 @@
 import { mount } from '@vue/test-utils'
-import { h } from 'vue'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import ButtonIcon from '@components/ButtonIcon.vue'
-import { Trash2Icon } from 'lucide-vue-next'
 
-test('ButtonIcon is non-submitting and exposes its accessible label', () => {
+test('ButtonIcon is non-submitting and exposes its explicit accessible label', async () => {
+  const onSubmit = vi.fn()
   const wrapper = mount(ButtonIcon, {
     props: { label: 'Delete message' },
     slots: { default: '<svg />' },
   })
+  const form = document.createElement('form')
+  form.addEventListener('submit', onSubmit)
+  document.body.appendChild(form)
+  form.appendChild(wrapper.element)
 
   expect(wrapper.attributes('type')).toBe('button')
   expect(wrapper.attributes('aria-label')).toBe('Delete message')
+  await wrapper.trigger('click')
+  expect(onSubmit).not.toHaveBeenCalled()
+
+  wrapper.unmount()
+  form.remove()
 })
 
-test('ButtonIcon derives a label from its icon for existing callers', () => {
+test('ButtonIcon does not infer a label from slotted icon names', () => {
+  const warnings: string[] = []
   const wrapper = mount(ButtonIcon, {
-    slots: { default: () => h(Trash2Icon) },
+    // @ts-expect-error label is deliberately omitted to verify runtime behavior
+    props: {},
+    slots: { default: '<svg name="trash-2" />' },
+    global: {
+      config: {
+        warnHandler: (message) => warnings.push(message),
+      },
+    },
   })
 
-  expect(wrapper.attributes('aria-label')).toMatch(/Trash/)
+  expect(warnings).toContain('Missing required prop: "label"')
+  expect(wrapper.attributes('aria-label')).toBeUndefined()
 })

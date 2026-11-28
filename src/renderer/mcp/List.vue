@@ -68,7 +68,7 @@
                 class="start"
                 v-tooltip="{ text: t('mcp.tooltips.startServer'), position: 'top-left' }"
                 @click="onEnabled(server)"
-              >
+               :label="t('mcp.tooltips.startServer')">
                 <PlayIcon />
               </ButtonIcon>
               <ButtonIcon
@@ -77,7 +77,7 @@
                 class="stop"
                 v-tooltip="{ text: t('mcp.tooltips.stopServer'), position: 'top-left' }"
                 @click="onEnabled(server)"
-              >
+               :label="t('mcp.tooltips.stopServer')">
                 <PauseIcon />
               </ButtonIcon>
 
@@ -87,12 +87,12 @@
                 :class="{ 'disabled': !isRunning(server) }"
                 v-tooltip="{ text: t('mcp.tooltips.viewTools'), position: 'top-left' }"
                 @click="showServerInfo(server)"
-              >
+               :label="t('mcp.tooltips.viewTools')">
                 <SearchIcon />
               </ButtonIcon>
 
               <!-- Context menu for other actions -->
-              <ContextMenuTrigger position="below-right">
+              <ContextMenuTrigger :label="t('common.actions')" position="below-right">
                 <template #menu>
                   <div class="item logs" @click="showLogs(server)" v-if="hasLogs(server)">
                     {{ t('mcp.tooltips.viewLogs') }}

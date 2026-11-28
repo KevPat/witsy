@@ -6,20 +6,20 @@
         <!-- Row Operations -->
         <ButtonIcon
           @click="editor.chain().focus().addRowBefore().run()"
-          v-tooltip="{ text: 'Add row above', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.addRowAbove'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.addRowAbove')">
           <AddRowAboveIcon class="custom-icon" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().addRowAfter().run()"
-          v-tooltip="{ text: 'Add row below', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.addRowBelow'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.addRowBelow')">
           <AddRowBelowIcon class="custom-icon" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().deleteRow().run()"
-          v-tooltip="{ text: 'Delete row', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.deleteRow'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.deleteRow')">
           <RemoveRowIcon class="custom-icon" />
         </ButtonIcon>
 
@@ -28,20 +28,20 @@
         <!-- Column Operations -->
         <ButtonIcon
           @click="editor.chain().focus().addColumnBefore().run()"
-          v-tooltip="{ text: 'Add column left', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.addColumnLeft'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.addColumnLeft')">
           <AddColumnBeforeIcon class="custom-icon" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().addColumnAfter().run()"
-          v-tooltip="{ text: 'Add column right', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.addColumnRight'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.addColumnRight')">
           <AddColumnAfterIcon class="custom-icon" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().deleteColumn().run()"
-          v-tooltip="{ text: 'Delete column', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.deleteColumn'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.deleteColumn')">
           <RemoveColumnIcon class="custom-icon" />
         </ButtonIcon>
 
@@ -50,14 +50,14 @@
         <!-- Cell Operations -->
         <ButtonIcon
           @click="editor.chain().focus().mergeCells().run()"
-          v-tooltip="{ text: 'Merge cells', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.mergeCells'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.mergeCells')">
           <TableCellsMergeIcon :size="16" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().splitCell().run()"
-          v-tooltip="{ text: 'Split cell', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.splitCell'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.splitCell')">
           <TableCellsSplitIcon :size="16" />
         </ButtonIcon>
 
@@ -66,14 +66,14 @@
         <!-- Header Operations -->
         <ButtonIcon
           @click="editor.chain().focus().toggleHeaderRow().run()"
-          v-tooltip="{ text: 'Toggle header row', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.toggleHeaderRow'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.toggleHeaderRow')">
           <ToggleHeaderRowIcon class="custom-icon" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().toggleHeaderColumn().run()"
-          v-tooltip="{ text: 'Toggle header column', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.toggleHeaderColumn'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.toggleHeaderColumn')">
           <ToggleHeaderColumnIcon class="custom-icon" />
         </ButtonIcon>
 
@@ -82,8 +82,8 @@
         <!-- Delete Table -->
         <ButtonIcon
           @click="editor.chain().focus().deleteTable().run()"
-          v-tooltip="{ text: 'Delete table', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.table.deleteTable'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.table.deleteTable')">
           <Trash2Icon :size="16" class="custom-icon" />
         </ButtonIcon>
 
@@ -103,6 +103,7 @@ import ToggleHeaderColumnIcon from '@assets/toggle_header_column.svg?component'
 import ToggleHeaderRowIcon from '@assets/toggle_header_row.svg?component'
 import ButtonIcon from '@components/ButtonIcon.vue'
 import ScrollContainer from '@components/ScrollContainer.vue'
+import { t } from '@services/i18n'
 import type { Editor } from '@tiptap/vue-3'
 import { TableCellsMergeIcon, TableCellsSplitIcon, Trash2Icon } from 'lucide-vue-next'
 

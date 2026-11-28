@@ -11,7 +11,7 @@
             <div class="text">{{ repo.name }}</div>
           </div>
           <Spinner v-if="processingBases.includes(repo.uuid)" />
-          <ButtonIcon class="trailing" v-if="selectedRepo?.uuid === repo.uuid">
+          <ButtonIcon :label="t('docRepo.list.title')" class="trailing" v-if="selectedRepo?.uuid === repo.uuid">
             <ChevronRightIcon />
           </ButtonIcon>
         </div>

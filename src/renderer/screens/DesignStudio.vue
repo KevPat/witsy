@@ -3,7 +3,7 @@
     <div class="sp-sidebar">
       <header>
         <div class="title">{{ t('designStudio.title') }}</div>
-        <ButtonIcon class="reset" @click="onReset" v-if="currentMedia">
+        <ButtonIcon :label="t('common.reset')" class="reset" @click="onReset" v-if="currentMedia">
           <ListRestartIcon  />
         </ButtonIcon>
       </header>

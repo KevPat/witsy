@@ -1,5 +1,5 @@
 <template>
-  <ButtonIcon class="stop">
+  <ButtonIcon :label="t('agent.help.stop')" class="stop">
     <SquareIcon />
     <span class="count">{{ executions.length > 9 ? '✱' : executions.length }}</span>
   </ButtonIcon>
@@ -10,6 +10,7 @@
 import { PropType } from 'vue'
 import { SquareIcon } from 'lucide-vue-next'
 import ButtonIcon from '@components/ButtonIcon.vue'
+import { t } from '@services/i18n'
 import { Agent } from 'types/agents'
 
 defineProps({
