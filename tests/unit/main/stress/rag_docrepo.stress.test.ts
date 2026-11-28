@@ -698,7 +698,7 @@ describe('DocumentRepository docrepo.json', () => {
     expect(newRepo().list('workspace').map(base => base.uuid).sort()).toEqual([...ids].sort())
   })
 
-  bug('a docrepo.json truncated by a crash is not overwritten with an empty list', async () => {
+  test('a docrepo.json truncated by a crash is not overwritten with an empty list', async () => {
     // load() swallows the parse error and starts empty, the next save() replaces the file
     const first = newRepo()
     const alpha = await createBase(first, 'Alpha')
@@ -711,7 +711,7 @@ describe('DocumentRepository docrepo.json', () => {
     expect(recoverable([alpha])).toEqual([alpha])
   })
 
-  bug('one malformed entry in docrepo.json does not make the following bases disappear', async () => {
+  test('one malformed entry in docrepo.json does not make the following bases disappear', async () => {
     // loading stops at the first entry that throws, and the next save() only writes what was loaded before it
     const first = newRepo()
     const alpha = await createBase(first, 'Alpha')

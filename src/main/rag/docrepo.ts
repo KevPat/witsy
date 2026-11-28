@@ -9,6 +9,7 @@ import fs from 'fs'
 import { loadSettings } from '../config'
 import { Configuration } from 'types/config'
 import Loader from './loader'
+import { backupCorruptFile, writeFileAtomicSync } from '../atomic'
 
 export default class DocumentRepository {
 
@@ -110,18 +111,35 @@ export default class DocumentRepository {
     const docrepoFile = docrepoFilePath(this.app)
 
     // load the file
+    let unreadable = false
     try {
 
       const repoJson = fs.readFileSync(docrepoFile, 'utf-8')
-      for (const jsonDb of JSON.parse(repoJson)) {
-        const base = DocumentBaseImpl.fromJSON(this.app, jsonDb)
-        this.contents.push(base)
+      const jsonDbs = JSON.parse(repoJson)
+      if (!Array.isArray(jsonDbs)) {
+        throw new Error('docrepo.json is not a list of document bases')
+      }
+      for (const jsonDb of jsonDbs) {
+        try {
+          const base = DocumentBaseImpl.fromJSON(this.app, jsonDb)
+          this.contents.push(base)
+        } catch (error) {
+          // one broken entry must not hide the bases that follow it
+          console.log('[rag] Error retrieving document base', jsonDb?.uuid, error)
+          unreadable = true
+        }
       }
 
     } catch (error) {
       if (error.code !== 'ENOENT') {
         console.log('[rag] Error retrieving docrepo', error)
+        unreadable = true
       }
+    }
+
+    // the next save replaces the file: keep a copy of what could not be read
+    if (unreadable) {
+      backupCorruptFile(docrepoFile)
     }
 
   }
@@ -131,7 +149,7 @@ export default class DocumentRepository {
 
       // save the file
       const docrepoFile = docrepoFilePath(this.app)
-      fs.writeFileSync(docrepoFile, JSON.stringify(this.contents.map((db: DocumentBaseImpl) => ({
+      writeFileAtomicSync(docrepoFile, JSON.stringify(this.contents.map((db: DocumentBaseImpl) => ({
         ...db,
         app: undefined,
         db: undefined,

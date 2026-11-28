@@ -444,6 +444,86 @@ test('Docrepo load', async () => {
   fs.rmSync(tempdir, { recursive: true, force: true })
 })
 
+const docrepoBackups = () => fs.readdirSync(testTmpDir).filter(name => name.startsWith('docrepo.corrupt-'))
+
+const removeDocrepoBackups = () => {
+  for (const name of docrepoBackups()) fs.rmSync(path.join(testTmpDir, name), { force: true })
+}
+
+test('Docrepo load without a file does not create a backup', () => {
+  const docrepo = new DocumentRepository(app)
+  expect(docrepo.list('workspace')).toEqual([])
+  expect(docrepoBackups()).toEqual([])
+})
+
+test.each([
+  ['truncated', '[{"uuid": "1234", "name": "Base", "docum'],
+  ['not a list', '{"uuid": "1234", "name": "Base", "documents": []}'],
+  ['null', 'null'],
+])('Docrepo load keeps a copy of an unreadable file (%s)', async (_, content) => {
+
+  fs.writeFileSync(path.join(testTmpDir, 'docrepo.json'), content)
+  const docrepo = new DocumentRepository(app)
+  expect(docrepo.list('workspace')).toEqual([])
+
+  // the unreadable file was copied before anything can overwrite it
+  const backups = docrepoBackups()
+  expect(backups).toHaveLength(1)
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  // and the repository is usable
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  expect(JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')).map((base: any) => base.uuid)).toEqual([docbase])
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  removeDocrepoBackups()
+})
+
+test('Docrepo load skips a malformed base and keeps the others', async () => {
+
+  const docrepo = new DocumentRepository(app)
+  const docbase1 = await docrepo.createDocBase('workspace', 'name1', 'openai', 'text-embedding-ada-002')
+  const docbase2 = await docrepo.createDocBase('workspace', 'name2', 'openai', 'text-embedding-ada-002')
+  const entries = JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8'))
+  const content = JSON.stringify([entries[0], { uuid: 'broken', name: 'Broken' }, null, entries[1]])
+  fs.writeFileSync(path.join(testTmpDir, 'docrepo.json'), content)
+
+  // reload
+  docrepo.load()
+  expect(docrepo.list('workspace').map(base => base.uuid)).toEqual([docbase1, docbase2])
+
+  // the entries that were skipped are still in the backup
+  const backups = docrepoBackups()
+  expect(backups).toHaveLength(1)
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  removeDocrepoBackups()
+})
+
+test('Docrepo save failure keeps the previous file', async () => {
+
+  const docrepo = new DocumentRepository(app)
+  await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const before = fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')
+
+  // the temporary file cannot replace docrepo.json
+  const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw new Error('ENOSPC: no space left on device') })
+  try {
+    await docrepo.updateDocBase(docrepo.list('workspace')[0].uuid, 'newname')
+  } finally {
+    renameSpy.mockRestore()
+  }
+
+  // previous content is intact and nothing is left behind
+  expect(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')).toBe(before)
+  expect(fs.readdirSync(testTmpDir).filter(name => name.endsWith('.tmp'))).toEqual([])
+
+  // next save works
+  docrepo.save()
+  expect(JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8'))[0].name).toBe('newname')
+
+})
+
 test('DocumentRepository detects offline file changes', async () => {
   
   // we need a config
