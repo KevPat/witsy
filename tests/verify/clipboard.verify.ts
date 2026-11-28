@@ -10,9 +10,12 @@
 import { describe, expect, test } from 'vitest'
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { commandExists, record, repoRoot, sleep } from './harness'
+
+const appRequire = createRequire(path.join(repoRoot, 'package.json'))
 import { runProbe } from './probes'
 
 const suite = 'clipboard'
@@ -30,7 +33,7 @@ describe.runIf(process.platform === 'linux' && commandExists('xclip'))('Linux: a
   const run = async (target: string, content: string) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsy-verify-clip-'))
     const bundle = path.join(dir, 'clipboard_snapshot.cjs')
-    const esbuild = require(path.join(repoRoot, 'node_modules', 'esbuild'))
+    const esbuild = appRequire('esbuild')
     esbuild.buildSync({ entryPoints: [path.join(repoRoot, 'src', 'main', 'automations', 'clipboard_snapshot.ts')], bundle: true, platform: 'node', format: 'cjs', external: ['electron'], outfile: bundle, logLevel: 'error' })
     const main = path.join(dir, 'main.cjs')
     fs.writeFileSync(main, `
@@ -61,7 +64,7 @@ app.whenReady().then(async () => {
       if (probe.status === 0 && probe.stdout === content) break
       await sleep(100)
     }
-    const electron = require(path.join(repoRoot, 'node_modules', 'electron')) as unknown as string
+    const electron = appRequire('electron') as unknown as string
     const res = spawnSync(electron, [main], { encoding: 'utf8', timeout: 60000 })
     try { owner.kill() } catch { /* gone */ }
     fs.rmSync(dir, { recursive: true, force: true })

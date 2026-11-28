@@ -16,7 +16,8 @@ import path from 'node:path'
 
 export const repoRoot = path.resolve(__dirname, '../..')
 export const reportRoot = path.join(repoRoot, 'verify-report')
-export const outRoot = path.join(repoRoot, 'out', 'verify')
+// not under out/: some sandboxes wipe folders named out or build
+export const outRoot = path.join(repoRoot, 'verify-builds')
 
 export type BuildVariant = 'test' | 'release' | 'release-node'
 

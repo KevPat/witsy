@@ -44,7 +44,7 @@ test('the main window reloads after its renderer crashes, and works again', asyn
   expect(after.destroyed).toBe(false)
   expect(after.gone).toEqual(['crashed'])
   // Playwright gives up on a page whose renderer crashed: look at the new one from the main process
-  const rendered = await waitFor(() => launched.app.evaluate(({}) => (globalThis as any).__verifyMain.webContents.executeJavaScript(
+  const rendered = await waitFor(() => launched.app.evaluate(() => (globalThis as any).__verifyMain.webContents.executeJavaScript(
     `!!document.querySelector('.main-window .prompt') && typeof window.api?.app?.getVersion === 'function'`)), 30000)
   expect(rendered).toBe(true)
   const file = path.join(artifactsDir(suite), 'after-reload.png')

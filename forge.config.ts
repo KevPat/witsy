@@ -43,7 +43,9 @@ const dmgOptions: MakerDMGConfig = {
   }
 }
 
-if (isDarwin) {
+// WITSY_UNSIGNED: a macOS build without Developer ID signing and notarization (npm run verify on a
+// Mac or a CI runner that has no signing secrets); the release workflows never set it
+if (isDarwin && !process.env.WITSY_UNSIGNED) {
   osxPackagerConfig = {
     osxSign: {
       identity: process.env.IDENTIFY_DARWIN_CODE,

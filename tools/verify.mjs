@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const reportRoot = path.join(root, 'verify-report')
-const outRoot = path.join(root, 'out', 'verify')
+const outRoot = path.join(root, 'verify-builds')
 const platformArch = `${process.platform}-${process.arch}`
 
 // suite -> the builds it needs
@@ -77,10 +77,17 @@ const build = (variant) => {
   delete env.WITSY_CLI_RUNTIME
   if (variant === 'test') env.TEST = '1'
   if (variant === 'release-node') env.WITSY_CLI_RUNTIME = 'node'
+  // no Developer ID here: package without signing and notarization (forge.config.ts)
+  if (process.platform === 'darwin' && !env.IDENTIFY_DARWIN_CODE) env.WITSY_UNSIGNED = '1'
   console.log(`[verify] electron-forge package (${variant})`)
   const produced = path.join(root, 'out', `Witsy-${platformArch}`)
   fs.rmSync(produced, { recursive: true, force: true })
   execSync('npx electron-forge package', { cwd: root, env, stdio: 'inherit' })
+  if (!fs.existsSync(produced)) {
+    const outDir = path.join(root, 'out')
+    const found = fs.existsSync(outDir) ? fs.readdirSync(outDir).join(', ') : 'no out folder'
+    throw new Error(`electron-forge package ended without ${path.relative(root, produced)} (out/: ${found})`)
+  }
   fs.rmSync(target, { recursive: true, force: true })
   fs.mkdirSync(path.dirname(target), { recursive: true })
   fs.renameSync(produced, target)
