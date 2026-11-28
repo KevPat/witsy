@@ -8,8 +8,9 @@ import { useWindowMock } from '@tests/mocks/window'
 
 // Mock the i18n service
 vi.mock('@services/i18n', () => ({
-  t: (key: string) => {
+  t: (key: string, values?: Record<string, any>) => {
     if (key === 'agent.copySuffix') return 'Copy'
+    if (key === 'agent.forge.import.toolNotFound') return `${key} ${values.step} ${values.tool}`
     return key
   }
 }))
@@ -645,6 +646,44 @@ test('Import with warnings shows warning dialog', async () => {
 
   // Agent should be saved
   expect(window.api.agents.save).toHaveBeenCalled()
+})
+
+test('Import warnings show the tool names of the imported file as text', async () => {
+  const wrapper: VueWrapper<any> = mount(AgentForge)
+
+  const tools = ['search <img src=x onerror="window.pwned=1">___ab12', 'fetch & <b>store</b>___cd34']
+  const fileContents = {
+    url: 'file://test.json',
+    mimeType: 'application/json',
+    contents: JSON.stringify({
+      uuid: 'new-uuid-with-markup',
+      name: 'Agent With Tools',
+      description: 'Test',
+      type: 'runnable',
+      engine: 'openai',
+      model: 'gpt-4',
+      steps: [{ tools, agents: [] }]
+    })
+  }
+  vi.mocked(window.api.file.pickFile).mockReturnValue(fileContents)
+  vi.mocked(Dialog.show).mockResolvedValue({ isConfirmed: true, isDenied: false, isDismissed: false, value: null })
+
+  wrapper.findComponent({ name: 'List' }).vm.$emit('importJson')
+  await flushPromises()
+
+  const options = vi.mocked(Dialog.show).mock.calls.map(([opts]) => opts).find((opts) => opts.title === 'agent.forge.import.warning.title')
+  expect(options).toBeDefined()
+
+  // what the dialog renders: the intro, one line per warning and nothing else than text
+  const body = document.createElement('div')
+  body.innerHTML = options.html
+  expect(Array.from(body.children).map((el) => el.tagName)).toEqual(['BR', 'BR', 'BR'])
+  expect(body.textContent).toBe([
+    'agent.forge.import.warning.text',
+    'agent.forge.import.toolNotFound 1 search <img src=x onerror="window.pwned=1">',
+    'agent.forge.import.toolNotFound 1 fetch & <b>store</b>',
+  ].join(''))
+  expect((window as any).pwned).toBeUndefined()
 })
 
 test('runningExecutions computed from runningAgentRuns state', () => {

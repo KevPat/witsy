@@ -467,3 +467,29 @@ test('Re-authenticate reuses existing credentials', async () => {
   expect(editor.vm.oauthClientId).toBe('existing-client-id')
   expect(editor.vm.oauthClientSecret).toBe('existing-client-secret')
 })
+
+test('Server logs are shown as text', async () => {
+
+  const server = { uuid: 'server-1', registryId: 'server-1', state: 'enabled', type: 'stdio', command: 'node', url: 'script.js', toolSelection: null as any }
+  const logs = [
+    'Failed to connect to MCP server',
+    'Error: <img src=x onerror="window.pwned=1"> & <b>retry</b>',
+  ]
+  const list: VueWrapper<any> = mount(List, {
+    ...stubTeleport,
+    props: { servers: [server], status: { servers: [{ ...server, tools: null }], logs: { 'server-1': logs } }, loading: false },
+  })
+
+  await list.find('.server-content.clickable').trigger('click')
+  expect(Dialog.show).toHaveBeenCalledTimes(1)
+  const options = vi.mocked(Dialog.show).mock.calls[0][0]
+  expect(options.text).toBeUndefined()
+
+  // what the dialog renders: one line per log entry and nothing else than text
+  const body = document.createElement('div')
+  body.innerHTML = options.html
+  expect(Array.from(body.children).map((el) => el.tagName)).toEqual(['BR'])
+  expect(body.textContent).toBe(logs.join(''))
+  expect((window as any).pwned).toBeUndefined()
+
+})
