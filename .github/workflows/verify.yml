@@ -1,5 +1,5 @@
 # .github/workflows/verify.yml
-# The verification suites of VERIFY.md (npm run verify) on a macOS runner: packaged app, fuses, CSP and
+# The verification suites of VERIFY.md (npm run verify) on macOS, Windows and Linux runners: packaged app, fuses, CSP and
 # HTML artifacts, PDF export, renderer crash, watcher, backup/restore, MCP stdio, clipboard, Python
 # sandbox and the archiver/rfc6902 differentials. Unsigned build (WITSY_UNSIGNED): no signing secrets,
 # no notarization. Dummy keys only.
@@ -16,12 +16,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ macos-latest ]
+        runner: [ macos-latest, windows-latest, ubuntu-24.04 ]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - name: Github checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libevdev-dev xvfb xclip poppler-utils unzip
       - name: Use Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

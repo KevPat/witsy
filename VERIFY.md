@@ -27,7 +27,7 @@ node tools/verify.mjs a b c    # several suites; --rebuild to package again, --n
   - Native dialogs are answered by the suite.
   - Only dummy keys are used (`DUMMY_KEYS` in `tests/verify/harness.ts`), and every report is scanned so that none of them leaks.
 - **Linux:** the suites re-run themselves under `xvfb-run` when there is no display. Install `xvfb`, `xclip` (clipboard suite), `unzip` and `poppler-utils` (pdf suite).
-- **CI:** `.github/workflows/verify.yml` runs every suite on `macos-latest`, with no signing secrets, and uploads `verify-report/`.
+- **CI:** `.github/workflows/verify.yml` runs every suite on `macos-latest`, `windows-latest` and `ubuntu-24.04`, with no signing secrets, and uploads `verify-report/`.
 
 | suite | replaces the by-hand check | what it checks |
 | --- | --- | --- |
