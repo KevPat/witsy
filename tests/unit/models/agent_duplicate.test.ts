@@ -78,7 +78,19 @@ describe('Agent.duplicate()', () => {
     expect(duplicated.locale).toBe(original.locale)
     expect(duplicated.instructions).toBe(original.instructions)
     expect(duplicated.schedule).toBe(original.schedule)
-    expect(duplicated.webhookToken).toBe(original.webhookToken)
+  })
+
+  test('Does not copy the webhook token', () => {
+    // the token is the credential of one agent: with a shared token the webhook url of the copy
+    // would run whichever of the two agents is found first
+    const original = new Agent()
+    original.webhookToken = 'test-token'
+
+    const duplicated = original.duplicate()
+
+    expect(duplicated.webhookToken).toBeNull()
+    expect(original.webhookToken).toBe('test-token')
+    expect(Agent.fromJson(JSON.parse(JSON.stringify(duplicated))).webhookToken).toBeNull()
   })
 
   test('Deep copies modelOpts', () => {

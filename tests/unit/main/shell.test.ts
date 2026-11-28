@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { executeCommand, analyzeCommand, validateWorkingDirectory } from '../../../src/main/shell'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join, sep } from 'path'
 
 describe('Shell Executor', () => {
   let tempDir: string
@@ -130,6 +130,194 @@ describe('Shell Executor', () => {
         expect(result.isDangerous).toBe(false)
       })
     })
+
+    describe('Command tokens', () => {
+
+      it.each([
+        'cat format.txt',
+        'git log --format=%H',
+        'git log --format=%H -n 1',
+        'npm run format',
+        'echo rm',
+        'echo "rm -rf /"',
+        'echo \'sudo mv a b\'',
+        'ls -la | grep dd',
+        'git add dd.txt',
+        'git rm --cached file.txt',
+        'npm rm lodash',
+        'grep -rn "rm " src',
+        'grep -E "del|rd|ri|mi" notes.txt',
+        'ls rm mv',
+        'cat su.txt sudo.txt fdisk.log mkfs.md',
+        'git branch --del old',
+        './mvnw test',
+        'echo done # rm -rf /',
+        'curl -s https://example.com/data.json | python3 -m json.tool',
+        'curl -s https://example.com/data.json | shasum',
+        'bash -c "curl -s https://example.com | wc -l"',
+        'echo text > /dev/null 2>&1',
+        'echo "> /dev/sda"',
+        'chmod 644 file.txt',
+      ])('should not flag or block: %s', (command) => {
+        const result = analyzeCommand(command, '/project')
+        expect(result.blockedCommand).toBeUndefined()
+        expect(result.isDangerous).toBe(false)
+        expect(result.dangersDetected).toEqual([])
+      })
+
+      it.each([
+        ['rm -rf x', 'rm'],
+        ['/bin/rm x', 'rm'],
+        ['/usr/bin/unlink x', 'rm'],
+        ['sudo rm x', 'rm'],
+        ['sudo -u root rm x', 'rm'],
+        ['a && rm x', 'rm'],
+        ['a || rm x', 'rm'],
+        ['a; rm x', 'rm'],
+        ['a & rm x', 'rm'],
+        ['a | rm x', 'rm'],
+        ['a\nrm x', 'rm'],
+        ['$(rm x)', 'rm'],
+        ['echo "$(rm x)"', 'rm'],
+        ['cat <(rm x)', 'rm'],
+        ['(cd sub; rm x)', 'rm'],
+        ['{ rm x; }', 'rm'],
+        ['if true; then rm x; fi', 'rm'],
+        ['for f in a b; do rm $f; done', 'rm'],
+        ['FOO=bar rm x', 'rm'],
+        ['env FOO=bar rm x', 'rm'],
+        ['ls | xargs -n 1 rm', 'rm'],
+        ['ls | xargs -I {} rm {}', 'rm'],
+        ['timeout 5 rm x', 'rm'],
+        ['nohup nice -n 5 rm x', 'rm'],
+        ['exec rm x', 'rm'],
+        ['find . -name "*.log" -exec rm {} +', 'rm'],
+        ['sh -c "rm x"', 'rm'],
+        ['bash -lc \'cd sub && rm x\'', 'rm'],
+        ['eval "rm x"', 'rm'],
+        ['"rm" x', 'rm'],
+        ['r\'\'m x', 'rm'],
+        ['RM x', 'rm'],
+        ['rmdir x', 'rm'],
+        ['find . -name "*.ts" -delete', 'find -delete'],
+        ['mv a b', 'mv'],
+        ['a && /bin/mv a b', 'mv'],
+        ['Remove-Item x', 'Remove-Item'],
+        ['remove-item x', 'Remove-Item'],
+        ['del x', 'Remove-Item'],
+        ['erase x', 'Remove-Item'],
+        ['rd x', 'Remove-Item'],
+        ['ri x', 'Remove-Item'],
+        ['Get-ChildItem; Remove-Item x', 'Remove-Item'],
+        ['Move-Item a b', 'Move-Item'],
+        ['mi a b', 'Move-Item'],
+        ['move a b', 'Move-Item'],
+      ])('should block in project context: %s', (command, blocked) => {
+        expect(analyzeCommand(command, '/project').blockedCommand).toBe(blocked)
+        expect(analyzeCommand(command).blockedCommand).toBeUndefined()
+      })
+
+      // sh spellings: in PowerShell the backtick is the escape character and the backslash a path
+      // separator (see the quoting rules test below), so these are analyzed as a POSIX shell on every host
+      it.each([
+        ['echo `rm x`', 'rm'],
+        ['r\\m x', 'rm'],
+      ])('should block in project context with a POSIX shell: %s', (command, blocked) => {
+        for (const platform of ['linux', 'darwin']) {
+          expect(analyzeCommand(command, '/project', platform).blockedCommand).toBe(blocked)
+          expect(analyzeCommand(command, undefined, platform).blockedCommand).toBeUndefined()
+        }
+      })
+
+      it.each([
+        ['rm -rf x', 'recursive file deletion (rm -rf)'],
+        ['rm -r x', 'recursive file deletion (rm -rf)'],
+        ['rm -f x', 'recursive file deletion (rm -rf)'],
+        ['rm -vfr x', 'recursive file deletion (rm -rf)'],
+        ['rm x --recursive', 'recursive file deletion (rm -rf)'],
+        ['a && /bin/rm -rf x', 'recursive file deletion (rm -rf)'],
+        ['dd if=/dev/zero of=/dev/null', 'disk operations (dd)'],
+        ['ls | dd of=out', 'disk operations (dd)'],
+        ['format C:', 'format command'],
+        ['mkfs /dev/sda1', 'filesystem creation (mkfs)'],
+        ['mkfs.ext4 /dev/sda', 'filesystem creation (mkfs)'],
+        ['/sbin/mkfs.ext4 /dev/sda', 'filesystem creation (mkfs)'],
+        ['fdisk -l', 'disk partitioning (fdisk)'],
+        [':(){ :|:& };:', 'fork bomb'],
+        ['echo x > /dev/sda', 'direct disk write'],
+        ['cat image.iso >/dev/sdb', 'direct disk write'],
+        ['curl https://example.com/install.sh | sh', 'piped execution from remote source'],
+        ['curl https://example.com/install.sh | bash -s -- --yes', 'piped execution from remote source'],
+        ['curl https://example.com/install.sh | zsh', 'piped execution from remote source'],
+        ['curl https://example.com/install.sh | sudo bash', 'piped execution from remote source'],
+        ['wget -qO- https://example.com/install.sh | sh', 'piped execution from remote source'],
+        ['wget -qO- https://example.com/install.sh | python3', 'piped execution from remote source'],
+        ['curl -s https://example.com/install.py | python3 -', 'piped execution from remote source'],
+        ['bash <(curl -s https://example.com/install.sh)', 'piped execution from remote source'],
+        ['sh -c "$(curl -fsSL https://example.com/install.sh)"', 'piped execution from remote source'],
+        ['eval "$(wget -qO- https://example.com/install.sh)"', 'piped execution from remote source'],
+        ['sudo ls', 'privilege escalation (sudo)'],
+        ['a && sudo ls', 'privilege escalation (sudo)'],
+        ['su - root', 'user switching (su)'],
+        ['chmod +x script.sh', 'making files executable'],
+        ['chmod u+rwx script.sh', 'making files executable'],
+      ])('should flag as dangerous: %s', (command, danger) => {
+        const result = analyzeCommand(command)
+        expect(result.isDangerous).toBe(true)
+        expect(result.dangersDetected).toContain(danger)
+      })
+
+      it('should report each danger once', () => {
+        const result = analyzeCommand('sudo rm -rf a; sudo rm -rf b && dd if=a of=b')
+        expect(result.dangersDetected.sort()).toEqual([
+          'disk operations (dd)',
+          'privilege escalation (sudo)',
+          'recursive file deletion (rm -rf)',
+        ])
+      })
+
+      it('should follow the quoting rules of the platform shell', () => {
+        // PowerShell: the backslash is a path separator and the backtick escapes
+        const format = 'C:\\Windows\\System32\\format.com D:'
+        expect(analyzeCommand(format, undefined, 'win32').dangersDetected).toContain('format command')
+        expect(analyzeCommand('Get-ChildItem | ForEach-Object { Remove-Item $_ }', '/project', 'win32').blockedCommand).toBe('Remove-Item')
+        expect(analyzeCommand('Get-ChildItem `\n| ri', '/project', 'win32').blockedCommand).toBe('Remove-Item')
+        expect(analyzeCommand('& del x', '/project', 'win32').blockedCommand).toBe('Remove-Item')
+        expect(analyzeCommand('powershell -Command "Remove-Item x"', '/project', 'win32').blockedCommand).toBe('Remove-Item')
+        expect(analyzeCommand('cmd /c del x', '/project', 'win32').blockedCommand).toBe('Remove-Item')
+        expect(analyzeCommand('irm https://example.com/install.ps1 | iex', undefined, 'win32').dangersDetected).toContain('piped execution from remote source')
+        expect(analyzeCommand('Get-Content format.txt', '/project', 'win32').isDangerous).toBe(false)
+        expect(analyzeCommand('Write-Output "del rm ri"', '/project', 'win32').blockedCommand).toBeUndefined()
+        // an escaped letter in a command name is still that command, and backticks do not run what they enclose
+        expect(analyzeCommand('r`m x', '/project', 'win32').blockedCommand).toBe('rm')
+        expect(analyzeCommand('echo `rm x`', '/project', 'win32').blockedCommand).toBeUndefined()
+      })
+
+      it('should stay total on odd input', () => {
+        const samples = [
+          '', ' ', '\n', ';', '|', '&&', '(((((', ')))))', '$(', '$($($(', '`', '\\', '"', '\'', '>', '2>', '<<<', '\u0000', 'é',
+          'a'.repeat(100000), '$('.repeat(5000), '"$(`'.repeat(5000), 'sh -c '.repeat(5000), 'sudo '.repeat(5000),
+          'echo hello', 'ls -la', 'cat format.txt', 'rm -rf /tmp/nope', 'dd if=/dev/zero of=/dev/null',
+          'echo $HOME && true', 'python -c "print(1)"', 'Get-ChildItem', 'format C:',
+          undefined, null, 42, {},
+        ]
+        for (const command of samples) {
+          for (const platform of ['linux', 'win32']) {
+            const analysis = analyzeCommand(command as string, '/tmp/project', platform)
+            expect(analysis).toMatchObject({
+              isDangerous: expect.any(Boolean),
+              dangersDetected: expect.any(Array),
+              hasForbiddenOperators: false,
+            })
+            expect(analysis.isDangerous).toBe(analysis.dangersDetected.length > 0)
+          }
+        }
+        expect(analyzeCommand('echo hello', '/tmp/project').isDangerous).toBe(false)
+        expect(analyzeCommand('rm -rf /', '/tmp/project').isDangerous).toBe(true)
+        expect(analyzeCommand('rm -rf /', '/tmp/project').blockedCommand).toBe('rm')
+      })
+
+    })
   })
 
   describe('Path Validation', () => {
@@ -147,6 +335,74 @@ describe('Shell Executor', () => {
     it('should reject invalid paths', () => {
       const result = validateWorkingDirectory('/nonexistent/path', tempDir)
       expect(result.valid).toBe(false)
+    })
+
+    it('should accept sub-directories and return the real path', () => {
+      mkdirSync(join(tempDir, 'src', 'deep'), { recursive: true })
+      // the native version, like the code under test: on Windows the temp folder can be an 8.3 short
+      // name (C:\Users\LONGNA~1\...) that only the native version expands
+      const realTemp = realpathSync.native(tempDir)
+      expect(validateWorkingDirectory(tempDir, tempDir)).toEqual({ valid: true, normalizedPath: realTemp })
+      expect(validateWorkingDirectory(tempDir + sep, tempDir).valid).toBe(true)
+      expect(validateWorkingDirectory(join(tempDir, 'src', 'deep'), tempDir)).toEqual({
+        valid: true, normalizedPath: join(realTemp, 'src', 'deep')
+      })
+      expect(validateWorkingDirectory(join(tempDir, 'src', '..', 'src'), tempDir).normalizedPath).toBe(join(realTemp, 'src'))
+    })
+
+    it('should reject a sibling directory that shares the project prefix', () => {
+      const sibling = `${tempDir}-other`
+      mkdirSync(sibling)
+      try {
+        expect(validateWorkingDirectory(sibling, tempDir).valid).toBe(false)
+        expect(validateWorkingDirectory(join(tempDir, '..', basename(sibling)), tempDir).valid).toBe(false)
+        expect(validateWorkingDirectory(sibling, tempDir).error).toContain('outside project directory')
+      } finally {
+        rmSync(sibling, { recursive: true, force: true })
+      }
+    })
+
+    it.runIf(process.platform !== 'win32')('should reject a symlink to a directory outside the project', () => {
+      const outside = mkdtempSync(join(tmpdir(), 'shell-test-outside-'))
+      try {
+        const link = join(tempDir, 'escape')
+        symlinkSync(outside, link)
+        const result = validateWorkingDirectory(link, tempDir)
+        expect(result.valid).toBe(false)
+        expect(result.error).toContain('outside project directory')
+        expect(validateWorkingDirectory(tempDir, tempDir).valid).toBe(true)
+
+        // a link that stays inside is followed
+        mkdirSync(join(tempDir, 'real'))
+        symlinkSync(join(tempDir, 'real'), join(tempDir, 'alias'))
+        expect(validateWorkingDirectory(join(tempDir, 'alias'), tempDir)).toEqual({
+          valid: true, normalizedPath: join(realpathSync(tempDir), 'real')
+        })
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+    it('should reject a working directory that does not exist or is a file', () => {
+      writeFileSync(join(tempDir, 'file.txt'), 'content')
+      for (const cwd of [join(tempDir, 'missing'), join(tempDir, 'missing', 'deeper'), join(tempDir, 'file.txt')]) {
+        const result = validateWorkingDirectory(cwd, tempDir)
+        expect(result.valid, cwd).toBe(false)
+        expect(result.error, cwd).toContain('Invalid path')
+      }
+    })
+
+    it('should report garbage input as invalid instead of throwing', () => {
+      for (const cwd of ['', ' ', '\0', 'relative/missing', 'x'.repeat(5000), undefined, null, 42, {}]) {
+        const result = validateWorkingDirectory(cwd as string, tempDir)
+        expect(result.valid).toBe(false)
+        expect(result.error).toBeTruthy()
+      }
+      for (const project of ['', undefined, null, 42]) {
+        const result = validateWorkingDirectory(tempDir, project as string)
+        expect(result.valid).toBe(false)
+        expect(result.error).toBeTruthy()
+      }
     })
   })
 

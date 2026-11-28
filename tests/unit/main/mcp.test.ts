@@ -1,5 +1,8 @@
 
-import { vi, test, expect, beforeEach } from 'vitest'
+import { vi, test, expect, beforeEach, afterEach, describe } from 'vitest'
+import { EventEmitter } from 'events'
+import fs from 'fs'
+import path from 'path'
 import type { McpServer } from '@/types/mcp'
 import { app } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -8,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import mcpConfig from '@tests/fixtures/mcp.json'
 import Mcp from '@main/mcp'
+import { HttpServer } from '@main/http_server'
 import { Configuration } from '@/types/config'
 
 vi.mock('electron', async() => {
@@ -23,20 +27,28 @@ vi.mock('@main/i18n', () => ({
   useI18n: vi.fn(() => (key: string) => key)
 }))
 
-// mess with default / execSync so hack
-let command: string|null = null
+// installer process double: prints the success message unless a test drives it through `installer`
+type FakeInstaller = EventEmitter & { stdout: EventEmitter, stderr: EventEmitter, kill: () => void }
+let installer: FakeInstaller|null = null
+let installerOutput: string|null = 'successfully installed'
+let spawnError: Error|null = null
+const spawnCalls: { file: string, args: string[], options: any }[] = []
 vi.mock('child_process', async () => {
   return { default: {
-    exec: vi.fn((cmd) => { command = cmd; return {
-      on: vi.fn(),
-      stdout: { on: vi.fn((signal, callback) => {
-        console.log('stdout', signal, callback)
-        if (signal === 'data') {
-          callback('successfully installed')
-        }
-      }) },
-      stderr: { on: vi.fn() },
-    } })
+    spawn: vi.fn((file: string, args: string[], options: any) => {
+      spawnCalls.push({ file, args, options })
+      if (spawnError) throw spawnError
+      const child = new EventEmitter() as FakeInstaller
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.kill = vi.fn()
+      installer = child
+      if (installerOutput) {
+        const output = installerOutput
+        queueMicrotask(() => child.stdout.emit('data', Buffer.from(output)))
+      }
+      return child
+    })
   }}
 })
 
@@ -128,6 +140,10 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', async () => {
 
 beforeEach(() => {
   count = 1
+  installer = null
+  installerOutput = 'successfully installed'
+  spawnError = null
+  spawnCalls.length = 0
   config = JSON.parse(JSON.stringify(mcpConfig))
   mockConnect.mockResolvedValue(undefined)
   vi.clearAllMocks()
@@ -580,10 +596,257 @@ test('Reload', async () => {
 })
 
 test('Install smithery', async () => {
-  const mcp = new Mcp(app)
-  expect(await mcp.getInstallCommand('smithery', 'server', 'key')).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
-  expect(await mcp.installServer('smithery', 'server', 'key')).toBe('success')
-  expect(command).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
+  // npx is started directly, except on Windows (see "starts npx through cmd.exe" below)
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  try {
+    const mcp = new Mcp(app)
+    expect(await mcp.getInstallCommand('smithery', 'server', 'key')).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
+    expect(await mcp.installServer('smithery', 'server', 'key')).toBe('success')
+    expect(spawnCalls).toHaveLength(1)
+    expect(spawnCalls[0].file).toBe('npx')
+    expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', 'server', '--client', 'witsy', '--key', 'key'])
+    expect(spawnCalls[0].options.shell).toBe(false)
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
+describe('Install server', () => {
+
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const comspec = process.env.comspec
+
+  // lets the promise chain of installServer reach the installer
+  const settle = async () => {
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    installerOutput = null
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+    if (comspec === undefined) delete process.env.comspec
+    else process.env.comspec = comspec
+    vi.useRealTimers()
+  })
+
+  test.each([
+    ['exa'],
+    ['@smithery-ai/server-sequential-thinking'],
+    ['@JackKuo666/pubmed-mcp-server'],
+    ['@owner/server_name.js@1.2.3'],
+    ['owner/repo/server@latest'],
+  ])('accepts registry identifier %s', (server) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', server, '')).toBe(`npx -y @smithery/cli@latest install ${server} --client witsy`)
+  })
+
+  test.each([
+    ['server; echo INJECTED'],
+    ['server && echo INJECTED'],
+    ['server | echo INJECTED'],
+    ['$(echo INJECTED)'],
+    ['`echo INJECTED`'],
+    ['server\necho INJECTED'],
+    ['server --config /etc/passwd'],
+    ['--help'],
+    ['-y'],
+    ['server"'],
+    ['server\''],
+    ['%PATH%'],
+    ['server^&calc'],
+    ['!server!'],
+    ['../../server'],
+    ['@owner/'],
+    ['server@'],
+    [''],
+    ['a'.repeat(300)],
+    [{ toString: () => 'server' } as unknown as string],
+    [['server'] as unknown as string],
+    [undefined as unknown as string],
+  ])('refuses server name %j', async (server) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', server, '')).toBeNull()
+    expect(await mcp.installServer('smithery', server, 'key')).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test.each([
+    ['key`echo INJECTED`'],
+    ['key | echo INJECTED'],
+    ['key; echo INJECTED'],
+    ['$(echo INJECTED)'],
+    ['key --client other'],
+    ['--config'],
+    ['key"'],
+    ['%USERPROFILE%'],
+    ['key&calc'],
+    ['a'.repeat(300)],
+    [{ toString: () => 'key' } as unknown as string],
+  ])('refuses API key %j', async (apiKey) => {
+    const mcp = new Mcp(app)
+    expect(mcp.getInstallCommand('smithery', 'server', apiKey)).toBeNull()
+    expect(await mcp.installServer('smithery', 'server', apiKey)).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test('refuses an unknown registry', async () => {
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('unknown-registry', 'server', 'key')).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test('omits the key option without an API key', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', '@owner/server', '')).toBe('success')
+    expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy'])
+  })
+
+  test('starts npx through cmd.exe with separate arguments on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    process.env.comspec = 'C:\\Windows\\System32\\cmd.exe'
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', '@owner/server', 'key-123')).toBe('success')
+    expect(spawnCalls[0].file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(spawnCalls[0].args).toStrictEqual(['/d', '/s', '/c', 'npx', '-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy', '--key', 'key-123'])
+    expect(spawnCalls[0].options.shell).toBe(false)
+    // nothing that cmd.exe or the Windows argument quoting would have to interpret
+    expect(spawnCalls[0].args.every((arg) => /^[A-Za-z0-9@/._-]+$/.test(arg))).toBe(true)
+  })
+
+  test('maps known installer messages to a status and stops the installer', async () => {
+    const mcp = new Mcp(app)
+    let pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Server not found'))
+    expect(await pending).toBe('not_found')
+    expect(installer!.kill).toHaveBeenCalled()
+    pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stdout.emit('data', Buffer.from('Please enter your Smithery API key'))
+    expect(await pending).toBe('api_key_missing')
+    expect(installer!.kill).toHaveBeenCalled()
+  })
+
+  test('reports an error shortly after a generic failure message', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    let status = 'pending'
+    mcp.installServer('smithery', 'server', '').then((s) => status = s)
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Failed to install server'))
+    await settle()
+    expect(status).toBe('pending')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(status).toBe('error')
+    expect(installer!.kill).toHaveBeenCalled()
+  })
+
+  test('a more specific message wins over the generic failure message', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('Failed to install server'))
+    installer!.stderr.emit('data', Buffer.from('Server not found'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await pending).toBe('not_found')
+  })
+
+  test('settles with an error when the installer exits with a failure code', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stderr.emit('data', Buffer.from('npm error code ENOTFOUND'))
+    installer!.emit('close', 1, null)
+    expect(await pending).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('exited with code 1')
+  })
+
+  test('settles with an error when the installer is killed', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.emit('close', null, 'SIGKILL')
+    expect(await pending).toBe('error')
+  })
+
+  test('settles with success when the installer exits cleanly without a known message', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.stdout.emit('data', Buffer.from('done'))
+    installer!.emit('close', 0, null)
+    expect(await pending).toBe('success')
+  })
+
+  test('settles with an error when the installer cannot be started', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', 'server', '')
+    await settle()
+    installer!.emit('error', new Error('spawn npx ENOENT'))
+    expect(await pending).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('spawn npx ENOENT')
+  })
+
+  test('settles with an error when spawn throws', async () => {
+    spawnError = new Error('spawn EINVAL')
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('error')
+    expect(mcp.logs['server'].join('\n')).toContain('spawn EINVAL')
+  })
+
+  test('settles with an error and stops the installer when it never finishes', async () => {
+    vi.useFakeTimers()
+    const mcp = new Mcp(app)
+    let status = 'pending'
+    mcp.installServer('smithery', 'server', '').then((s) => status = s)
+    await vi.advanceTimersByTimeAsync(4 * 60 * 1000)
+    expect(status).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60 * 1000)
+    expect(status).toBe('error')
+    expect(installer!.kill).toHaveBeenCalled()
+    expect(mcp.logs['server'].join('\n')).toContain('timed out')
+  })
+
+  test('settles with an error when the installed server cannot be read back', async () => {
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    const getServers = mcp.getServers
+    let calls = 0
+    mcp.getServers = () => {
+      if (++calls === 2) throw new Error('settings are corrupted')
+      return getServers()
+    }
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('error')
+  })
+
+  test('succeeds when the installer did not add a server to the settings', async () => {
+    installerOutput = 'successfully installed'
+    const mcp = new Mcp(app)
+    expect(await mcp.installServer('smithery', 'server', '')).toBe('success')
+    expect(StdioClientTransport).not.toHaveBeenCalled()
+  })
+
+  test('connects to the server the installer added to the settings', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', '@owner/server', '')
+    await settle()
+    config.mcpServers['@owner/server'] = { command: 'npx', args: ['-y', '@smithery/cli@latest', 'run', '@owner/server'] }
+    installer!.stdout.emit('data', Buffer.from('@owner/server successfully installed'))
+    expect(await pending).toBe('success')
+    expect(StdioClientTransport).toHaveBeenLastCalledWith(expect.objectContaining({
+      command: 'npx', args: ['-y', '@smithery/cli@latest', 'run', '@owner/server'],
+    }))
+    expect(mcp.clients.map(c => c.server.uuid)).toEqual(['owner/server'])
+  })
+
 })
 
 test('Create HTTP server with OAuth', async () => {
@@ -1338,4 +1601,155 @@ test('updateTokens does not save if tokens unchanged', async () => {
   expect(result).toBe(true)
   // saveSettings should not have been called since tokens are the same
   expect(saveSettings).not.toHaveBeenCalled()
+})
+
+test('getServers accepts an mcpServers entry without args', async () => {
+  // @ts-expect-error "args" is optional in the mcpServers format
+  config.mcpServers['bare'] = { command: 'my-mcp-server' }
+  const mcp = new Mcp(app)
+  expect(mcp.getServers().find(s => s.uuid === 'bare')).toMatchObject({
+    registryId: 'bare', state: 'enabled', type: 'stdio', command: 'my-mcp-server', url: '',
+  })
+  await mcp.connect()
+  expect(StdioClientTransport).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'my-mcp-server', args: [] }))
+  expect(mcp.clients.find(c => c.server.uuid === 'bare')).toBeDefined()
+})
+
+test('HTTP server with OAuth client credentials but no tokens connects', async () => {
+  const mcp = new Mcp(app)
+  expect(await mcp.editServer({
+    uuid: null, registryId: null, state: 'enabled', type: 'http',
+    url: 'http://localhost:3001',
+    oauth: { clientId: 'client-id', clientSecret: 'client-secret', scope: 'read' },
+    toolSelection: null,
+  })).toBe(true)
+  const server = mcp.getServers().find(s => s.url === 'http://localhost:3001')
+  expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(new URL('http://localhost:3001/'), {
+    requestInit: { headers: {} },
+    authProvider: expect.any(Object)
+  })
+  expect(mcp.clients.find(c => c.server.uuid === server!.uuid)).toBeDefined()
+  expect(mcp.logs[server!.uuid!].join('\n')).not.toContain('Cannot read properties')
+})
+
+test('updateTokens ignores an mcp server without extra config', async () => {
+  const mcp = new Mcp(app)
+  const server = mcp.getServers().find(s => s.uuid === 's1')
+  expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
+  expect(await mcp.updateTokens(server!, { access_token: 'token', token_type: 'bearer' }, 'read')).toBe(true)
+  expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
+})
+
+describe('Stdio command line on Windows', () => {
+
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+  })
+
+  const connect = async (command: string, url: string): Promise<{ command: string, args: string[] }> => {
+    config.mcp.servers = [{ uuid: 'win', registryId: 'win', state: 'enabled', type: 'stdio', command, url, toolSelection: null }]
+    config.mcpServers = {}
+    const mcp = new Mcp(app)
+    await mcp.connect()
+    expect(StdioClientTransport).toHaveBeenCalledTimes(1)
+    return vi.mocked(StdioClientTransport).mock.calls[0][0]
+  }
+
+  test('starts the server command itself, not cmd', async () => {
+    const params = await connect('npx', '-y @scope/pkg --flag=value C:\\data\\dir')
+    expect(params.command).toBe('npx')
+    expect(params.args).toStrictEqual(['-y', '@scope/pkg', '--flag=value', 'C:\\data\\dir'])
+  })
+
+  test('characters that cmd interprets stay inside their argument', async () => {
+    const params = await connect('npx', '-y pkg https://x/?a=1&b=%PATH%\\" a&calc.exe b|more %APPDATA% !x! c^d >out.txt (e)')
+    expect(params.command).toBe('npx')
+    expect(params.args).toStrictEqual([
+      '-y', 'pkg', 'https://x/?a=1&b=%PATH%"', 'a&calc.exe', 'b|more', '%APPDATA%', '!x!', 'c^d', '>out.txt', '(e)',
+    ])
+  })
+
+  test('no argument is a command line', async () => {
+    const params = await connect('npx', '-y pkg https://x/?a=1&b=%PATH%\\" & calc.exe')
+    expect(params.args).toStrictEqual(['-y', 'pkg', 'https://x/?a=1&b=%PATH%"', '&', 'calc.exe'])
+    expect([params.command, ...params.args].some((value) => /\s/.test(value))).toBe(false)
+    expect([params.command, ...params.args].map((value) => value.toLowerCase())).not.toContain('cmd')
+  })
+
+  test('double quotes group an argument and are removed', async () => {
+    const params = await connect('node', 'server.js "C:\\Users\\me\\My Documents" --name="two words" \'single quoted\' ""')
+    expect(params.args).toStrictEqual(['server.js', 'C:\\Users\\me\\My Documents', '--name=two words', '\'single', 'quoted\'', ''])
+  })
+
+  test('escaped quotes are literal quotes', async () => {
+    const params = await connect('node', 'server.js --config "{\\"key\\":\\"a b\\"}" "say ""hi""" "C:\\dir\\\\" C:\\dir\\ last')
+    expect(params.args).toStrictEqual(['server.js', '--config', '{"key":"a b"}', 'say "hi"', 'C:\\dir\\', 'C:\\dir\\', 'last'])
+  })
+
+  test('an unterminated quote runs to the end of the arguments', async () => {
+    const params = await connect('node', 'server.js "a & b')
+    expect(params.args).toStrictEqual(['server.js', 'a & b'])
+  })
+
+  test('a command path with spaces is passed as the command', async () => {
+    const params = await connect('C:\\Program Files\\nodejs\\node.exe', 'server.js')
+    expect(params.command).toBe('C:\\Program Files\\nodejs\\node.exe')
+    expect(params.args).toStrictEqual(['server.js'])
+  })
+
+  test('a server configured with cmd /c is started as configured', async () => {
+    const params = await connect('cmd', '/c npx -y @smithery/cli@latest run @owner/server --key key-123')
+    expect(params.command).toBe('cmd')
+    expect(params.args).toStrictEqual(['/c', 'npx', '-y', '@smithery/cli@latest', 'run', '@owner/server', '--key', 'key-123'])
+  })
+
+  test('a server without arguments gets none', async () => {
+    const params = await connect('my-mcp-server.exe', '')
+    expect(params.args).toStrictEqual([])
+  })
+
+})
+
+test('The MCP SDK is not patched to start stdio servers through a shell', () => {
+  // connectToStdioServer relies on the transport spawning with `shell: false`:
+  // with a shell, Node joins the command and its arguments without any escaping
+  const patches = fs.readdirSync('patches').filter((file) => file.startsWith('@modelcontextprotocol+sdk'))
+  for (const patch of patches) {
+    const added = fs.readFileSync(path.join('patches', patch), 'utf8').split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+    expect(added.filter((line) => /\bshell\b/.test(line) && !/\bshell:\s*false\b/.test(line)), patch).toStrictEqual([])
+  }
+})
+
+test('OAuth client information uses the redirect uri of the running callback server', async () => {
+  // the configured port (8090) was taken: the callback server listens on another one
+  const httpServer = HttpServer.getInstance()
+  const ensureServerRunning = vi.spyOn(httpServer, 'ensureServerRunning').mockResolvedValue()
+  const getBaseUrl = vi.spyOn(httpServer, 'getBaseUrl').mockReturnValue('http://localhost:8091')
+  try {
+    const mcp = new Mcp(app)
+    const transports = { http: StreamableHTTPClientTransport, sse: SSEClientTransport } as const
+    for (const type of ['http', 'sse'] as const) {
+      expect(await mcp.editServer({
+        uuid: null, registryId: null, state: 'enabled', type,
+        url: `http://localhost:3001/${type}`,
+        oauth: { clientId: 'client-id', clientSecret: 'client-secret' },
+        toolSelection: null,
+      })).toBe(true)
+      const calls = vi.mocked(transports[type]).mock.calls
+      const provider: any = calls[calls.length - 1][1]!.authProvider
+      expect(provider.redirectUrl).toBe('http://localhost:8091/mcp/callback')
+      expect(provider.clientInformation().client_id).toBe('client-id')
+      expect(provider.clientInformation().redirect_uris).toEqual(['http://localhost:8091/mcp/callback'])
+    }
+  } finally {
+    ensureServerRunning.mockRestore()
+    getBaseUrl.mockRestore()
+  }
 })

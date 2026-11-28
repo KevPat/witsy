@@ -65,6 +65,7 @@ import { ChevronDownIcon, FileIcon, FileImageIcon, FilePlusIcon, FileSpreadsheet
 import { extensionToMimeType } from 'multi-llm-ts'
 import { computed, ref } from 'vue'
 import Dialog from '@renderer/utils/dialog'
+import { escapeHtml } from '@renderer/utils/html'
 import { togglePanel } from '@renderer/utils/panel'
 import { useDocRepoEvents } from '@composables/useDocRepoEvents'
 import { t } from '@services/i18n'
@@ -132,7 +133,7 @@ const onAddFiles = async () => {
 
   // Show error for unsupported files
   if (unsupportedFiles.length > 0) {
-    const fileNames = unsupportedFiles.map(f => f.split('/').pop() || f)
+    const fileNames = unsupportedFiles.map(f => escapeHtml(f.split('/').pop() || f))
     Dialog.show({
       title: t('docRepo.file.error.formatNotSupported.title'),
       html: fileNames.join('<br/>')
@@ -153,7 +154,7 @@ const onAddFiles = async () => {
 
   // Show confirmation for large files
   if (filesTooLarge.length > 0) {
-    const fileNames = filesTooLarge.map(f => f.split('/').pop() || f)
+    const fileNames = filesTooLarge.map(f => escapeHtml(f.split('/').pop() || f))
     const result = await Dialog.show({
       target: document.querySelector('.docrepos'),
       title: t('docRepo.file.error.fileTooLarge.title'),

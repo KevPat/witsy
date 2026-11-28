@@ -687,7 +687,7 @@ const handleCommandClick = async (action: string) => {
   const command = store.commands.find(c => c.id === action)
   if (!command) return
   emitBusEvent('new-chat', {
-    prompt: commandI18n(command, 'template').replace('{input}', transcription.value),
+    prompt: commandI18n(command, 'template').replaceAll('{input}', () => transcription.value),
     submit: action !== window.api.commands.askMeAnythingId(),
   })
 }

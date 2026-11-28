@@ -482,6 +482,11 @@ watch(() => props.modelValue, (newValue) => {
           transform.steps.forEach((step) => {
             tr.step(step)
           })
+          // recreateTransform can return steps that apply but end on another document (a heading
+          // keeping its old level when the whole note is replaced, for instance): never show that
+          if (!tr.doc.eq(newDoc)) {
+            throw new Error('the recreated steps do not reproduce the new document')
+          }
           editor.value.view.dispatch(tr)
         }
       } catch (error) {

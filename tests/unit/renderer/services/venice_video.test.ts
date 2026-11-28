@@ -159,7 +159,6 @@ test('queues, polls through processing, saves the mp4, and completes', async () 
       }
       return mp4Response(bytes)
     }
-    if (String(url).endsWith('/video/complete')) return jsonResponse({ success: true })
     throw new Error(`unexpected ${url}`)
   })
   const { deps, sleeps } = clock(fetchImpl, saved.sink)
@@ -178,8 +177,8 @@ test('queues, polls through processing, saves the mp4, and completes', async () 
     `${VENICE_API_BASE}/video/retrieve`,
     `${VENICE_API_BASE}/video/retrieve`,
     `${VENICE_API_BASE}/video/retrieve`,
-    `${VENICE_API_BASE}/video/complete`,
   ])
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
   for (const call of calls) {
     expect(call.init.redirect).toBe('manual')
     expect(call.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
@@ -187,7 +186,16 @@ test('queues, polls through processing, saves the mp4, and completes', async () 
   }
   const queued = JSON.parse(String(calls[0].init.body))
   expect(queued).toEqual({ model: MODEL, prompt: 'a gondola', duration: '5s' })
-  expect(JSON.parse(String(calls.at(-1).init.body))).toEqual({ model: MODEL, queue_id: QUEUE_ID })
+  for (const call of calls.filter((item) => item.url.endsWith('/video/retrieve'))) {
+    const body = JSON.parse(String(call.init.body))
+    expect(body.delete_media_on_completion).toBe(true)
+    expect(typeof body.delete_media_on_completion).toBe('boolean')
+  }
+  expect(JSON.parse(String(calls.at(-1).init.body))).toEqual({
+    model: MODEL,
+    queue_id: QUEUE_ID,
+    delete_media_on_completion: true,
+  })
 })
 
 test('downloads a private venice url after COMPLETED and deletes it without the api key', async () => {
@@ -207,7 +215,6 @@ test('downloads a private venice url after COMPLETED and deletes it without the 
     }
     if (String(url) === downloadUrl && init.method === 'GET') return mp4Response(fakeMp4())
     if (String(url) === downloadUrl && init.method === 'DELETE') return new Response(null, { status: 204 })
-    if (String(url).endsWith('/video/complete')) return jsonResponse({ success: true })
     throw new Error(`unexpected ${url} ${init.method}`)
   })
 
@@ -219,7 +226,17 @@ test('downloads a private venice url after COMPLETED and deletes it without the 
   expect(download?.init.headers?.['Authorization']).toBeUndefined()
   expect(deletion).toBeTruthy()
   expect(deletion?.init.headers?.['Authorization']).toBeUndefined()
-  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(true)
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
+  for (const call of calls.filter((item) => item.url.endsWith('/video/retrieve'))) {
+    const body = JSON.parse(String(call.init.body))
+    expect(body.delete_media_on_completion).toBe(true)
+    expect(typeof body.delete_media_on_completion).toBe('boolean')
+  }
+  for (const call of calls) {
+    if (call.url.startsWith(VENICE_API_BASE)) {
+      expect(call.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
+    }
+  }
 })
 
 test('fetches a download url on any host without the api key', async () => {
@@ -235,7 +252,6 @@ test('fetches a download url on any host without the api key', async () => {
     if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
     if (String(url) === downloadUrl && init.method === 'GET') return mp4Response(bytes)
     if (String(url) === downloadUrl && init.method === 'DELETE') return new Response(null, { status: 204 })
-    if (String(url).endsWith('/video/complete')) return jsonResponse({ success: true })
     throw new Error(`unexpected ${url} ${init.method}`)
   })
 
@@ -248,6 +264,9 @@ test('fetches a download url on any host without the api key', async () => {
   expect(JSON.stringify(download?.init.headers || {})).not.toContain(API_KEY)
   const apiCall = calls.find((call) => call.url.endsWith('/video/queue'))
   expect(apiCall?.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
+  const retrieve = calls.find((call) => call.url.endsWith('/video/retrieve'))
+  expect(JSON.parse(String(retrieve?.init.body)).delete_media_on_completion).toBe(true)
 })
 
 test('does not follow an authenticated redirect', async () => {
@@ -513,4 +532,135 @@ test('the settings key is sent as entered, including when it is blank', async ()
   const init = fetchImpl.mock.calls[0][1] as RequestInit
   const headers = init.headers as Record<string, string>
   expect(headers.Authorization).toBe('Bearer    ')
+})
+
+test('retrieve HTTP 502 keeps polling and a later video is saved', async () => {
+  const bytes = fakeMp4()
+  let retrieves = 0
+  const saved = memorySink()
+  const fetchImpl = vi.fn(async (url: string) => {
+    if (String(url).endsWith('/video/queue')) return jsonResponse({ model: MODEL, queue_id: QUEUE_ID })
+    if (String(url).endsWith('/video/retrieve')) {
+      retrieves += 1
+      if (retrieves <= 2) return jsonResponse({ error: 'bad gateway' }, 502)
+      if (retrieves === 3) return jsonResponse({ status: 'PROCESSING' })
+      return mp4Response(bytes)
+    }
+    throw new Error(`unexpected ${url}`)
+  })
+
+  const url = await generateVeniceVideo({ apiKey: API_KEY, model: MODEL, prompt: 'a gondola' }, clock(fetchImpl, saved.sink).deps)
+
+  expect(url).toBe('file:///tmp/venice.mp4')
+  expect(retrieves).toBe(4)
+  expect(saved.state.finished).toBe(true)
+  expect(saved.state.aborted).toBe(false)
+})
+
+test('retrieve HTTP 502 does not count toward the transient failure cap', async () => {
+  let retrieves = 0
+  const saved = memorySink()
+  const fetchImpl = vi.fn(async (url: string) => {
+    if (String(url).endsWith('/video/queue')) return jsonResponse({ model: MODEL, queue_id: QUEUE_ID })
+    if (String(url).endsWith('/video/retrieve')) {
+      retrieves += 1
+      if (retrieves <= 9) return jsonResponse({ error: 'bad gateway' }, 502)
+      return mp4Response(fakeMp4())
+    }
+    throw new Error(`unexpected ${url}`)
+  })
+
+  const url = await generateVeniceVideo({
+    apiKey: API_KEY,
+    model: MODEL,
+    prompt: 'a gondola',
+  }, clock(fetchImpl, saved.sink, 400000).deps)
+
+  expect(url).toBe('file:///tmp/venice.mp4')
+  expect(retrieves).toBe(10)
+  expect(saved.state.finished).toBe(true)
+})
+
+test('retrieve HTTP 500 fails the run and is not retried', async () => {
+  let retrieves = 0
+  const calls: string[] = []
+  const saved = memorySink()
+  const fetchImpl = vi.fn(async (url: string) => {
+    calls.push(String(url))
+    if (String(url).endsWith('/video/queue')) return jsonResponse({ model: MODEL, queue_id: QUEUE_ID })
+    if (String(url).endsWith('/video/retrieve')) {
+      retrieves += 1
+      return jsonResponse({ error: 'server' }, 500)
+    }
+    throw new Error(`unexpected ${url}`)
+  })
+
+  await expect(generateVeniceVideo({
+    apiKey: API_KEY,
+    model: MODEL,
+    prompt: 'a gondola',
+  }, clock(fetchImpl, saved.sink).deps)).rejects.toMatchObject({ code: 'unavailable' })
+
+  expect(retrieves).toBe(1)
+  expect(calls.filter((url) => url.endsWith('/video/retrieve'))).toHaveLength(1)
+  expect(calls.some((url) => url.endsWith('/video/complete'))).toBe(false)
+  expect(saved.state.finished).toBe(false)
+  expect(saved.state.aborted).toBe(true)
+})
+
+test('a successful retrieve asks Venice to delete media and never calls complete', async () => {
+  const calls: Call[] = []
+  const saved = memorySink()
+  const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+    calls.push({ url: String(url), init })
+    if (String(url).endsWith('/video/queue')) return jsonResponse({ model: MODEL, queue_id: QUEUE_ID })
+    if (String(url).endsWith('/video/retrieve')) return mp4Response(fakeMp4())
+    throw new Error(`unexpected ${url}`)
+  })
+
+  await generateVeniceVideo({ apiKey: API_KEY, model: MODEL, prompt: 'a gondola' }, clock(fetchImpl, saved.sink).deps)
+
+  expect(calls.map((call) => call.url)).toEqual([
+    `${VENICE_API_BASE}/video/queue`,
+    `${VENICE_API_BASE}/video/retrieve`,
+  ])
+  const body = JSON.parse(String(calls[1].init.body))
+  expect(body).toEqual({
+    model: MODEL,
+    queue_id: QUEUE_ID,
+    delete_media_on_completion: true,
+  })
+  expect(typeof body.delete_media_on_completion).toBe('boolean')
+  expect(String(calls[1].init.body)).not.toContain('"delete_media_on_completion":"true"')
+})
+
+test('download_url is fetched without Authorization and Venice API calls keep it', async () => {
+  const downloadUrl = 'https://cdn.example.com/private/clip.mp4'
+  const calls: Call[] = []
+  const saved = memorySink()
+  const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+    calls.push({ url: String(url), init })
+    if (String(url).endsWith('/video/queue')) {
+      return jsonResponse({ model: MODEL, queue_id: QUEUE_ID, download_url: downloadUrl })
+    }
+    if (String(url).endsWith('/video/retrieve')) return jsonResponse({ status: 'COMPLETED' })
+    if (String(url) === downloadUrl && init.method === 'GET') return mp4Response(fakeMp4())
+    if (String(url) === downloadUrl && init.method === 'DELETE') return new Response(null, { status: 204 })
+    throw new Error(`unexpected ${url} ${init.method}`)
+  })
+
+  await generateVeniceVideo({ apiKey: API_KEY, model: MODEL, prompt: 'a gondola' }, clock(fetchImpl, saved.sink).deps)
+
+  const download = calls.find((call) => call.url === downloadUrl && call.init.method === 'GET')
+  const deletion = calls.find((call) => call.url === downloadUrl && call.init.method === 'DELETE')
+  expect(download?.init.headers?.['Authorization']).toBeUndefined()
+  expect(download?.init.credentials).toBe('omit')
+  expect(JSON.stringify(download?.init.headers || {})).not.toContain(API_KEY)
+  expect(deletion?.init.headers?.['Authorization']).toBeUndefined()
+  expect(JSON.stringify(deletion?.init.headers || {})).not.toContain(API_KEY)
+  for (const call of calls.filter((item) => item.url.startsWith(VENICE_API_BASE))) {
+    expect(call.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
+  }
+  expect(calls.some((call) => call.url.startsWith(VENICE_API_BASE) && call.url.endsWith('/video/queue'))).toBe(true)
+  expect(calls.some((call) => call.url.startsWith(VENICE_API_BASE) && call.url.endsWith('/video/retrieve'))).toBe(true)
 })

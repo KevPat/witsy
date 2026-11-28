@@ -1,10 +1,10 @@
 import { vi, beforeAll, beforeEach, afterAll, expect, test } from 'vitest'
-import { mount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
+import { mount, VueWrapper, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createI18nMock } from '@tests/mocks/index'
 import { useWindowMock } from '@tests/mocks/window'
 import { store } from '@services/store'
 import Editor from '@renderer/agent/Editor.vue'
-import Agent from '@models/agent'
+import Agent, { isLegacyWebhookToken } from '@models/agent'
 import Dialog from '@renderer/utils/dialog'
 import { nextTick } from 'vue'
 
@@ -396,4 +396,230 @@ test('Does not validate invocation values for manual-only agents', async () => {
 
   // Save event should be emitted
   expect(wrapper.emitted('save')).toBeTruthy()
+})
+
+// obvious dummies: none of these is a real token
+const kLegacyToken = 'abc12345'
+const kStrongToken = '0123456789abcdef0123456789abcdef'
+const kOtherStrongToken = 'fedcba9876543210fedcba9876543210'
+
+const mountWebhookEditor = async (webhookToken: string|null): Promise<VueWrapper<any>> => {
+
+  const agent = new Agent()
+  agent.name = 'Webhook Agent'
+  agent.steps = [
+    { prompt: 'Hello', tools: null, agents: [] }
+  ]
+  agent.webhookToken = webhookToken
+
+  const wrapper: VueWrapper<any> = mount(Editor, {
+    props: {
+      mode: 'edit',
+      agent: agent
+    }
+  })
+  await nextTick()
+
+  // Navigate to invocation step
+  const steps = wrapper.findAll('.wizard-step')
+  const invocationStep = steps.find(step => step.text().includes('agent.create.invocation.title'))
+  await invocationStep!.trigger('click')
+  await nextTick()
+
+  return wrapper
+}
+
+const webhookUrlOf = (wrapper: VueWrapper<any>): string => {
+  return (wrapper.find('.webhook-url-container input').element as HTMLInputElement).value
+}
+
+test('Warns that the webhook URL uses a legacy token', async () => {
+  store.config.general.enableHttpEndpoints = true
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+
+  // the old url is still the one displayed
+  expect(webhookUrlOf(wrapper)).toBe(`http://localhost:8090/api/agent/run/${kLegacyToken}`)
+
+  const warning = wrapper.find('.help.warning')
+  expect(warning.exists()).toBe(true)
+  expect(warning.text()).toContain('agent.trigger.webhook_legacy')
+})
+
+test('Does not warn when the webhook URL uses a strong token', async () => {
+  store.config.general.enableHttpEndpoints = true
+
+  const wrapper = await mountWebhookEditor(kStrongToken)
+
+  expect(webhookUrlOf(wrapper)).toBe(`http://localhost:8090/api/agent/run/${kStrongToken}`)
+  expect(wrapper.find('.help.warning').exists()).toBe(false)
+})
+
+test('Does not warn when the agent has no webhook', async () => {
+  store.config.general.enableHttpEndpoints = true
+
+  const wrapper = await mountWebhookEditor(null)
+
+  expect(wrapper.find('.webhook-url-container').exists()).toBe(false)
+  expect(wrapper.find('.help.warning').exists()).toBe(false)
+})
+
+test('Legacy token warning goes away when the token is regenerated', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.mocked(window.api.agents.generateWebhookToken).mockResolvedValueOnce(kStrongToken)
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+  expect(wrapper.find('.help.warning').exists()).toBe(true)
+
+  // Click the regenerate button (the second one, after copy)
+  const buttons = wrapper.findAll('.webhook-url-container button')
+  await buttons[1].trigger('click')
+  await flushPromises()
+
+  expect(webhookUrlOf(wrapper)).toBe(`http://localhost:8090/api/agent/run/${kStrongToken}`)
+  expect(wrapper.find('.help.warning').exists()).toBe(false)
+})
+
+test('Saving from the editor replaces a legacy token with a strong one', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.mocked(window.api.agents.generateWebhookToken).mockResolvedValueOnce(kStrongToken)
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ isConfirmed: false, isDismissed: true })
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+
+  // Click save button
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  // a new token was asked for this agent
+  expect(window.api.agents.generateWebhookToken).toHaveBeenCalledTimes(1)
+  expect(window.api.agents.generateWebhookToken).toHaveBeenCalledWith(store.config.workspaceId, wrapper.props('agent').uuid)
+
+  // and this is the one that was saved
+  expect(window.api.agents.save).toHaveBeenCalledTimes(1)
+  const savedAgent = vi.mocked(window.api.agents.save).mock.calls[0][1]
+  expect(savedAgent.webhookToken).toBe(kStrongToken)
+  expect(isLegacyWebhookToken(savedAgent.webhookToken)).toBe(false)
+  expect(JSON.stringify(savedAgent)).not.toContain(kLegacyToken)
+
+  // the user is shown the new url
+  expect(Dialog.show).toHaveBeenCalledTimes(1)
+  expect(Dialog.show).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'agent.trigger.webhook_replaced_title',
+    text: expect.stringContaining(`http://localhost:8090/api/agent/run/${kStrongToken}`),
+    confirmButtonText: 'agent.trigger.webhook_copy',
+    showCancelButton: true,
+  }))
+  expect(vi.mocked(Dialog.show).mock.calls[0][0].text).not.toContain(kLegacyToken)
+
+  // and the editor shows it too, without the warning
+  expect(webhookUrlOf(wrapper)).toBe(`http://localhost:8090/api/agent/run/${kStrongToken}`)
+  expect(wrapper.find('.help.warning').exists()).toBe(false)
+
+  expect(wrapper.emitted('save')).toBeTruthy()
+})
+
+test('Copies the new webhook URL when asked to after a legacy token was replaced', async () => {
+  store.config.general.enableHttpEndpoints = true
+  const writeText = vi.fn()
+  Object.assign(navigator, { clipboard: { writeText } })
+  vi.mocked(window.api.agents.generateWebhookToken).mockResolvedValueOnce(kStrongToken)
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ isConfirmed: true, isDismissed: false })
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  expect(writeText).toHaveBeenCalledWith(`http://localhost:8090/api/agent/run/${kStrongToken}`)
+})
+
+test('Saving from the editor replaces a legacy token even when HTTP endpoints are disabled', async () => {
+  store.config.general.enableHttpEndpoints = false
+  vi.mocked(window.api.agents.generateWebhookToken).mockResolvedValueOnce(kStrongToken)
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ isConfirmed: false, isDismissed: true })
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+  expect(wrapper.find('.webhook-url-container').exists()).toBe(false)
+
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  expect(vi.mocked(window.api.agents.save).mock.calls[0][1].webhookToken).toBe(kStrongToken)
+  expect(Dialog.show).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'agent.trigger.webhook_replaced_title',
+    text: expect.stringContaining(`http://localhost:8090/api/agent/run/${kStrongToken}`),
+  }))
+  expect(wrapper.emitted('save')).toBeTruthy()
+
+  store.config.general.enableHttpEndpoints = true
+})
+
+test('Saving from the editor leaves a strong token untouched', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+
+  const wrapper = await mountWebhookEditor(kOtherStrongToken)
+
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
+  expect(window.api.agents.save).toHaveBeenCalledTimes(1)
+  expect(vi.mocked(window.api.agents.save).mock.calls[0][1].webhookToken).toBe(kOtherStrongToken)
+  expect(Dialog.show).not.toHaveBeenCalled()
+  expect(wrapper.emitted('save')).toBeTruthy()
+})
+
+test('Saving from the editor does not give a token to an agent without webhook', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+
+  const wrapper = await mountWebhookEditor(null)
+
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
+  expect(vi.mocked(window.api.agents.save).mock.calls[0][1].webhookToken).toBeNull()
+  expect(Dialog.show).not.toHaveBeenCalled()
+  expect(wrapper.emitted('save')).toBeTruthy()
+})
+
+test('Saving from the editor keeps the legacy token when no strong token can be generated', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.mocked(window.api.agents.generateWebhookToken).mockRejectedValueOnce(new Error('no token'))
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(true)
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  // the agent is saved all the same, its webhook still works and is still flagged
+  expect(vi.mocked(window.api.agents.save).mock.calls[0][1].webhookToken).toBe(kLegacyToken)
+  expect(Dialog.show).not.toHaveBeenCalled()
+  expect(wrapper.find('.help.warning').exists()).toBe(true)
+  expect(wrapper.emitted('save')).toBeTruthy()
+})
+
+test('Keeps the legacy token in the editor when the save fails', async () => {
+  store.config.general.enableHttpEndpoints = true
+  vi.mocked(window.api.agents.generateWebhookToken).mockResolvedValueOnce(kStrongToken)
+  vi.mocked(window.api.agents.save).mockReturnValueOnce(false)
+
+  const wrapper = await mountWebhookEditor(kLegacyToken)
+
+  await wrapper.find('button[name="next"]').trigger('click')
+  await flushPromises()
+
+  // nothing was written: the old url is still the valid one and the editor says so
+  expect(window.api.agents.save).toHaveBeenCalledTimes(1)
+  expect(Dialog.show).not.toHaveBeenCalled()
+  expect(wrapper.emitted('save')).toBeFalsy()
+  expect(webhookUrlOf(wrapper)).toBe(`http://localhost:8090/api/agent/run/${kLegacyToken}`)
+  expect(wrapper.find('.help.warning').exists()).toBe(true)
 })

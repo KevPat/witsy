@@ -5,6 +5,7 @@ import { convert } from 'html-to-text'
 import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import { anyDict, LocalSearchResponse } from 'types/index'
 import Tavily from '@/vendor/tavily'
+import { getUrlRefusal } from '@renderer/utils/url_guard'
 import { t } from '../i18n'
 import { executeIpcWithAbort } from './ipc_abort_helper'
 import Plugin, { PluginConfig } from './plugin'
@@ -210,8 +211,10 @@ export default class extends Plugin {
 
       const exa = new Exa(this.config.exaApiKey)
       const results = await this.runWithAbort(
-        exa.searchAndContents(parameters.query, {
-          text: true,
+        // exa-js 2: searchAndContents is deprecated; search() with contents
+        // sends the identical POST /search body
+        exa.search(parameters.query, {
+          contents: { text: true },
           numResults: maxResults,
         }),
         context.abortSignal
@@ -431,6 +434,10 @@ export default class extends Plugin {
    * Fetches HTML content from URLs and converts to text.
    * Used by search engines that don't return full content.
    *
+   * The urls come from the search engine, that is from the web: a result that points to this
+   * machine, to a private network or to a file is not downloaded, and neither is a page that
+   * redirects there. Such a result keeps what the search engine said about it.
+   *
    * @param results - Search results with URLs to fetch
    * @param context - Plugin execution context with abort signal
    * @private
@@ -441,10 +448,21 @@ export default class extends Plugin {
   ): Promise<void> {
     await Promise.all(
       results.map(async (result) => {
+        if (getUrlRefusal(result.url)) {
+          result.content = result.content ?? ''
+          return
+        }
         const html = await this.runWithAbort(
-          fetch(result.url, { signal: context.abortSignal }).then(response => response.text()),
+          fetch(result.url, { signal: context.abortSignal }).then(response => {
+            // fetch follows redirects: the page a public url bounced to is held to the same rule
+            return response.url && getUrlRefusal(response.url) ? null : response.text()
+          }),
           context.abortSignal
         )
+        if (html === null) {
+          result.content = result.content ?? ''
+          return
+        }
         result.content = this.htmlToText(html)
       })
     )

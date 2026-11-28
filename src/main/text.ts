@@ -1,5 +1,5 @@
 import csvToMarkdown from 'csv-to-markdown-table'
-import * as XLSX from 'xlsx'
+import { Workbook } from 'exceljs'
 
 type PdfTextItem = {
   str: string
@@ -608,24 +608,51 @@ export async function getPDFRawTextContent(contents: Buffer): Promise<string> {
   }
 }
 
-export async function getOfficeRawTextContent(contents: Buffer): Promise<string> {
-  const { parseOfficeAsync } = await loadOfficeParserModule()
-  return parseOfficeAsync(contents)
+export type OfficeFileType = 'docx' | 'pptx' | 'xlsx'
+
+export async function getOfficeRawTextContent(contents: Buffer, fileType?: OfficeFileType): Promise<string> {
+  const { parseOffice } = await loadOfficeParserModule()
+  // officeparser 8: the caller already knows the format, so pass it as an
+  // authoritative hint (skips magic-byte sniffing entirely), never fetch
+  // pdf.js/OCR assets from the library's CDN defaults, and keep OCR off
+  const ast = await parseOffice(contents, {
+    ...(fileType ? { fileType } : {}),
+    allowRemoteAssets: false,
+    ocr: false,
+  })
+  // flat text (one table cell per line, no list markers or image placeholders)
+  // matches what officeparser 5 returned for docx and pptx
+  const { value } = await ast.to('text', {
+    includeImages: false,
+    textConfig: { preserveLayout: false },
+  })
+  return value
 }
 
-export function getExcelRawTextContent(contents: Buffer): Promise<string> {
+export async function getExcelRawTextContent(contents: Buffer): Promise<string> {
   try {
     let content = ''
-    const workbook = XLSX.read(contents, { type: 'buffer' })
-    for (const sheetName of workbook.SheetNames) {
-      const worksheet = workbook.Sheets[sheetName]
-      const sheet = XLSX.utils.sheet_to_csv(worksheet)
-      content += `Sheet: ${sheetName}\n`
-      content += csvToMarkdown(sheet, ',').split('\n').map(l => l.trim()).join('\n') + '\n\n'
+    const workbook = new Workbook()
+    await workbook.xlsx.load(contents as unknown as Parameters<typeof workbook.xlsx.load>[0])
+    for (const worksheet of workbook.worksheets) {
+      const rows: string[][] = []
+      worksheet.eachRow({ includeEmpty: true }, (row) => {
+        const cells: string[] = []
+        row.eachCell({ includeEmpty: true }, (cell, column) => {
+          cells[column - 1] = cell.text
+        })
+        rows.push(cells)
+      })
+      const csv = rows.map(row => row.map(cell => {
+        const value = cell ?? ''
+        return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+      }).join(',')).join('\n')
+      content += `Sheet: ${worksheet.name}\n`
+      content += csvToMarkdown(csv, ',').split('\n').map(l => l.trim()).join('\n') + '\n\n'
     }
-    return Promise.resolve(content.trim())
+    return content.trim()
   } catch {
-    return getOfficeRawTextContent(contents)
+    return getOfficeRawTextContent(contents, 'xlsx')
   }
 }
 
@@ -637,7 +664,7 @@ export function getTextContent(b64contents: string, format: string): Promise<str
       return getPDFRawTextContent(Buffer.from(b64contents, 'base64'))
     case 'docx':
     case 'pptx':
-      return getOfficeRawTextContent(Buffer.from(b64contents, 'base64'))
+      return getOfficeRawTextContent(Buffer.from(b64contents, 'base64'), format)
     case 'xlsx':
       return getExcelRawTextContent(Buffer.from(b64contents, 'base64'))
     default:

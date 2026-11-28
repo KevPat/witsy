@@ -2,6 +2,18 @@
 <html>
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Scripts only (S-14): what a message, a tool or a web page puts in this page cannot run as a script.
+      - no 'unsafe-inline': inline scripts, inline event handlers and javascript: urls do not run
+      - 'self': the scripts of the app (the main process also refuses local scripts from other folders)
+      - 'unsafe-eval': the chart plugin (vega compiles its expressions) and WebAssembly
+      - blob: the audio worklets and the workers of the speech engines
+      - the two jsdelivr folders: the ONNX runtime the local speech engines (Whisper, Parakeet) import;
+        tests/unit/main/web_security.test.ts checks them against the installed libraries
+      Html artifacts do not get this policy: they are loaded from witsy-artifact://frame/.
+      Styles, images, media, fonts, frames and connections are not restricted.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-eval' blob: https://cdn.jsdelivr.net/npm/@huggingface/ https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0-dev.20250409-89f8206ba4/dist/; worker-src 'self' blob:; object-src 'none'; base-uri 'none'" />
     <link rel="stylesheet" href="/css/index.css" />
     <link rel="stylesheet" href="/css/form.css" />
     <link rel="stylesheet" href="/css/panel.css" />

@@ -444,6 +444,86 @@ test('Docrepo load', async () => {
   fs.rmSync(tempdir, { recursive: true, force: true })
 })
 
+const docrepoBackups = () => fs.readdirSync(testTmpDir).filter(name => name.startsWith('docrepo.corrupt-'))
+
+const removeDocrepoBackups = () => {
+  for (const name of docrepoBackups()) fs.rmSync(path.join(testTmpDir, name), { force: true })
+}
+
+test('Docrepo load without a file does not create a backup', () => {
+  const docrepo = new DocumentRepository(app)
+  expect(docrepo.list('workspace')).toEqual([])
+  expect(docrepoBackups()).toEqual([])
+})
+
+test.each([
+  ['truncated', '[{"uuid": "1234", "name": "Base", "docum'],
+  ['not a list', '{"uuid": "1234", "name": "Base", "documents": []}'],
+  ['null', 'null'],
+])('Docrepo load keeps a copy of an unreadable file (%s)', async (_, content) => {
+
+  fs.writeFileSync(path.join(testTmpDir, 'docrepo.json'), content)
+  const docrepo = new DocumentRepository(app)
+  expect(docrepo.list('workspace')).toEqual([])
+
+  // the unreadable file was copied before anything can overwrite it
+  const backups = docrepoBackups()
+  expect(backups).toHaveLength(1)
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  // and the repository is usable
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  expect(JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')).map((base: any) => base.uuid)).toEqual([docbase])
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  removeDocrepoBackups()
+})
+
+test('Docrepo load skips a malformed base and keeps the others', async () => {
+
+  const docrepo = new DocumentRepository(app)
+  const docbase1 = await docrepo.createDocBase('workspace', 'name1', 'openai', 'text-embedding-ada-002')
+  const docbase2 = await docrepo.createDocBase('workspace', 'name2', 'openai', 'text-embedding-ada-002')
+  const entries = JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8'))
+  const content = JSON.stringify([entries[0], { uuid: 'broken', name: 'Broken' }, null, entries[1]])
+  fs.writeFileSync(path.join(testTmpDir, 'docrepo.json'), content)
+
+  // reload
+  docrepo.load()
+  expect(docrepo.list('workspace').map(base => base.uuid)).toEqual([docbase1, docbase2])
+
+  // the entries that were skipped are still in the backup
+  const backups = docrepoBackups()
+  expect(backups).toHaveLength(1)
+  expect(fs.readFileSync(path.join(testTmpDir, backups[0]), 'utf-8')).toBe(content)
+
+  removeDocrepoBackups()
+})
+
+test('Docrepo save failure keeps the previous file', async () => {
+
+  const docrepo = new DocumentRepository(app)
+  await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const before = fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')
+
+  // the temporary file cannot replace docrepo.json
+  const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw new Error('ENOSPC: no space left on device') })
+  try {
+    await docrepo.updateDocBase(docrepo.list('workspace')[0].uuid, 'newname')
+  } finally {
+    renameSpy.mockRestore()
+  }
+
+  // previous content is intact and nothing is left behind
+  expect(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8')).toBe(before)
+  expect(fs.readdirSync(testTmpDir).filter(name => name.endsWith('.tmp'))).toEqual([])
+
+  // next save works
+  docrepo.save()
+  expect(JSON.parse(fs.readFileSync(path.join(testTmpDir, 'docrepo.json'), 'utf-8'))[0].name).toBe('newname')
+
+})
+
 test('DocumentRepository detects offline file changes', async () => {
   
   // we need a config
@@ -1054,4 +1134,220 @@ test('Docrepo updateChildDocumentSource for non-existent doc', async () => {
   // Should not throw, just log warning
   await docrepo.updateChildDocumentSource(docbase, 'non-existent-child')
   await vi.waitUntil(() => docrepo.queueLength() == 0)
+})
+
+// keeps the queue busy: the next call to the embedder waits until it is released
+const holdEmbedder = async () => {
+  const Embedder = (await import('@main/rag/embedder')).default
+  const embed = vi.mocked(Embedder.prototype.embed)
+  const calls = embed.mock.calls.length
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => { release = resolve })
+  embed.mockImplementationOnce(async (texts: string[]) => {
+    await gate
+    return Array(texts.length).fill(embeddings['other'])
+  })
+  return {
+    started: () => vi.waitUntil(() => embed.mock.calls.length > calls),
+    release,
+  }
+}
+
+test('Docrepo delete base drops its queued documents', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase1 = await docrepo.createDocBase('workspace', 'name1', 'openai', 'text-embedding-ada-002')
+  const docbase2 = await docrepo.createDocBase('workspace', 'name2', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+
+  // base 2 is being processed, both bases have documents waiting
+  const hold = await holdEmbedder()
+  const task1 = await docrepo.addDocumentSource(docbase2, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await hold.started()
+  await docrepo.addDocumentSource(docbase1, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await docrepo.addDocumentSource(docbase1, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  const task4 = await docrepo.addDocumentSource(docbase2, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  expect(docrepo.queueLength()).toBe(4)
+
+  // only the documents of the other base are left, with their abort controllers
+  await docrepo.deleteDocBase(docbase1)
+  expect(docrepo.queue.map(item => item.taskId)).toEqual([task1, task4])
+  expect([...docrepo.activeProcessingTasks.keys()]).toEqual([task1, task4])
+
+  // and they are processed
+  hold.release()
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.processing).toBe(false)
+  expect(docrepo.list('workspace')).toHaveLength(1)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.uuid)).toEqual([task1, task4])
+  expect(docrepo.activeProcessingTasks.size).toBe(0)
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo delete base stops its document being updated', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase1 = await docrepo.createDocBase('workspace', 'name1', 'openai', 'text-embedding-ada-002')
+  const docbase2 = await docrepo.createDocBase('workspace', 'name2', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+  const docid = await docrepo.addDocumentSource(docbase1, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+
+  const listener = { onDocumentSourceAdded: vi.fn(), onDocumentSourceRemoved: vi.fn() }
+  docrepo.addListener(listener)
+
+  // the update is being processed when its base is deleted
+  const hold = await holdEmbedder()
+  await docrepo.updateDocumentSource(docbase1, docid, false)
+  await hold.started()
+  const task = await docrepo.addDocumentSource(docbase2, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  await docrepo.deleteDocBase(docbase1)
+  expect(docrepo.queue.map(item => item.baseId)).toEqual([docbase1, docbase2])
+
+  // the queue goes on with the other base
+  hold.release()
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.processing).toBe(false)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.uuid)).toEqual([task])
+  expect(fs.existsSync(path.join(testTmpDir, 'docrepo', docbase1))).toBe(false)
+
+  // listeners are only told about documents that exist
+  expect(listener.onDocumentSourceAdded).toHaveBeenCalledTimes(1)
+  expect(listener.onDocumentSourceAdded.mock.calls[0][0].uuid).toBe(task)
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo queue goes on when the base of a document cannot be opened', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+
+  // the base is found when the first document is queued but not when it is processed
+  const connect = docrepo.connect.bind(docrepo)
+  const connectSpy = vi.spyOn(docrepo, 'connect')
+    .mockImplementationOnce(connect)
+    .mockRejectedValueOnce(new Error('Index does not exist'))
+  await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  const task = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  connectSpy.mockRestore()
+
+  // the first document is dropped, the second one is indexed
+  expect(docrepo.processing).toBe(false)
+  expect(docrepo.activeProcessingTasks.size).toBe(0)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.uuid)).toEqual([task])
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo queue goes on when a listener throws', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+  docrepo.addListener({
+    onDocumentSourceAdded: () => { throw new Error('listener failed') },
+    onDocumentSourceRemoved: () => { throw new Error('listener failed') },
+  })
+
+  const task1 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  const task2 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.processing).toBe(false)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.uuid)).toEqual([task1, task2])
+
+  await docrepo.removeDocumentSource(docbase, task1)
+  await docrepo.removeDocumentSource(docbase, task2)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.processing).toBe(false)
+  expect(docrepo.list('workspace')[0].documents).toEqual([])
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo add document twice while it is waiting in the queue', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+
+  const hold = await holdEmbedder()
+  const task1 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await hold.started()
+
+  // same origin: one request, flagged as a user action if any of them was
+  const task2 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo2.json'), false)
+  const task3 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  expect(task3).toBe(task2)
+  expect(docrepo.queueLength()).toBe(2)
+  expect(docrepo.queue[1].fromUserAction).toBe(true)
+
+  // the document being processed is queued again: it may have changed since it was read
+  const task4 = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  expect(task4).toBe(task1)
+  expect(docrepo.queueLength()).toBe(3)
+
+  hold.release()
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.uuid).sort()).toEqual([task1, task2].sort())
+  expect(docrepo.activeProcessingTasks.size).toBe(0)
+
+  // one chunk per document
+  const db = new LocalIndex(path.join(testTmpDir, 'docrepo', docbase))
+  expect((await db.listItems()).map(item => item.metadata.docId).sort()).toEqual([task1, task2].sort())
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo add document again after its removal was queued', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+  const docid = await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+
+  const hold = await holdEmbedder()
+  await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo2.json'), true)
+  await hold.started()
+
+  // add, remove, add: the last request is not a duplicate of the first one
+  await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  await docrepo.removeDocumentSource(docbase, docid)
+  await docrepo.addDocumentSource(docbase, 'file', path.join(tempdir, 'docrepo.json'), true)
+  expect(docrepo.queue.map(item => item.operation)).toEqual(['add', 'add', 'delete', 'add'])
+
+  hold.release()
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  expect(docrepo.list('workspace')[0].documents.map(doc => doc.origin).sort()).toEqual([path.join(tempdir, 'docrepo.json'), path.join(tempdir, 'docrepo2.json')])
+  const db = new LocalIndex(path.join(testTmpDir, 'docrepo', docbase))
+  expect((await db.listItems()).filter(item => item.metadata.docId === docid)).toHaveLength(1)
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+})
+
+test('Docrepo add child document twice while it is waiting in the queue', async () => {
+  const docrepo = new DocumentRepository(app)
+  const docbase = await docrepo.createDocBase('workspace', 'name', 'openai', 'text-embedding-ada-002')
+  const tempdir = createTempDir()
+  const parentDocId = await docrepo.addDocumentSource(docbase, 'folder', tempdir, true)
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+
+  const otherdir = createTempDir()
+  const hold = await holdEmbedder()
+  await docrepo.addDocumentSource(docbase, 'file', path.join(otherdir, 'docrepo.json'), true)
+  await hold.started()
+
+  const newFile = path.join(tempdir, 'newfile.txt')
+  fs.writeFileSync(newFile, 'new file content')
+  const child1 = await docrepo.addChildDocumentSource(docbase, parentDocId, 'file', newFile, false)
+  const child2 = await docrepo.addChildDocumentSource(docbase, parentDocId, 'file', newFile, false)
+  expect(child2).toBe(child1)
+  expect(docrepo.queueLength()).toBe(2)
+
+  hold.release()
+  await vi.waitUntil(() => docrepo.queueLength() == 0)
+  const folder = docrepo.list('workspace')[0].documents.find(doc => doc.uuid === parentDocId)
+  expect(folder.items.filter(item => item.origin === newFile).map(item => item.uuid)).toEqual([child1])
+  expect(docrepo.activeProcessingTasks.size).toBe(0)
+
+  fs.rmSync(tempdir, { recursive: true, force: true })
+  fs.rmSync(otherdir, { recursive: true, force: true })
 })

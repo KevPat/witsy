@@ -16,6 +16,14 @@ import { YoutubeVideoInfo } from '../main/youtube'
 export type strDict = Record<string, string>
 export type anyDict = Record<string, any>
 
+// state of the API key store, see getApiKeyStorageStatus in main/config.ts
+export type ApiKeyStorageStatus = {
+  encryptionAvailable: boolean
+  weak: boolean
+  undecryptable: string[]
+  notStored: string[]
+}
+
 export type MainWindowMode = 'none' | 'chat' | 'studio' | 'scratchpad' | 'booth' | 'agents' | 'voice-mode' | 'docrepos' | 'mcp' | 'settings' | `webapp-${string}`
 
 export type ScratchpadHeader = {
@@ -396,6 +404,7 @@ declare global {
       file: {
         stats(filePath: string): FileStats
         normalize(filePath: string): string
+        resolveAllowedPath(targetPath: string, allowedPaths: string[]): string | null
         exists(filePath: string): boolean
         read(filepath: string): FileContents
         readIcon(filepath: string): FileContents
@@ -436,6 +445,7 @@ declare global {
         getI18nMessages(): anyDict
         load(): Configuration
         save(config: Configuration): void
+        keyStorageStatus(): ApiKeyStorageStatus
       }
       history: {
         load(workspaceId: string): History
@@ -534,6 +544,7 @@ declare global {
       },
       markdown: {
         render(markdown: string): string
+        resolveMediaUrl(url: string): string | null
       }
       interpreter: {
         python(code: string): Promise<any>
@@ -644,6 +655,7 @@ declare global {
         install(): Promise<{ success: boolean, message: string }>
       }
       webview: {
+        initSession(partition: string): Promise<void>
         setLinkBehavior(webviewId: number, isExternal: boolean): Promise<void>
         setSpellCheckEnabled(webviewId: number, enabled: boolean): Promise<void>
       }

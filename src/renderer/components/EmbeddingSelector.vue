@@ -53,8 +53,8 @@ import RefreshButton from '@components/RefreshButton.vue'
 import Combobox from '@components/Combobox.vue'
 import Dialog from '@renderer/utils/dialog'
 
-const engine = defineModel('engine', { default: 'openai' })
-const model = defineModel('model', { default: 'text-embedding-ada-002' })
+const engine = defineModel<string>('engine', { default: 'openai' })
+const model = defineModel<string | null>('model', { default: 'text-embedding-ada-002' })
 
 const refresh = ref(null)
 

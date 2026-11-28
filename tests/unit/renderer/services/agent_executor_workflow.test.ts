@@ -160,6 +160,22 @@ test('Basic Agent Run - Success', async () => {
   expect(run.messages[2].role).toBe('assistant')
 })
 
+test('Agent Run saves the agent without replacing a legacy webhook token', async () => {
+  // the bookkeeping of a run must not change the url the callers of the webhook use
+  testAgent.webhookToken = 'abc12345'
+
+  const run = await runAgent('webhook', { name: 'there' }, { ephemeral: false })
+
+  expect(window.api.agents.save).toHaveBeenCalled()
+  for (const call of vi.mocked(window.api.agents.save).mock.calls) {
+    expect(call[1].uuid).toBe(testAgent.uuid)
+    expect(call[1].lastRunId).toBe(run.uuid)
+    expect(call[1].webhookToken).toBe('abc12345')
+  }
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
+  expect(testAgent.webhookToken).toBe('abc12345')
+})
+
 test('Agent Run captures agentInfo', async () => {
   testAgent.name = 'Captured Agent Name'
   testAgent.steps = [
@@ -339,6 +355,75 @@ test('Agent Run with Structured Output', async () => {
   }
 })
 
+test('Agent Run does not leak structured output to the next step', async () => {
+  const firstSchema = {
+    name: 'first_output',
+    structure: {} as any
+  }
+
+  testAgent.steps = [
+    {
+      prompt: 'Step 1: {{input}}',
+      tools: null,
+      agents: [],
+      jsonSchema: '{"answer": "string"}',
+      structuredOutput: firstSchema,
+    },
+    {
+      prompt: 'Step 2: Based on {{output.1}}',
+      tools: null,
+      agents: [],
+    }
+  ]
+
+  const run = await runAgent('manual', { input: 'schema isolation' })
+
+  expect(run.status).toBe('success')
+  expect(spyGenerate).toHaveBeenCalledTimes(2)
+
+  const firstOpts = spyGenerate.mock.calls[0][2] as AgentWorkflowExecutorOpts
+  const secondOpts = spyGenerate.mock.calls[1][2] as AgentWorkflowExecutorOpts
+  expect(firstOpts.structuredOutput).toBe(firstSchema)
+  expect(secondOpts.structuredOutput).toBeUndefined()
+})
+
+test('Agent Run uses each step structured output', async () => {
+  const firstSchema = {
+    name: 'first_output',
+    structure: {} as any
+  }
+  const secondSchema = {
+    name: 'second_output',
+    structure: {} as any
+  }
+
+  testAgent.steps = [
+    {
+      prompt: 'Step 1',
+      tools: null,
+      agents: [],
+      structuredOutput: firstSchema,
+    },
+    {
+      prompt: 'Step 2',
+      tools: null,
+      agents: [],
+      jsonSchema: '{"summary": "string"}',
+      structuredOutput: secondSchema,
+    }
+  ]
+
+  const run = await runAgent('manual', {})
+
+  expect(run.status).toBe('success')
+  expect(spyGenerate).toHaveBeenCalledTimes(2)
+
+  const firstOpts = spyGenerate.mock.calls[0][2] as AgentWorkflowExecutorOpts
+  const secondOpts = spyGenerate.mock.calls[1][2] as AgentWorkflowExecutorOpts
+  expect(firstOpts.structuredOutput).toBe(firstSchema)
+  expect(secondOpts.structuredOutput).toBe(secondSchema)
+})
+
 test('Agent Run with Tools Filter', async () => {
   testAgent.steps[0].tools = ['search_internet', 'run_python_code']
 
@@ -384,6 +469,40 @@ test('Agent Run Error Handling', async () => {
   expect(run.status).toBe('error')
   expect(run.error).toBe('Test error')
   expect(run.messages[2].content).toContain('generator.errors.cannotContinue')
+})
+
+test('Agent Run failed generation is saved as error', async () => {
+  testAgent.steps = [
+    { prompt: 'Step 1', tools: null, agents: [] },
+    { prompt: 'Step 2', tools: null, agents: [] },
+  ]
+
+  spyGenerate.mockResolvedValue('error')
+
+  const run = await runAgent('manual', { name: 'Failed generation' }, { ephemeral: false })
+
+  expect(run.status).toBe('error')
+  expect(run.error).toBeUndefined()
+  expect(spyGenerate).toHaveBeenCalledTimes(1)
+  expect(run.messages[2].content).not.toContain('generator.errors.cannotContinue')
+
+  const savedRuns = vi.mocked(window.api.agents.saveRun).mock.calls.map(call => call[1])
+  expect(savedRuns.length).toBeGreaterThan(0)
+  expect(savedRuns[savedRuns.length - 1].status).toBe('error')
+})
+
+test('Agent Run stopped generation is saved as canceled', async () => {
+  spyGenerate.mockResolvedValue('stopped')
+
+  const run = await runAgent('manual', { name: 'Stopped generation' }, { ephemeral: false })
+
+  expect(run.status).toBe('canceled')
+  expect(run.error).toBeUndefined()
+  expect(run.messages[2].content).not.toContain('generator.errors.cannotContinue')
+
+  const savedRuns = vi.mocked(window.api.agents.saveRun).mock.calls.map(call => call[1])
+  expect(savedRuns.length).toBeGreaterThan(0)
+  expect(savedRuns[savedRuns.length - 1].status).toBe('canceled')
 })
 
 test('Agent Run with Non-ephemeral Storage', async () => {

@@ -68,7 +68,7 @@
                 class="start"
                 v-tooltip="{ text: t('mcp.tooltips.startServer'), position: 'top-left' }"
                 @click="onEnabled(server)"
-              >
+               :label="t('mcp.tooltips.startServer')">
                 <PlayIcon />
               </ButtonIcon>
               <ButtonIcon
@@ -77,7 +77,7 @@
                 class="stop"
                 v-tooltip="{ text: t('mcp.tooltips.stopServer'), position: 'top-left' }"
                 @click="onEnabled(server)"
-              >
+               :label="t('mcp.tooltips.stopServer')">
                 <PauseIcon />
               </ButtonIcon>
 
@@ -87,12 +87,12 @@
                 :class="{ 'disabled': !isRunning(server) }"
                 v-tooltip="{ text: t('mcp.tooltips.viewTools'), position: 'top-left' }"
                 @click="showServerInfo(server)"
-              >
+               :label="t('mcp.tooltips.viewTools')">
                 <SearchIcon />
               </ButtonIcon>
 
               <!-- Context menu for other actions -->
-              <ContextMenuTrigger position="below-right">
+              <ContextMenuTrigger :label="t('common.actions')" position="below-right">
                 <template #menu>
                   <div class="item logs" @click="showLogs(server)" v-if="hasLogs(server)">
                     {{ t('mcp.tooltips.viewLogs') }}
@@ -161,6 +161,7 @@ import McpToolSelector from '@components/McpToolSelector.vue'
 import McpToolTester from '@components/McpToolTester.vue'
 import Spinner from '@components/Spinner.vue'
 import Dialog from '@renderer/utils/dialog'
+import { escapeHtml } from '@renderer/utils/html'
 import { t } from '@services/i18n'
 import { store } from '@services/store'
 import { ToolSelection } from 'types/llm'
@@ -313,7 +314,7 @@ const onReload = async () => {
 const showLogs = (server: McpServer) => {
   Dialog.show({
     title: t('mcp.serverLogs'),
-    html: props.status.logs[server.uuid].join('<br>'),
+    html: props.status.logs[server.uuid].map(escapeHtml).join('<br>'),
     confirmButtonText: t('common.close'),
   })
 }

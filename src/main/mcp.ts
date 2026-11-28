@@ -5,11 +5,11 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport, StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth'
 import { CompatibilityCallToolResultSchema } from '@modelcontextprotocol/sdk/types'
-import { exec } from 'child_process'
+import { ChildProcess, spawn } from 'child_process'
 import { app, App } from 'electron'
 import { PluginParameter, PluginTool } from 'multi-llm-ts'
 import { anyDict } from 'types/index'
-import { McpClient, McpInstallStatus, McpServer, McpServerWithTools, McpStatus, McpTool } from 'types/mcp'
+import { McpClaudeServer, McpClient, McpInstallStatus, McpServer, McpServerWithTools, McpStatus, McpTool } from 'types/mcp'
 import { loadSettings, saveSettings, settingsFilePath } from './config'
 import { useI18n } from './i18n'
 import McpOAuthManager from './mcp_auth'
@@ -23,6 +23,86 @@ export const LEGACY_SUFFIX_PATTERN = /___....$/
 // Collision handling constants
 const COLLISION_SUFFIX_SEPARATOR = '_'
 const MAX_TOOL_NAME_LENGTH = 64
+
+// Values that end up on the installer command line. Registry identifiers look like npm
+// package names ("exa", "@owner/server", "@owner/server@1.2.3"). Neither pattern accepts
+// whitespace, quotes, a leading dash or any character a shell (or cmd.exe) interprets.
+const INSTALL_SERVER_PATTERN = /^@?[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$/
+const INSTALL_API_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const INSTALL_VALUE_MAX_LENGTH = 256
+const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
+const INSTALL_FAILURES: McpInstallStatus[] = ['api_key_missing', 'not_found', 'error']
+
+const isInstallValue = (value: unknown, pattern: RegExp): value is string => {
+  return typeof value === 'string' && value.length <= INSTALL_VALUE_MAX_LENGTH && pattern.test(value)
+}
+
+// Splits the arguments field of a stdio server into an argument vector.
+// On Windows the field used to be handed to cmd.exe, so it follows the rules Windows programs
+// apply to their own command line: double quotes group and are removed, \" and "" (inside
+// quotes) are a literal quote, other backslashes are kept (paths).
+// Elsewhere quoted groups are kept together, quotes included, as they always were.
+const splitStdioArgs = (line: string): string[] => {
+
+  if (typeof line !== 'string') {
+    return []
+  }
+
+  if (process.platform !== 'win32') {
+    return line.match(/"[^"]+"|'[^']+'|\S+/g) || []
+  }
+
+  const args: string[] = []
+  let current = ''
+  let started = false
+  let quoted = false
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    if (char === '\\') {
+      let end = i
+      while (line[end + 1] === '\\') end++
+      const count = end - i + 1
+      if (line[end + 1] === '"') {
+        // 2n backslashes + quote: n backslashes, the quote delimits
+        // 2n+1 backslashes + quote: n backslashes, the quote is literal
+        current += '\\'.repeat(Math.floor(count / 2))
+        if (count % 2 === 1) {
+          current += '"'
+          end++
+        }
+      } else {
+        current += '\\'.repeat(count)
+      }
+      started = true
+      i = end
+    } else if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"'
+        i++
+      } else {
+        quoted = !quoted
+      }
+      started = true
+    } else if (!quoted && /\s/.test(char)) {
+      if (started) {
+        args.push(current)
+        current = ''
+        started = false
+      }
+    } else {
+      current += char
+      started = true
+    }
+  }
+
+  if (started) {
+    args.push(current)
+  }
+
+  return args
+
+}
 
 type McpSdkTool = {
   name: string
@@ -47,6 +127,9 @@ type ToolsCacheEntry = {
 export default class Mcp {
 
   private readonly CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+  private readonly FAILURE_RETRY_MS = 30 * 1000 // a failed tools/list is asked again after 30 seconds
+  private activeReload: Promise<void> = Promise.resolve()
+  private pendingReload: Promise<void>|null = null
 
   app: App
   monitor: Monitor|null
@@ -71,11 +154,13 @@ export default class Mcp {
     const uuid = client.server.uuid
     const cached = this.toolsCache.get(uuid)
 
+    // a failure is not cached for ever: the server is asked again after a short while
+    // (not at every call: a server that hangs would then delay every prompt)
     if (cached && cached.tools === null) {
-      return { tools: [] }
-    }
-    
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      if (Date.now() - cached.timestamp < this.FAILURE_RETRY_MS) {
+        return { tools: [] }
+      }
+    } else if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
       return cached.tools
     }
 
@@ -87,16 +172,26 @@ export default class Mcp {
         tools,
         timestamp: Date.now()
       })
-      
+
+      // a connected server that could not list its tools until now has no tool names yet:
+      // without them its tools cannot be called
+      if (cached && cached.tools === null) {
+        const connected = this.clients.find(c => c.server.uuid === uuid && c.client === client.client)
+        if (connected) {
+          connected.tools = this.resolveToolNames(connected.server, tools.tools.map((tool: McpSdkTool) => tool.name))
+          emitIpcEventToAll('mcp-servers-updated')
+        }
+      }
+
       return tools
 
     } catch (e) {
 
       console.error(`[mcp] Failed to get tools from MCP server ${client.server.url}:`, e)
-      this.logs[uuid].push(`[mcp] Failed to get tools`)
+      this.logs[uuid]?.push(`[mcp] Failed to get tools`)
       this.toolsCache.set(uuid, {
         tools: null,
-        timestamp: 0
+        timestamp: Date.now()
       })
       return { tools: [] }
     }
@@ -223,20 +318,23 @@ export default class Mcp {
         ...server,
         toolSelection: server.toolSelection ?? null
       })),
-      ...Object.keys(config.mcpServers).reduce((arr: McpServer[], key: string) => {
+      ...Object.keys(config.mcpServers ?? {}).reduce((arr: McpServer[], key: string) => {
+        // "args" (like cwd and env) is optional in the mcpServers format
+        const entry: Partial<McpClaudeServer> = config.mcpServers[key] ?? {}
+        const extra = config.mcp.mcpServersExtra?.[key]
         arr.push({
           uuid: key.replace('@', ''),
           registryId: key,
-          label: config.mcp.mcpServersExtra[key]?.label || undefined,
-          state: config.mcp.mcpServersExtra[key]?.state || 'enabled',
+          label: extra?.label || undefined,
+          state: extra?.state || 'enabled',
           type: 'stdio',
-          command: config.mcpServers[key].command,
-          url: config.mcpServers[key].args.join(' '),
-          cwd: config.mcpServers[key].cwd,
-          env: config.mcpServers[key].env,
-          oauth: config.mcp.mcpServersExtra[key]?.oauth || undefined,
-          toolSelection: config.mcp.mcpServersExtra[key]?.toolSelection || null,
-          toolMappings: config.mcp.mcpServersExtra[key]?.toolMappings || undefined
+          command: entry.command,
+          url: Array.isArray(entry.args) ? entry.args.join(' ') : '',
+          cwd: entry.cwd,
+          env: entry.env,
+          oauth: extra?.oauth || undefined,
+          toolSelection: extra?.toolSelection || null,
+          toolMappings: extra?.toolMappings || undefined
         })
         return arr
       }, [])
@@ -285,8 +383,8 @@ export default class Mcp {
 
   installServer = async (registry: string, server: string, apiKey: string): Promise<McpInstallStatus> => {
 
-    const command = this.getInstallCommand(registry, server, apiKey)
-    if (!command) return 'error'
+    const argv = this.getInstallArgv(registry, server, apiKey)
+    if (!argv) return 'error'
 
     try {
 
@@ -295,55 +393,7 @@ export default class Mcp {
       this.monitor?.stop()
       this.logs[server] = this.logs[server] || []
 
-      await new Promise<McpInstallStatus>((resolve, reject) => {
-
-        let failTimeout: NodeJS.Timeout
-        const childProcess = exec(command)
-
-        childProcess.on('error', (error) => {
-          console.error(`[mcp] Error installing MCP server ${server}:`, error)
-          this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
-          reject('error')
-        })
-
-        childProcess.stderr.on('data', (data: Buffer) => {
-          const stderr = data.toString()
-          console.error(`[mcp] MCP install ${server} stderr:`, stderr)
-          this.logs[server].push(`MCP install ${server} stderr: ${stderr}`)
-
-          if (stderr.includes('Failed to install')) {
-            failTimeout = setTimeout(() => {
-              childProcess.kill()
-              reject('error')
-            }, 250)
-          }
-
-          if (stderr.includes('Server not found')) {
-            clearTimeout(failTimeout)
-            childProcess.kill()
-            reject('not_found')
-          }
-        
-        })
-
-        childProcess.stdout.on('data', (data: Buffer) => {
-          const stdout = data.toString()
-          console.log(`[mcp] MCP install ${server} stdout:`, stdout)
-          this.logs[server].push(`MCP install ${server} stdout: ${stdout}`)
-
-          if (stdout.includes('successfully installed')) {
-            resolve('success')
-          }
-
-          if (stdout.includes('Please enter your Smithery API key')) {
-            childProcess.kill()
-            reject('api_key_missing')
-          }
-
-        })
-    
-      
-      })
+      await this.runInstaller(server, argv)
 
       // now we should be able to connect
       const after = this.getServers()
@@ -356,22 +406,137 @@ export default class Mcp {
       return 'success'
 
     } catch (e) {
-      return e
+      return INSTALL_FAILURES.includes(e) ? e : 'error'
     } finally {
       this.startConfigMonitor()
     }
     
   }
 
-  getInstallCommand = (registry: string, server: string, apiKey: string): string|null => {  
-    if (registry === 'smithery') {
-      let command = `npx -y @smithery/cli@latest install ${server} --client witsy`
-      if (apiKey) {
-        command += ` --key ${apiKey}`
+  // settles on every path: known installer message, process exit, spawn error or timeout
+  private runInstaller = (server: string, argv: string[]): Promise<void> => {
+
+    return new Promise<void>((resolve, reject) => {
+
+      let settled = false
+      let failTimeout: NodeJS.Timeout = null
+      let installTimeout: NodeJS.Timeout = null
+      let childProcess: ChildProcess = null
+
+      const settle = (status: McpInstallStatus) => {
+        if (settled) return
+        settled = true
+        clearTimeout(failTimeout)
+        clearTimeout(installTimeout)
+        if (status === 'success') {
+          resolve()
+        } else {
+          childProcess?.kill()
+          reject(status)
+        }
       }
-      return command
+
+      try {
+
+        // npx is a .cmd shim on Windows, which only cmd.exe can start: the arguments
+        // were validated against a charset that means nothing to it, and no shell is used elsewhere
+        const [file, ...args] = process.platform === 'win32'
+          ? [process.env.comspec || 'cmd.exe', '/d', '/s', '/c', ...argv]
+          : argv
+        childProcess = spawn(file, args, { shell: false, windowsHide: true })
+
+      } catch (error) {
+        console.error(`[mcp] Error installing MCP server ${server}:`, error)
+        this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
+        settle('error')
+        return
+      }
+
+      installTimeout = setTimeout(() => {
+        console.error(`[mcp] MCP install ${server} timed out`)
+        this.logs[server].push(`MCP install ${server} timed out`)
+        settle('error')
+      }, INSTALL_TIMEOUT_MS)
+
+      childProcess.on('error', (error) => {
+        console.error(`[mcp] Error installing MCP server ${server}:`, error)
+        this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
+        settle('error')
+      })
+
+      childProcess.on('close', (code) => {
+        if (settled) return
+        if (code !== 0) {
+          console.error(`[mcp] MCP install ${server} exited with code ${code}`)
+          this.logs[server].push(`MCP install ${server} exited with code ${code}`)
+        }
+        settle(code === 0 ? 'success' : 'error')
+      })
+
+      childProcess.stderr.on('data', (data: Buffer) => {
+        const stderr = data.toString()
+        console.error(`[mcp] MCP install ${server} stderr:`, stderr)
+        this.logs[server].push(`MCP install ${server} stderr: ${stderr}`)
+
+        // leave some time for a more specific message
+        if (stderr.includes('Failed to install') && !settled) {
+          clearTimeout(failTimeout)
+          failTimeout = setTimeout(() => settle('error'), 250)
+        }
+
+        if (stderr.includes('Server not found')) {
+          settle('not_found')
+        }
+
+      })
+
+      childProcess.stdout.on('data', (data: Buffer) => {
+        const stdout = data.toString()
+        console.log(`[mcp] MCP install ${server} stdout:`, stdout)
+        this.logs[server].push(`MCP install ${server} stdout: ${stdout}`)
+
+        if (stdout.includes('successfully installed')) {
+          settle('success')
+        }
+
+        if (stdout.includes('Please enter your Smithery API key')) {
+          settle('api_key_missing')
+        }
+
+      })
+
+    })
+
+  }
+
+  // the installer command as an argument vector, or null when the registry is unknown
+  // or when a value that would end up on the command line is refused
+  private getInstallArgv = (registry: string, server: string, apiKey: string): string[]|null => {
+
+    if (registry !== 'smithery') {
+      return null
     }
-    return null
+
+    if (!isInstallValue(server, INSTALL_SERVER_PATTERN)) {
+      console.error('[mcp] Refused to install MCP server: the server name is not a valid registry identifier')
+      return null
+    }
+
+    if (apiKey && !isInstallValue(apiKey, INSTALL_API_KEY_PATTERN)) {
+      console.error(`[mcp] Refused to install MCP server ${server}: the API key contains unexpected characters`)
+      return null
+    }
+
+    return [
+      'npx', '-y', '@smithery/cli@latest', 'install', server, '--client', 'witsy',
+      ...(apiKey ? ['--key', apiKey] : [])
+    ]
+
+  }
+
+  // for display only: installServer never runs this string
+  getInstallCommand = (registry: string, server: string, apiKey: string): string|null => {
+    return this.getInstallArgv(registry, server, apiKey)?.join(' ') ?? null
   }
 
   editServer = async (server: McpServer): Promise<boolean> => {
@@ -491,7 +656,7 @@ export default class Mcp {
 
     // and in mcp servers
     const originalMcp = config.mcpServers[server.registryId]
-    if (originalMcp && config.mcp.mcpServersExtra[server.registryId].oauth) {
+    if (originalMcp && config.mcp.mcpServersExtra[server.registryId]?.oauth) {
       if (JSON.stringify(config.mcp.mcpServersExtra[server.registryId].oauth.tokens) !== JSON.stringify(tokens)) {
         config.mcp.mcpServersExtra[server.registryId].oauth.tokens = tokens
         config.mcp.mcpServersExtra[server.registryId].oauth.scope = scope
@@ -512,17 +677,35 @@ export default class Mcp {
   }  
 
   shutdown = async (): Promise<void> => {
-    for (const client of this.clients) {
-      await client.client.close()
-    }
+    // one client that fails to close must not keep the others open
+    const clients = this.clients
     this.clients = []
+    for (const client of clients) {
+      try {
+        await client.client.close()
+      } catch (e) {
+        console.error(`[mcp] Failed to close MCP server ${client.server.url}:`, e)
+      }
+    }
     this.invalidateToolsCache()
     this.oauthManager.shutdown()
   }
 
-  reload = async (): Promise<void> => {
-    await this.shutdown()
-    await this.connect()
+  // reloads run one after the other (the settings monitor fires them without waiting):
+  // two at the same time would each connect every server.
+  // a reload that has not started yet reads the settings when it starts, so it serves all callers
+  reload = (): Promise<void> => {
+    if (this.pendingReload) {
+      return this.pendingReload
+    }
+    const run = this.activeReload.then(async () => {
+      this.pendingReload = null
+      await this.shutdown()
+      await this.connect()
+    })
+    this.pendingReload = run
+    this.activeReload = run.catch(() => { /* reported to the caller */ })
+    return run
   }
 
   restartServer = async (uuid: string): Promise<boolean> => {
@@ -563,7 +746,6 @@ export default class Mcp {
     }
 
     // save
-    this.currentConfig = JSON.stringify(servers)
     this.startConfigMonitor()
 
     // done
@@ -580,6 +762,13 @@ export default class Mcp {
           this.reload()
         }
       })
+    }
+    // what we compare against is what we have just connected or saved ourselves:
+    // if not, the next unrelated settings change reloads every server
+    try {
+      this.currentConfig = JSON.stringify(this.getServers())
+    } catch (e) {
+      console.error('[mcp] Failed to read the servers configuration', e)
     }
     this.monitor.start(settingsFilePath(this.app))
   }
@@ -632,6 +821,23 @@ export default class Mcp {
     const tools = await this.getCachedTools({ client, server, tools: [] } as McpClient)
     const toolNames = tools.tools.map((tool: McpSdkTool) => tool.name)
 
+    // detect and resolve collisions, build final tool names using mappings
+    const finalToolNames = this.resolveToolNames(server, toolNames)
+
+    // store
+    this.clients.push({
+      client,
+      server,
+      tools: finalToolNames
+    })
+
+    // done
+    return true
+
+  }
+
+  private resolveToolNames = (server: McpServer, toolNames: string[]): string[] => {
+
     // detect and resolve collisions
     const mappings = this.detectAndResolveCollisions(
       server.uuid,
@@ -650,17 +856,7 @@ export default class Mcp {
     }
 
     // build final tool names using mappings
-    const finalToolNames = toolNames.map((name: string) => this.getMappedToolName(server, name))
-
-    // store
-    this.clients.push({
-      client,
-      server,
-      tools: finalToolNames
-    })
-
-    // done
-    return true
+    return toolNames.map((name: string) => this.getMappedToolName(server, name))
 
   }
 
@@ -668,21 +864,16 @@ export default class Mcp {
 
     try {
 
-      // build command and args
-      const command = process.platform === 'win32' ? 'cmd' : server.command
-      const args = process.platform === 'win32'
-        ? ['/C', `"${server.command}" ${server.url}`]
-        : server.url.match(/"[^"]+"|'[^']+'|\S+/g) || [];
-      
+      // the transport starts the command without a shell, on every platform (on Windows
+      // it resolves .cmd shims such as npx and escapes their arguments itself):
+      // each argument reaches the server as it is, whatever characters it holds
+      const command = server.command
+      const args = splitStdioArgs(server.url)
+
       // now environment
       let env = {
         ...getDefaultEnvironment(),
         ...server.env,
-      }
-
-      // clean up double cmd /c with smithery on windows
-      if (command === 'cmd' && args.length > 0 && args[1].toLowerCase().startsWith('"cmd" /c')) {
-        args[1] = args[1].slice(9)
       }
 
       // if env is empty, remove it
@@ -774,7 +965,7 @@ export default class Mcp {
           const clientInformation = {
             client_id: server.oauth.clientId,
             client_secret: server.oauth.clientSecret,
-            redirect_uris: ['http://localhost:8090/callback'],
+            redirect_uris: clientMetadata.redirect_uris,
             token_endpoint_auth_method: 'client_secret_post',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],
@@ -854,7 +1045,7 @@ export default class Mcp {
       // add OAuth provider if configured
       if (server.oauth && (server.oauth.tokens || server.oauth.clientId)) {
 
-        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens.scope ?? server.oauth.scope)
+        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens?.scope ?? server.oauth.scope)
         const oauthProvider = await this.oauthManager.createOAuthProvider(clientMetadata, (redirectUrl) => {
           console.log(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
           this.logs[server.uuid].push(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
@@ -873,7 +1064,7 @@ export default class Mcp {
           const clientInformation = {
             client_id: server.oauth.clientId,
             client_secret: server.oauth.clientSecret,
-            redirect_uris: ['http://localhost:8090/callback'],
+            redirect_uris: clientMetadata.redirect_uris,
             token_endpoint_auth_method: 'client_secret_post',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],
@@ -1000,7 +1191,8 @@ export default class Mcp {
   public originalToolName = (name: string): string => {
     
     // handle legacy for some time
-    if (LEGACY_SUFFIX_PATTERN.test(name)) {
+    // (a current tool can also end like a legacy suffix: "fetch___data" is a real name)
+    if (LEGACY_SUFFIX_PATTERN.test(name) && !this.clients.some(client => client.tools.includes(name))) {
       name = name.replace(LEGACY_SUFFIX_PATTERN, '')
     }
     
@@ -1059,19 +1251,20 @@ export default class Mcp {
       }
 
       if (existingToolNames.has(toolName)) {
-        // Find next available suffix
+        // Find next available suffix: the name that is tested is the one that is stored,
+        // truncated if needed to fit max tool name length
+        const candidate = (suffix: number): string => {
+          const suffixStr = `${COLLISION_SUFFIX_SEPARATOR}${suffix}`
+          const name = `${toolName}${suffixStr}`
+          if (name.length <= MAX_TOOL_NAME_LENGTH) return name
+          return `${toolName.slice(0, MAX_TOOL_NAME_LENGTH - suffixStr.length)}${suffixStr}`
+        }
         let suffix = 1
-        while (existingToolNames.has(`${toolName}${COLLISION_SUFFIX_SEPARATOR}${suffix}`)) {
+        while (existingToolNames.has(candidate(suffix))) {
           suffix++
         }
-        // Truncate if needed to fit max tool name length
-        const suffixStr = `${COLLISION_SUFFIX_SEPARATOR}${suffix}`
-        let mappedName = `${toolName}${suffixStr}`
-        if (mappedName.length > MAX_TOOL_NAME_LENGTH) {
-          const maxBaseLength = MAX_TOOL_NAME_LENGTH - suffixStr.length
-          mappedName = `${toolName.slice(0, maxBaseLength)}${suffixStr}`
-        }
-        mappings[toolName] = mappedName
+        const mappedName = candidate(suffix)
+mappings[toolName] = mappedName
         existingToolNames.add(mappedName)
       }
     }

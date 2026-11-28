@@ -99,6 +99,7 @@ import Chat from '@models/chat'
 import Message from '@models/message'
 import useAudioPlayer, { AudioStatus } from '@renderer/audio/audio_player'
 import type { ChatCallbacks } from '@screens/Chat.vue'
+import { downloadWithPrompt } from '@services/download'
 import { t } from '@services/i18n'
 import { store } from '@services/store'
 import { LoaderCircleIcon } from 'lucide-vue-next'
@@ -143,9 +144,13 @@ const audioState = ref<{state: string, messageId: string|null}>({
 const isEditing = ref(false)
 const editedContent = ref('')
 
-// onUpdated is not called for an unknown reason
-// so let's hack it
-let updateLinkInterval: NodeJS.Timeout|null = null 
+let linkObserver: MutationObserver|null = null
+const updateLinkTargets = () => {
+  div.value?.querySelectorAll<HTMLLinkElement>('a').forEach(link => {
+    link.target = '_blank'
+  })
+}
+
 onMounted(() => {
 
   // show tool calls
@@ -155,20 +160,17 @@ onMounted(() => {
     toolCallsDisplay.value = 'none'
   }
 
-  // make sure links are going outside
-  updateLinkInterval = setInterval(() => {
-    try {
-      div.value?.querySelectorAll<HTMLLinkElement>('a').forEach(link => {
-        link.target = "_blank"
-      })
-    } catch {
-      // ignore
-    }
-  }, 500)
+  // Keep dynamically rendered markdown links external without polling every
+  // mounted message several times per second.
+  updateLinkTargets()
+  if (div.value) {
+    linkObserver = new MutationObserver(updateLinkTargets)
+    linkObserver.observe(div.value, { childList: true, subtree: true })
+  }
 
   // audio listener init
   audioPlayer.addListener(onAudioPlayerStatus)
-  onBusEvent('audio-noise-detected', () =>  audioPlayer.stop)
+  onBusEvent('audio-noise-detected', () => audioPlayer.stop())
 
   // settings change
   watch(() => store.config.appearance.chat.toolCallsDisplay, (value) => {
@@ -178,9 +180,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (updateLinkInterval) {
-    clearInterval(updateLinkInterval)
-  }
+  linkObserver?.disconnect()
+  linkObserver = null
   audioPlayer.removeListener(onAudioPlayerStatus)
 })
 
@@ -243,15 +244,8 @@ const onHover = (value: boolean) => {
 
 const onClickAttachment = (attachment: Attachment) => {
   if (props.message.role === 'assistant') {
-    window.api.file.download({
-      url: attachment.url,
-      properties: {
-        prompt: true,
-        directory: 'downloads',
-        filename: attachment.title,
-      }
-    })
-  }
+    downloadWithPrompt(attachment.url, attachment.title)
+}
 }
 
 const onClickImageAttachment = (attachment: Attachment) => {

@@ -2,7 +2,9 @@
 #
 # Witsy CLI wrapper script
 # This script allows running the Witsy CLI from the command line
-# by using the Electron binary as a Node.js runtime
+# by using the Electron binary as a Node.js runtime,
+# or the Node.js of the computer when the app was built without that
+# (see the "runtime" file below and build/cli_runtime.ts)
 
 # Detect platform and set paths accordingly
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -27,7 +29,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 	fi
 
 	ELECTRON="$APP_PATH/Contents/MacOS/Witsy"
-	CLI="$APP_PATH/Contents/Resources/cli/cli.js"
+	CLI_DIR="$APP_PATH/Contents/Resources/cli"
 
 else
 	
@@ -43,7 +45,42 @@ else
 
 	# Script is in resources/cli/bin, executable is 3 levels up
 	ELECTRON="$SCRIPT_DIR/../../../witsy"
-	CLI="$SCRIPT_DIR/../cli.js"
+	CLI_DIR="$SCRIPT_DIR/.."
+
+fi
+
+CLI="$CLI_DIR/cli.js"
+
+# Which Node.js runs the CLI was decided when the app was built:
+# - "electron", or no file: the app binary, as a Node.js runtime
+# - "node": the Node.js of this computer. The app binary cannot be used: it no longer
+#   accepts to run as Node.js (the RunAsNode fuse is off), for any program or user
+RUNTIME="electron"
+if [ -f "$CLI_DIR/runtime" ]; then
+	RUNTIME="$(head -n 1 "$CLI_DIR/runtime" | tr -d '[:space:]')"
+fi
+
+if [ "$RUNTIME" = "node" ]; then
+
+	NODE="$(command -v node 2>/dev/null)"
+	if [ -z "$NODE" ]; then
+		echo "Witsy CLI requires Node.js 18 or later, and no 'node' was found in your PATH." >&2
+		echo "Install Node.js (https://nodejs.org) and try again." >&2
+		exit 1
+	fi
+
+	NODE_MAJOR="$("$NODE" -p "process.versions.node.split('.')[0]" 2>/dev/null)"
+	case "$NODE_MAJOR" in
+		''|*[!0-9]*) NODE_MAJOR=0 ;;
+	esac
+	if [ "$NODE_MAJOR" -lt 18 ]; then
+		echo "Witsy CLI requires Node.js 18 or later: '$NODE' is $("$NODE" --version 2>/dev/null || echo "not a working Node.js")." >&2
+		echo "Install a recent Node.js (https://nodejs.org) and try again." >&2
+		exit 1
+	fi
+
+	"$NODE" --no-deprecation "$CLI" "$@"
+	exit $?
 
 fi
 

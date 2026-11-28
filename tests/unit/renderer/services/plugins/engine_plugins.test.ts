@@ -26,8 +26,7 @@ const context: PluginExecutionContext = {
   model: 'mock',
 }
 
-// @ts-expect-error mocking
-global.fetch = vi.fn(async (url: string) => {
+const defaultFetch = async (url: string) => {
   if (url.includes('ollama') || url.includes('11434')) {
     return {
       url,
@@ -57,8 +56,8 @@ global.fetch = vi.fn(async (url: string) => {
       },
       json: () => ({
         results: [
-          { url: 'url1', title: 'title1', content: 'content1' },
-          { url: 'url2', title: 'title2', content: 'content2' }
+          { url: 'https://example.com/url1', title: 'title1', content: 'content1' },
+          { url: 'https://example.com/url2', title: 'title2', content: 'content2' }
         ]
       })
     }
@@ -73,8 +72,8 @@ global.fetch = vi.fn(async (url: string) => {
       },
       json: () => ({
         items: [
-          { link: 'url1', title: 'title1', snippet: 'snippet1' },
-          { link: 'url2', title: 'title2', snippet: 'snippet2' }
+          { link: 'https://example.com/url1', title: 'title1', snippet: 'snippet1' },
+          { link: 'https://example.com/url2', title: 'title2', snippet: 'snippet2' }
         ]
       })
     }
@@ -90,14 +89,17 @@ global.fetch = vi.fn(async (url: string) => {
       json: () => ({
         web: {
           results: [
-            { url: 'url1', title: 'title1', description: 'desc1' },
-            { url: 'url2', title: 'title2', description: 'desc2' }
+            { url: 'https://example.com/url1', title: 'title1', description: 'desc1' },
+            { url: 'https://example.com/url2', title: 'title2', description: 'desc2' }
           ]
         }
       })
     }
   }
-})
+}
+
+// @ts-expect-error mocking
+global.fetch = vi.fn(defaultFetch)
 
 
 vi.mock('@services/i18n', async () => {
@@ -114,8 +116,8 @@ vi.mock('@services/download.ts', async () => {
 // exa
 vi.mock('exa-js', async () => {
   const Exa = vi.fn()
-  Exa.prototype.searchAndContents = vi.fn(() => ({ results: [
-    { title: 'title', url: 'url', text: 'fetched_' }
+  Exa.prototype.search = vi.fn(() => ({ results: [
+    { title: 'title', url: 'https://example.com/url', text: 'fetched_' }
   ] }))
   return { Exa }
 })
@@ -125,7 +127,7 @@ vi.mock('@perplexity-ai/perplexity_ai', async () => {
   const Perplexity = vi.fn()
   Perplexity.prototype.search = {
     create: vi.fn(() => ({ results: [
-      { title: 'title', url: 'url' }
+      { title: 'title', url: 'https://example.com/url' }
     ] }))
   }
   return { default: Perplexity }
@@ -135,7 +137,7 @@ vi.mock('@perplexity-ai/perplexity_ai', async () => {
 vi.mock('@/vendor/tavily', async () => {
   const Tavily = vi.fn()
   Tavily.prototype.search = vi.fn(() => ({ results: [
-    { title: 'title', url: 'url', content: 'content' }
+    { title: 'title', url: 'https://example.com/url', content: 'content' }
   ] }))
   return { default: Tavily }
 })
@@ -345,8 +347,8 @@ test('Search Plugin Brave', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { url: 'url1', title: 'title1', content: 'fetched_' },
-      { url: 'url2', title: 'title2', content: 'fetched_' }
+      { url: 'https://example.com/url1', title: 'title1', content: 'fetched_' },
+      { url: 'https://example.com/url2', title: 'title2', content: 'fetched_' }
     ]
   })
   expect(fetch).toHaveBeenNthCalledWith(1, 'https://api.search.brave.com/res/v1/web/search?q=test&count=5', {
@@ -364,10 +366,10 @@ test('Search Plugin Exa', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { title: 'title', url: 'url', content: 'fetched_' }
+      { title: 'title', url: 'https://example.com/url', content: 'fetched_' }
     ]
   })
-  expect(Exa.prototype.searchAndContents).toHaveBeenLastCalledWith('test', { text: true, numResults: 5 })
+  expect(Exa.prototype.search).toHaveBeenLastCalledWith('test', { contents: { text: true }, numResults: 5 })
   expect(window.api.search.query).not.toHaveBeenCalled()
 })
 
@@ -379,8 +381,8 @@ test('Search Plugin Google', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { url: 'url1', title: 'title1', content: 'fetched_' },
-      { url: 'url2', title: 'title2', content: 'fetched_' }
+      { url: 'https://example.com/url1', title: 'title1', content: 'fetched_' },
+      { url: 'https://example.com/url2', title: 'title2', content: 'fetched_' }
     ]
   })
   expect(fetch).toHaveBeenCalledWith('https://www.googleapis.com/customsearch/v1?key=test-api-key&cx=test-cx&q=test&num=5', {
@@ -397,7 +399,7 @@ test('Search Plugin Perplexity', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { title: 'title', url: 'url', content: 'fetched_' }
+      { title: 'title', url: 'https://example.com/url', content: 'fetched_' }
     ]
   })
   expect(Perplexity.prototype.search.create).toHaveBeenLastCalledWith({ query: 'test', max_results: 5 })
@@ -410,7 +412,7 @@ test('Search Plugin Tavily', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { title: 'title', url: 'url', content: 'fetched_' }
+      { title: 'title', url: 'https://example.com/url', content: 'fetched_' }
     ]
   })
   expect(tavily.prototype.search).toHaveBeenLastCalledWith('test', { max_results: 5 })
@@ -424,8 +426,8 @@ test('Search Plugin SearXNG', async () => {
   expect(await search.execute(context, { query: 'test' })).toStrictEqual({
     query: 'test',
     results: [
-      { url: 'url1', title: 'title1', content: 'fetched_' },
-      { url: 'url2', title: 'title2', content: 'fetched_' }
+      { url: 'https://example.com/url1', title: 'title1', content: 'fetched_' },
+      { url: 'https://example.com/url2', title: 'title2', content: 'fetched_' }
     ]
   })
   expect(fetch).toHaveBeenCalledWith('https://searxng.example.com/search?q=test&format=json', {
@@ -434,6 +436,115 @@ test('Search Plugin SearXNG', async () => {
     }
   })
   expect(window.api.search.query).not.toHaveBeenCalled()
+})
+
+test('Search Plugin does not download results on this machine, on a private network or in a file', async () => {
+
+  // a search engine answers with whatever the web contains
+  const kRefused = [
+    'http://localhost:8090/api/conversations',
+    'http://127.0.0.1:11434/api/tags',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://192.168.1.1/admin',
+    'http://[::1]:8090/',
+    'http://intranet.local/wiki',
+    'file:///etc/passwd',
+    'file:///C:/Users/me/.ssh/id_rsa',
+    '/etc/passwd',
+    '../../settings.json',
+    'https://user:secret@example.com/',
+    'javascript:alert(1)',
+    'ftp://example.com/file',
+    '',
+  ]
+  const results = [
+    { url: 'https://example.com/public', title: 'public', content: 'snippet0' },
+    ...kRefused.map((url, index) => ({ url, title: `refused${index}`, content: `snippet${index}` })),
+    { url: undefined, title: 'no url' },
+  ]
+
+  // @ts-expect-error mocking
+  vi.mocked(fetch).mockImplementationOnce(async (url: string) => ({
+    url, ok: true, json: () => ({ results })
+  }))
+
+  store.config.plugins.search.engine = 'searxng'
+  store.config.plugins.search.searxngUrl = 'https://searxng.example.com'
+  const search = new Search(store.config.plugins.search, 'test-workspace')
+  const response = await search.execute(context, { query: 'test', maxResults: 50 })
+
+  // the search itself and the one public page: nothing else was requested
+  expect(vi.mocked(fetch).mock.calls.map((call) => call[0])).toEqual([
+    'https://searxng.example.com/search?q=test&format=json',
+    'https://example.com/public',
+  ])
+
+  // a refused result keeps what the search engine said about it
+  expect(response.error).toBeUndefined()
+  expect(response.results).toHaveLength(results.length)
+  expect(response.results[0]).toStrictEqual({ url: 'https://example.com/public', title: 'public', content: 'fetched_' })
+  kRefused.forEach((url, index) => {
+    expect(response.results[index + 1]).toStrictEqual({ url, title: `refused${index}`, content: `snippet${index}`.slice(0, 8) })
+  })
+  expect(response.results.at(-1)).toStrictEqual({ url: undefined, title: 'no url', content: '' })
+
+})
+
+test('Search Plugin does not read a page that redirects to this machine', async () => {
+
+  // @ts-expect-error mocking
+  vi.mocked(fetch).mockImplementation(async (url: string) => {
+    if (url.includes('searxng')) {
+      return { url, ok: true, json: () => ({ results: [
+        { url: 'https://example.com/redirects', title: 'redirects', content: 'snippet1' },
+        { url: 'https://example.com/stays', title: 'stays', content: 'snippet2' },
+      ] }) }
+    }
+    const text = vi.fn(() => '<html><body>secret of the local api</body></html>')
+    if (url === 'https://example.com/redirects') {
+      // what fetch reports after following a redirect
+      return { url: 'http://127.0.0.1:8090/api/conversations', ok: true, text }
+    }
+    return { url, ok: true, text: () => '<html><body>fetched_content</body></html>' }
+  })
+
+  try {
+
+    store.config.plugins.search.engine = 'searxng'
+    store.config.plugins.search.searxngUrl = 'https://searxng.example.com'
+    const search = new Search(store.config.plugins.search, 'test-workspace')
+    const response = await search.execute(context, { query: 'test' })
+
+    expect(response.results).toStrictEqual([
+      { url: 'https://example.com/redirects', title: 'redirects', content: 'snippet1' },
+      { url: 'https://example.com/stays', title: 'stays', content: 'fetched_' },
+    ])
+    expect(JSON.stringify(response)).not.toContain('secret')
+
+  } finally {
+    vi.mocked(fetch).mockReset()
+    // @ts-expect-error mocking
+    vi.mocked(fetch).mockImplementation(defaultFetch)
+  }
+
+})
+
+test('Search Plugin still queries a search engine the user runs on this machine', async () => {
+
+  store.config.plugins.search.engine = 'searxng'
+  store.config.plugins.search.searxngUrl = 'http://localhost:8888'
+  const search = new Search(store.config.plugins.search, 'test-workspace')
+  // the default mock recognizes a searxng url by its name
+  // @ts-expect-error mocking
+  vi.mocked(fetch).mockImplementationOnce(async (url: string) => ({
+    url, ok: true, json: () => ({ results: [{ url: 'https://example.com/url1', title: 'title1', content: 'content1' }] })
+  }))
+
+  const response = await search.execute(context, { query: 'test' })
+
+  expect(fetch).toHaveBeenNthCalledWith(1, 'http://localhost:8888/search?q=test&format=json', expect.anything())
+  expect(response.results).toStrictEqual([{ url: 'https://example.com/url1', title: 'title1', content: 'fetched_' }])
+
 })
 
 test('Image Plugin', async () => {
@@ -701,7 +812,8 @@ test('Computer Plugin', async () => {
   expect(computer.getRunningDescription()).toBe('Using your computer…')
   expect(computer.getParameters()).toStrictEqual([])
 
-  // all actions should return a screenshot
+  // all successful actions should return a screenshot
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce(true)
   const result = await computer.execute(context, { action: 'whatever' })
   expect(window.api.computer.takeScreenshot).toHaveBeenCalled()
   expect(result).toStrictEqual({
@@ -716,6 +828,54 @@ test('Computer Plugin', async () => {
       }
     ]
   })
+})
+
+test('Computer Plugin action results', async () => {
+
+  const computer = new Computer(store.config.plugins.computer, 'test-workspace')
+  const screenshot = { content: [ { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'screenshot_url' } } ] }
+
+  // no action
+  expect(await computer.execute(context, {})).toStrictEqual({ content: 'No action specified' })
+  expect(window.api.computer.executeAction).not.toHaveBeenCalled()
+  expect(window.api.computer.takeScreenshot).not.toHaveBeenCalled()
+
+  // screenshot does not execute anything
+  expect(await computer.execute(context, { action: 'screenshot' })).toStrictEqual(screenshot)
+  expect(window.api.computer.executeAction).not.toHaveBeenCalled()
+  expect(window.api.computer.takeScreenshot).toHaveBeenCalledTimes(1)
+
+  // successful actions: true or a cursor position
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce(true)
+  expect(await computer.execute(context, { action: 'left_click' })).toStrictEqual(screenshot)
+  expect(window.api.computer.executeAction).toHaveBeenLastCalledWith({ action: 'left_click' })
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce({ x: 10, y: 20 })
+  expect(await computer.execute(context, { action: 'cursor_position' })).toStrictEqual(screenshot)
+  expect(window.api.computer.takeScreenshot).toHaveBeenCalledTimes(3)
+
+})
+
+test.each([
+  { name: 'false', impl: () => false, reason: '' },
+  { name: 'nothing', impl: () => undefined, reason: '' },
+  { name: 'null', impl: () => null, reason: '' },
+  { name: 'an error object', impl: () => ({ error: 'nut-js not available' }), reason: ': nut-js not available' },
+  { name: 'an exception', impl: () => { throw new Error('reply was never sent') }, reason: ': reply was never sent' },
+  { name: 'a thrown string', impl: () => { throw 'ipc failure' }, reason: ': ipc failure' },
+])('Computer Plugin failed action returning $name', async ({ impl, reason }) => {
+
+  const computer = new Computer(store.config.plugins.computer, 'test-workspace')
+  vi.mocked(window.api.computer.executeAction).mockImplementationOnce(impl)
+
+  // an error and no screenshot: the model must not take the action for a success
+  const result = await computer.execute(context, { action: 'left_click' })
+  expect(result).toStrictEqual({
+    content: `An error occurred while executing the "left_click" action${reason}. Do not assume it was performed.`,
+    is_error: true,
+  })
+  expect(window.api.computer.executeAction).toHaveBeenCalledTimes(1)
+  expect(window.api.computer.takeScreenshot).not.toHaveBeenCalled()
+
 })
 
 test('MCP Plugin', async () => {

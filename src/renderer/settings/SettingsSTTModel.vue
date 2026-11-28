@@ -127,7 +127,7 @@
             :audio-recorder="voiceRecordingInstance.audioRecorder"
             :is-recording="true"
           />
-          <ButtonIcon @click.prevent="toggleTest" :disabled="!canTest">
+          <ButtonIcon :label="t('settings.voice.test')" @click.prevent="toggleTest" :disabled="!canTest">
             <SpinningIcon v-if="state === 'processing'" :spinning="true" />
             <MicIcon v-else :class="{ recording: state === 'recording', initializing: state === 'initializing' }" />
           </ButtonIcon>

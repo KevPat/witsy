@@ -59,6 +59,7 @@ export const FILE = {
   FILE_STATS: 'file-stats',
   WRITE_FILE: 'write-file',
   NORMALIZE_PATH: 'normalize-path',
+  RESOLVE_ALLOWED_PATH: 'resolve-allowed-path',
   OPEN_IN_EXPLORER: 'open-in-explorer',
   MEDIA_OPEN: 'media-open',
   MEDIA_APPEND: 'media-append',
@@ -72,6 +73,7 @@ export const CONFIG = {
   GET_I18N_MESSAGES: 'config-get-i18n-messages',
   LOAD: 'config-load',
   SAVE: 'config-save',
+  GET_KEY_STORAGE_STATUS: 'config-get-key-storage-status',
 } as const;
 
 export const HISTORY = {
@@ -185,6 +187,7 @@ export const TRANSCRIBE = {
 
 export const MARKDOWN = {
   RENDER: 'markdown-render',
+  RESOLVE_MEDIA_URL: 'markdown-resolve-media-url',
 } as const;
 
 export const INTERPRETER = {
@@ -315,6 +318,7 @@ export const CLI = {
 } as const;
 
 export const WEBVIEW = {
+  INIT_SESSION: 'webview-init-session',
   SET_LINK_BEHAVIOR: 'webview-set-link-behavior',
   SET_SPELL_CHECK: 'webview-set-spell-check',
 } as const;

@@ -272,10 +272,13 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
       result = response.result
     }
     if (typeof result === 'string') {
-      try {
-        result = JSON.parse(result)
-      } catch {
-        // Not JSON, keep as string
+      const trimmed = result.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          result = JSON.parse(trimmed)
+        } catch {
+          // Not JSON, keep as string
+        }
       }
     }
 
@@ -286,7 +289,7 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
     }
 
     // Auto-unwrap .data for easier access
-    if (result.data) {
+    if (typeof result === 'object' && result !== null && Object.hasOwn(result, 'data') && result.data !== undefined) {
       result = result.data
     }
 
@@ -433,11 +436,12 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
       }
     }
 
-    // Return final result
+    // Return final result: the engine replaces a falsy tool result
+    // with a "No result from tool" error so keep those visible
     this.saveSchemas()
     yield {
       type: 'result',
-      result: finalResult
+      result: results.size > 0 && !finalResult ? { result: finalResult } : finalResult
     }
   }
 

@@ -8,12 +8,17 @@ import defaultExpertsData from '@root/defaults/experts.json'
 import Monitor from './monitor'
 import * as window from './window'
 import * as file from './file'
+import { backupCorruptFile, writeFileAtomicSync } from './atomic'
 import path from 'path'
 import fs from 'fs'
 
 const monitor: Monitor = new Monitor(() => {
   window.emitIpcEventToAll('file-modified', 'experts');
 });
+
+const isEntry = (entry: any): boolean => {
+  return entry !== null && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.id === 'string'
+}
 
 export const expertsFilePath = (app: App, workspaceId: string): string => {
   const workspacePath = workspaceFolderPath(app, workspaceId)
@@ -61,7 +66,9 @@ const loadExpertData = (source: App|string, workspaceId: string): ExpertData => 
     jsonData = JSON.parse(fs.readFileSync(expertsFile, 'utf-8'))
   } catch (error) {
     if (error.code !== 'ENOENT') {
+      // the defaults returned now are saved over this file at the next save: keep a copy
       console.log('Error retrieving experts', error)
+      backupCorruptFile(expertsFile)
     }
   }
 
@@ -74,10 +81,10 @@ const loadExpertData = (source: App|string, workspaceId: string): ExpertData => 
 
   // migrate old experts format
   const expertData: ExpertData = {
-    categories: defaultCategories as ExpertCategory[],
-    experts: defaultExperts as Expert[],
+    categories: [...defaultCategories] as ExpertCategory[],
+    experts: [...defaultExperts] as Expert[],
   }
-  
+
   if (Array.isArray(jsonData)) {
 
     // this is a migration from old array format
@@ -92,14 +99,40 @@ const loadExpertData = (source: App|string, workspaceId: string): ExpertData => 
     }
 
     // migrate to new format
-    expertData.experts = jsonData as Expert[]
+    expertData.experts = jsonData.filter(isEntry) as Expert[]
     updated = true
-  } else if (jsonData?.categories && jsonData?.experts) {
-    expertData.categories = jsonData.categories as ExpertCategory[]
-    expertData.experts = jsonData.experts as Expert[]
+
+  } else if (jsonData !== null && typeof jsonData === 'object' && Array.isArray(jsonData.experts)) {
+
+    // entries of the wrong shape are dropped instead of crashing at startup (EXPERTS.LOAD is synchronous)
+    const experts = jsonData.experts.filter(isEntry)
+    const categories = Array.isArray(jsonData.categories) ? jsonData.categories.filter(isEntry) : [...defaultCategories]
+    if (experts.length !== jsonData.experts.length || !Array.isArray(jsonData.categories) || categories.length !== jsonData.categories.length) {
+      backupCorruptFile(expertsFile)
+      updated = true
+    }
+    expertData.categories = categories as ExpertCategory[]
+    expertData.experts = experts as Expert[]
+
   } else {
+
+    // valid JSON that is not an experts file: keep a copy before the defaults replace it
+    if (jsonData !== undefined) {
+      backupCorruptFile(expertsFile)
+    }
     return expertData
+
   }
+
+  // a system expert takes its name and prompt from the defaults: one that was retired from
+  // the defaults and has no text of its own cannot be shown, so it is dropped
+  expertData.experts = expertData.experts.filter((expert: Expert) => {
+    if (expert.type !== 'system') return true
+    if (defaultExperts.some((de: Expert) => de.id === expert.id)) return true
+    if (typeof expert.name === 'string' && expert.name && typeof expert.prompt === 'string' && expert.prompt) return true
+    updated = true
+    return false
+  })
 
   // i18n migrate label and template
   const t = createI18n(getLocaleMessages(app), 'en', { missingWarn: false }).global.t as CallableFunction
@@ -125,7 +158,7 @@ const loadExpertData = (source: App|string, workspaceId: string): ExpertData => 
 
     // assign categoryId from defaults for system experts if missing
     if (expert.type === 'system' && !expert.categoryId) {
-      if (defaultExpert.categoryId !== undefined) {
+      if (defaultExpert?.categoryId !== undefined) {
         expert.categoryId = defaultExpert.categoryId
         updated = true
       }
@@ -189,7 +222,8 @@ const loadExpertData = (source: App|string, workspaceId: string): ExpertData => 
 export const saveExpertData = (dest: App|string, workspaceId: string, content: ExpertData): void => {
   try {
     const expertsFile = typeof dest === 'string' ? dest : expertsFilePath(dest, workspaceId)
-    fs.writeFileSync(expertsFile, JSON.stringify(content, null, 2))
+    fs.mkdirSync(path.dirname(expertsFile), { recursive: true })
+    writeFileAtomicSync(expertsFile, JSON.stringify(content, null, 2))
   } catch (error) {
     console.log('Error saving experts', error)
   }
@@ -203,13 +237,22 @@ export const exportExperts = (app: App, workspaceId: string) => {
     return false
   }
 
-  // load defaults file content
-  const contents = fs.readFileSync(expertsFilePath(app, workspaceId), 'utf-8')
+  // a fresh workspace has no file yet: export what is loaded
+  let contents: string
+  try {
+    contents = fs.readFileSync(expertsFilePath(app, workspaceId), 'utf-8')
+  } catch {
+    contents = JSON.stringify(loadExpertData(app, workspaceId), null, 2)
+  }
 
   // write
-  const target = path.join(filepath, 'experts.json')
-  fs.writeFileSync(target, contents)
-  
+  try {
+    fs.writeFileSync(path.join(filepath, 'experts.json'), contents)
+  } catch (error) {
+    console.log('Error exporting experts', error)
+    return false
+  }
+
   // done
   return true
 
@@ -223,9 +266,35 @@ export const importExperts = (app: App, workspaceId: string) => {
     return false
   }
 
-  // read and write
-  const contents = fs.readFileSync(filename as string, 'utf-8')
-  fs.writeFileSync(expertsFilePath(app, workspaceId), contents)
+  // read and check that this is an experts export (current or legacy format)
+  let contents: string
+  try {
+    contents = fs.readFileSync(filename as string, 'utf-8')
+    const json = JSON.parse(contents)
+    const entries = Array.isArray(json) ? json : json?.experts
+    if (!Array.isArray(entries) || !entries.every(isEntry)) {
+      console.log('Refusing to import a file that is not an experts export', filename)
+      return false
+    }
+    // a commands export is also an array of { id, type } entries
+    if (entries.some((entry: any) => 'action' in entry || 'template' in entry)) {
+      console.log('Refusing to import a commands export as experts', filename)
+      return false
+    }
+  } catch (error) {
+    console.log('Error importing experts', error)
+    return false
+  }
+
+  // write
+  try {
+    const target = expertsFilePath(app, workspaceId)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    writeFileAtomicSync(target, contents)
+  } catch (error) {
+    console.log('Error importing experts', error)
+    return false
+  }
 
   // done
   return true

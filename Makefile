@@ -75,7 +75,7 @@ linux-arm64:
 	BUILD_NUMBER=$(shell cat $(BUILD_NUMBER_FILE)) npx electron-forge make -p linux -a arm64
 	cd out/make/zip/linux/arm64 ; mv Witsy-linux-arm64-$(VERSION).zip Witsy-$(VERSION)-linux-arm64.zip
 
-linux: linux-x64
+linux: linux-x64 linux-arm64
 
 all: clean increment-build-number mac win linux
 
@@ -96,6 +96,7 @@ build-release:
 	gh release create v$(VERSION) --title $(VERSION) --notes "[CHANGELOG.md](CHANGELOG.md)" --draft
 	gh workflow run build-darwin-arm64.yml --ref $(CURRENT_BRANCH)
 	gh workflow run build-darwin-x64.yml --ref $(CURRENT_BRANCH)
+	gh workflow run build-linux-arm64.yml --ref $(CURRENT_BRANCH)
 	gh workflow run build-linux-x64.yml --ref $(CURRENT_BRANCH)
 	gh workflow run build-win32-arm64.yml --ref $(CURRENT_BRANCH)
 	gh workflow run build-win32-x64.yml --ref $(CURRENT_BRANCH)

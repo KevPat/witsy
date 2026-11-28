@@ -1,5 +1,5 @@
 <template>
-  <button class="button-icon" @click="onClick">
+  <button type="button" class="button-icon" :aria-label="label" @click="onClick">
     <slot />
   </button>
 </template>
@@ -7,6 +7,9 @@
 <script setup lang="ts">
 
 const emit = defineEmits(['click'])
+defineProps<{
+  label: string
+}>()
 
 function onClick(event: MouseEvent) {
   emit('click', event)

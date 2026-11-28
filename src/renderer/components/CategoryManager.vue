@@ -36,12 +36,12 @@
           </td>
           <td>
             <div class="actions">
-              <ButtonIcon @click="startEdit(category)"><PencilIcon /></ButtonIcon>
-              <ButtonIcon v-if="category.type === 'system'" @click="toggleVisibility(category)" :title="t('settings.experts.categoryManager.toggleVisibility')">
+              <ButtonIcon :label="t('common.edit')" @click="startEdit(category)"><PencilIcon /></ButtonIcon>
+              <ButtonIcon v-if="category.type === 'system'" @click="toggleVisibility(category)" :title="t('settings.experts.categoryManager.toggleVisibility')" :label="t('settings.experts.categoryManager.toggleVisibility')">
                 <Eye v-if="category.state === 'enabled'" />
                 <EyeOff v-else />
               </ButtonIcon>
-              <ButtonIcon v-else @click="onDelete(category)"><Trash2Icon class="error" /></ButtonIcon>
+              <ButtonIcon :label="t('common.delete')" v-else @click="onDelete(category)"><Trash2Icon class="error" /></ButtonIcon>
             </div>
           </td>
         </tr>

@@ -17,7 +17,7 @@
     </div>
     <div class="actions">
       
-      <ButtonIcon class="prompt-menu" :id="`prompt-menu-${uniqueId}`" @click="onPromptMenu" ref="promptMenuAnchor">
+      <ButtonIcon :label="t('prompt.menu.title')" class="prompt-menu" :id="`prompt-menu-${uniqueId}`" @click="onPromptMenu" ref="promptMenuAnchor">
         <PlusIcon class="icon" />
       </ButtonIcon>
       
@@ -61,13 +61,13 @@
       
       <slot name="actions" />
       
-      <ButtonIcon :id="`commands-menu-${uniqueId}`" @click="onCommands()" v-if="enableCommands && prompt && store.isFeatureEnabled('chat.commands')">
+      <ButtonIcon :label="t('settings.tabs.commands')" :id="`commands-menu-${uniqueId}`" @click="onCommands()" v-if="enableCommands && prompt && store.isFeatureEnabled('chat.commands')">
         <CommandIcon class="icon command" />
       </ButtonIcon>
       
       <Waveform v-if="enableWaveform && dictating" :width="64" :height="16" foreground-color-inactive="var(--background-color)" foreground-color-active="red" :audio-recorder="audioRecorder" :is-recording="true"/>
       
-      <ButtonIcon :id="`dictate-${uniqueId}`" @click="onDictate" @contextmenu="onConversationMenu" v-if="hasDictation">
+      <ButtonIcon :label="t('prompt.conversation.tooltip')" :id="`dictate-${uniqueId}`" @click="onDictate" @contextmenu="onConversationMenu" v-if="hasDictation">
         <MicIcon
           v-tooltip="{ text: t('prompt.conversation.tooltip'), position: 'top' }"
           :class="{ icon: true, dictate: true, active: dictating }"
@@ -82,17 +82,17 @@
 
       <template v-if="store.isFeatureEnabled('favorites') && chat">
 
-        <ButtonIcon name="addToFavorites" v-if="!isFavoriteModel" @click="addToFavorites" v-tooltip="{ text: t('common.favorites.add'), position: 'top' }">
+        <ButtonIcon name="addToFavorites" v-if="!isFavoriteModel" @click="addToFavorites" v-tooltip="{ text: t('common.favorites.add'), position: 'top' }" :label="t('common.favorites.add')">
           <HeartPlusIcon class="icon add-favorite" />
         </ButtonIcon>
 
-        <ButtonIcon name="removeFavorite" v-else @click="removeFavorite" v-tooltip="{ text: t('common.favorites.remove'), position: 'top' }">
+        <ButtonIcon name="removeFavorite" v-else @click="removeFavorite" v-tooltip="{ text: t('common.favorites.remove'), position: 'top' }" :label="t('common.favorites.remove')">
           <HeartMinusIcon class="icon remove-favorite" />
         </ButtonIcon>
 
       </template>
 
-      <ButtonIcon class="send-stop" @click="(promptingState !== 'idle' || isGenerating) ? onStopPrompting() : onSendPrompt()">
+      <ButtonIcon :label="(promptingState !== 'idle' || isGenerating) ? t('common.stop') : t('chat.send')" class="send-stop" @click="(promptingState !== 'idle' || isGenerating) ? onStopPrompting() : onSendPrompt()">
         <XIcon class="icon stop" :class="{ canceling: promptingState === 'canceling' }" v-if="promptingState !== 'idle' || isGenerating" />
         <ArrowUpIcon class="icon send" :class="{ disabled: !prompt.length }" v-else />
       </ButtonIcon>
@@ -633,7 +633,7 @@ const onSendPrompt = () => {
 
   let message = prompt.value.trim()
   if (command.value) {
-    message = commandI18n(command.value, 'template').replace('{input}', message)
+    message = commandI18n(command.value, 'template').replaceAll('{input}', () => message)
     command.value = null
   }
   prompt.value = defaultPrompt(props.conversationMode)

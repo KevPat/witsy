@@ -5,7 +5,8 @@ import Message from '@models/message'
 import { ChatModel, LlmChunkTool, LlmCompletionOpts, LlmEngine } from 'multi-llm-ts'
 import { CodeExecutionMode, Configuration } from 'types/config'
 import { DocRepoQueryResponseItem } from 'types/rag'
-import { z } from 'zod'
+import { z } from 'zod/v3'
+import { v3Structure } from './schema'
 import { getLlmLocale, i18nInstructions, localeToLangName, t } from './i18n'
 import LlmFactory from './llms/llm'
 
@@ -182,6 +183,9 @@ export default class LlmUtils {
       const llmManager = LlmFactory.manager(this.config)
       const llm = llmManager.igniteEngine(selectedEngine)
       const model = llmManager.getChatModel(selectedEngine, titlingModel)
+      if (!model) {
+        return null
+      }
       let title = await LlmUtils.complete(llm, model, messages, {
         tools: false,
         toolCallsInThread: false,
@@ -251,7 +255,10 @@ Keep it concise, natural, and user-friendly. Do NOT include prefixes like "Statu
     // now get it
     const llmManager = LlmFactory.manager(this.config)
     const llm = llmManager.igniteEngine(selectedEngine)
-    const actualChatModel: ChatModel = llmManager.getChatModel(selectedEngine, actualModel)
+    const actualChatModel = llmManager.getChatModel(selectedEngine, actualModel)
+    if (!actualChatModel) {
+      return null
+    }
     return await LlmUtils.complete(llm, actualChatModel, messages, {
       tools: false,
       reasoningEffort: 'low',
@@ -422,10 +429,10 @@ Evaluate this output and return your assessment.`
       const result = await this.run(engine, model, 'normal', evaluationInstructions, evaluationPrompt, {
         structuredOutput: {
           name: 'evaluation_result',
-          structure: z.object({
+          structure: v3Structure(z.object({
             quality: z.enum(['pass', 'fail']).describe("Quality assessment: pass if meets requirements, fail if incomplete or inadequate"),
             feedback: z.string().describe("Brief explanation of why it passed or failed")
-          })
+          }))
         }
       })
 

@@ -128,8 +128,9 @@ export const migrateHistoryImagePaths = (history: string, workspaceId: string, p
     const r = /file:\/\/(.*?)(\\*)Witsy(\\*)images(\\*)(.*?)/g
     return history.replaceAll(r, `file://$1$3Witsy$3workspaces${'$3'}${workspaceId}$3images$3$5`)
   } else {
-    const r = /file:\/\/(.*)\/Witsy\/images\/(.*?)/g
-    return history.replaceAll(r, `file://$1/Witsy/workspaces/${workspaceId}/images/$2`)
+    // lazy, and never across the start of another url: every url of a line is migrated, not only the last one
+    const r = /file:\/\/((?:(?!:\/\/).)*?)\/Witsy\/images\//g
+    return history.replaceAll(r, (_, dir: string) => `file://${dir}/Witsy/workspaces/${workspaceId}/images/`)
   }
 }
 

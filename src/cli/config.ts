@@ -22,6 +22,22 @@ export function getDefaultUserDataPath(): string {
   }
 }
 
+// the app writes a new API token to this file of its user data folder each time it starts
+const API_TOKEN_FILE = 'http-api-token'
+
+/**
+ * Read the API token of the running app
+ * Returns null if the file doesn't exist or can't be read
+ */
+export function loadApiToken(userDataPath: string): string | null {
+  if (!userDataPath) return null
+  try {
+    return fs.readFileSync(path.join(userDataPath, API_TOKEN_FILE), 'utf-8').trim() || null
+  } catch {
+    return null
+  }
+}
+
 export interface WorkDirConfig {
   access: WorkDirAccess
 }

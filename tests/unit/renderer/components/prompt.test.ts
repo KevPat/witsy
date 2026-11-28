@@ -748,6 +748,14 @@ test('Selects command and run', async () => {
   })
 })
 
+test('Command template replaces every {input} literally', async () => {
+  const prompt = wrapper.find<HTMLInputElement>('.input textarea')
+  await prompt.setValue('pay $& and $$')
+  wrapper.vm.command = { id: 'literal', template: 'pre {input} mid {input} post' }
+  await prompt.trigger('keydown.Enter')
+  expect(wrapper.emitted<any[]>().prompt[0][0].prompt).toBe('pre pay $& and $$ mid pay $& and $$ post')
+})
+
 test('Clears comamnd', async () => {
   wrapper.vm.command = store.commands[0]
   await wrapper.vm.$nextTick()

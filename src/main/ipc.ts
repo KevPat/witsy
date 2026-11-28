@@ -39,12 +39,15 @@ import * as commands from './commands';
 import * as config from './config';
 import * as experts from './experts';
 import * as file from './file';
+import * as fileAccess from './file_access';
+import { resolveAllowedPath } from './path_containment';
 import * as mediaFile from './media_file';
 import * as google from './google';
 import * as history from './history';
 import * as i18n from './i18n';
 import * as interpreter from './interpreter';
 import * as markdown from './markdown';
+import { resolveMediaUrl } from './media_url';
 import * as debug from './network';
 import * as ollama from './ollama';
 import * as pdf from './pdf';
@@ -62,6 +65,9 @@ import { AGENT_API_BASE_PATH } from './agent_webhook';
 import { HttpServer } from './http_server';
 import { importOpenAI } from './import_oai';
 import { importMarkdown } from './import_md';
+import { safeIpcMain } from './ipc_safe';
+
+const electronIpcMain = ipcMain;
 
 export const installIpc = (
   store: Store,
@@ -73,6 +79,9 @@ export const installIpc = (
   registerShortcuts: () => void,
   quitApp: () => void,
 ): void => {
+
+  // a listener that throws or rejects still replies: the renderer is blocked while sendSync waits
+  const ipcMain = safeIpcMain(electronIpcMain);
 
   ipcMain.on(IPC.MAIN_WINDOW.UPDATE_MODE, (event, mode) => {
     window.setMainWindowMode(mode);
@@ -208,6 +217,10 @@ export const installIpc = (
 
   ipcMain.on(IPC.CONFIG.LOAD, (event) => {
     event.returnValue = JSON.stringify(config.loadSettings(app));
+  });
+
+  ipcMain.on(IPC.CONFIG.GET_KEY_STORAGE_STATUS, (event) => {
+    event.returnValue = config.getApiKeyStorageStatus();
   });
 
   ipcMain.on(IPC.CONFIG.SAVE, (event, payload) => {
@@ -434,7 +447,8 @@ export const installIpc = (
   });
 
   ipcMain.on(IPC.FILE.DELETE_FILE, (event, payload) => {
-    event.returnValue = file.deleteFile(payload);
+    // the renderer can only delete the app's own files and the ones in the filesystem plugin folders (see file_access.ts)
+    event.returnValue = fileAccess.deleteFileFromRenderer(app, payload, () => config.loadSettings(app).plugins?.filesystem);
   });
 
   ipcMain.on(IPC.FILE.PICK_FILE, (event, payload) => {
@@ -528,7 +542,8 @@ export const installIpc = (
   });
 
   ipcMain.on(IPC.FILE.WRITE_FILE, (event, filePath, content) => {
-    event.returnValue = file.writeFile(app, filePath, content);
+    // the renderer can only write the app's own files and the ones in the filesystem plugin folders (see file_access.ts)
+    event.returnValue = fileAccess.writeFileFromRenderer(app, filePath, content, () => config.loadSettings(app).plugins?.filesystem);
   });
 
   ipcMain.handle(IPC.FILE.FIND_FILES, async (event, basePath, pattern, maxResults) => {
@@ -544,6 +559,15 @@ export const installIpc = (
     event.returnValue = file.normalizePath(app, filePath);
   });
 
+  ipcMain.on(IPC.FILE.RESOLVE_ALLOWED_PATH, (event, targetPath, allowedPaths) => {
+    try {
+      event.returnValue = resolveAllowedPath(targetPath, allowedPaths);
+    } catch (error) {
+      console.error('Error while resolving allowed path', error);
+      event.returnValue = null;
+    }
+  });
+
   ipcMain.on(IPC.FILE.OPEN_IN_EXPLORER, (event, filePath) => {
     try {
       ollama.openInFileExplorer(filePath);
@@ -553,8 +577,22 @@ export const installIpc = (
     }
   });
 
+  // the only local files shown as images or videos are the ones of the app data folder (see media_url.ts)
+  const resolveMedia = (url: string): string | null => {
+    try {
+      return resolveMediaUrl(url, [app.getPath('userData')]);
+    } catch (error) {
+      console.error('Error while resolving media url', error);
+      return null;
+    }
+  };
+
   ipcMain.on(IPC.MARKDOWN.RENDER, (event, payload) => {
-    event.returnValue = markdown.renderMarkdown(payload);
+    event.returnValue = markdown.renderMarkdown(payload, { resolveMedia });
+  });
+
+  ipcMain.on(IPC.MARKDOWN.RESOLVE_MEDIA_URL, (event, url) => {
+    event.returnValue = resolveMedia(url);
   });
 
   ipcMain.handle(IPC.INTERPRETER.PYTHON_RUN, async (event, payload) => {
@@ -1170,6 +1208,10 @@ export const installIpc = (
   })
 
   // webview
+  ipcMain.handle(IPC.WEBVIEW.INIT_SESSION, (_, partition: string) => {
+    webview.initWebviewSession(partition);
+  });
+
   ipcMain.handle(IPC.WEBVIEW.SET_LINK_BEHAVIOR, (_, webviewId: number, isExternal: boolean) => {
     webview.setWebviewLinkBehavior(webviewId, isExternal);
   });

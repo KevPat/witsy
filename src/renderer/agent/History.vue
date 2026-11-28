@@ -12,7 +12,7 @@
         class="clear"
         v-tooltip="{ text: t('agent.help.clearHistory'), position: 'bottom-left' }"
         @click="$emit('clear')"
-      ><CalendarXIcon /></ButtonIcon>
+       :label="t('agent.help.clearHistory')"><CalendarXIcon /></ButtonIcon>
     </div>
 
     <div v-if="filteredRuns.length === 0" class="empty">

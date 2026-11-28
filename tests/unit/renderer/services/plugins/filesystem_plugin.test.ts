@@ -1,9 +1,15 @@
-import { vi, beforeEach, expect, test } from 'vitest'
+import { vi, afterEach, beforeEach, describe, expect, test } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { isReactive, reactive } from 'vue'
 import { useWindowMock } from '@tests/mocks/window'
 import { store } from '@services/store'
 import FilesystemPlugin from '@services/plugins/filesystem'
+import { resolveAllowedPath } from '@main/path_containment'
 import { PluginExecutionContext } from 'multi-llm-ts'
 import Dialog from '@renderer/utils/dialog'
+import { ListDirectoryResponse } from 'types/filesystem'
 
 global.atob = (str: string) => str
 
@@ -13,13 +19,41 @@ const context: PluginExecutionContext = {
 
 const workspaceId = 'workspace1'
 
+// files next to the allowed folders, none inside: like fs.existsSync, `..` segments are resolved
+const kOutsideFiles = ['/tmp-evil/file.txt', '/tmpfile', '/home/user/Documents-private/tax.txt', '/home/user/.ssh/id_rsa', '/home/user/.bashrc', '/etc/passwd']
+const existsOutside = (filePath: string) => kOutsideFiles.includes(path.posix.resolve(filePath))
+
+// like the main process: entries are reported with the path they have in the folder that is listed
+const listingOf = (dirPath: string, names: string[]): ListDirectoryResponse => ({
+  success: true,
+  items: names.map((name) => ({ name, fullPath: `${dirPath}/${name}`, isDirectory: !name.includes('.'), size: 100 }))
+})
+
 beforeEach(() => {
 
   vi.clearAllMocks()
   useWindowMock()
 
+  // the paths of these tests are POSIX paths, on every host: the real mapping with the POSIX rules,
+  // where home is /home/user, `exists` decides what exists and nothing is a link
+  // (with the rules of a Windows host, /tmp is C:\tmp)
+  window.api.file.resolveAllowedPath = vi.fn((targetPath: string, allowedPaths: string[]) => resolveAllowedPath(targetPath, allowedPaths, {
+    pathImpl: path.posix,
+    home: '/home/user',
+    exists: (filePath: string) => window.api.file.exists(filePath),
+    realPath: (filePath: string) => path.posix.resolve(filePath),
+  }))
+
   window.api.file.exists = vi.fn((path: string) => {
     return path.startsWith('/home/user/Documents/test')
+  })
+
+  window.api.file.listDirectory = vi.fn((dirPath: string, includeHidden?: boolean) => {
+    return listingOf(dirPath, ['file1.txt', 'subdir', ...(includeHidden ? ['.hidden'] : [])])
+  })
+
+  window.api.file.findFiles = vi.fn(async (basePath: string, pattern: string, maxResults?: number) => {
+    return [`${basePath}/file1.txt`, `${basePath}/subdir/file2.txt`].slice(0, maxResults || 10)
   })
 
   store.config = {
@@ -87,6 +121,91 @@ test('Filesystem plugin map path - subdirectory resolution', () => {
   expect(result).toBe('/home/user/Documents/subdir/file.txt')
 })
 
+test('Filesystem plugin map path - result is normalized', () => {
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  expect(plugin.mapToAllowedPaths('/tmp/./nested/../notes.txt')).toBe('/tmp/notes.txt')
+  expect(plugin.mapToAllowedPaths('/tmp/test/')).toBe('/tmp/test')
+  expect(plugin.mapToAllowedPaths('~/Documents/a/../b.txt')).toBe('/home/user/Documents/b.txt')
+  expect(plugin.mapToAllowedPaths('Documents/test/../test/subdir')).toBe('/home/user/Documents/test/subdir')
+})
+
+test('Filesystem plugin map path - sibling folders that share a prefix are refused', () => {
+  window.api.file.exists = vi.fn(existsOutside)
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  expect(plugin.mapToAllowedPaths('/tmp-evil/file.txt')).toBeNull()
+  expect(plugin.mapToAllowedPaths('/tmpfile')).toBeNull()
+  expect(plugin.mapToAllowedPaths('/home/user/Documents-private/tax.txt')).toBeNull()
+  expect(plugin.mapToAllowedPaths('~/Documents-private/tax.txt')).toBeNull()
+  expect(plugin.mapToAllowedPaths('Documents-private/tax.txt')).toBeNull()
+  expect(plugin.mapToAllowedPaths('../Documents-private/tax.txt')).toBeNull()
+})
+
+test('Filesystem plugin map path - the name of an allowed folder followed by dot-dot is refused', () => {
+  window.api.file.exists = vi.fn(existsOutside)
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  expect(plugin.mapToAllowedPaths('Documents/../.ssh/id_rsa')).toBeNull()
+  expect(plugin.mapToAllowedPaths('./Documents/../.ssh/id_rsa')).toBeNull()
+  expect(plugin.mapToAllowedPaths('Documents/test/../../.bashrc')).toBeNull()
+  expect(plugin.mapToAllowedPaths('tmp/../etc/passwd')).toBeNull()
+  expect(plugin.mapToAllowedPaths('/tmp/../etc/passwd')).toBeNull()
+  expect(plugin.mapToAllowedPaths('/tmp/../../etc/passwd')).toBeNull()
+  expect(plugin.mapToAllowedPaths('~/Documents/../.ssh/id_rsa')).toBeNull()
+})
+
+test('Filesystem plugin map path - either separator after the name of an allowed folder', () => {
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  store.config.plugins.filesystem.allowedPaths = ['/data/Documents']
+  window.api.file.exists = vi.fn((p: string) => p === '/data/Documents/folder/test.txt')
+  expect(plugin.mapToAllowedPaths('./Documents/folder/test.txt')).toBe('/data/Documents/folder/test.txt')
+  expect(plugin.mapToAllowedPaths('Documents\\folder\\test.txt')).toBe('/data/Documents/folder/test.txt')
+  expect(plugin.mapToAllowedPaths('.\\Documents\\folder/test.txt')).toBe('/data/Documents/folder/test.txt')
+  expect(plugin.mapToAllowedPaths('Documents\\..\\secret.txt')).toBeNull()
+})
+
+test('Filesystem plugin map path - odd input is refused without throwing', () => {
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  expect(plugin.mapToAllowedPaths(undefined as any)).toBeNull()
+  expect(plugin.mapToAllowedPaths(null as any)).toBeNull()
+  expect(plugin.mapToAllowedPaths({} as any)).toBeNull()
+  expect(plugin.mapToAllowedPaths('/tmp/test\0.txt')).toBeNull()
+  expect(new FilesystemPlugin({ enabled: true, allowedPaths: '/tmp' as any, allowWrite: false, skipConfirmation: false }, workspaceId).mapToAllowedPaths('/tmp/test')).toBeNull()
+  const samples = [
+    '.', '..', '/', '\\', 'C:\\Windows\\System32', 'C:/Windows/System32', '/tmp', '/tmp/', 'tmp/../tmp/a',
+    '~', '~/Documents/a b/c', './Documents/a', 'Documents\\a', ' ', 'con', 'NUL', 'a'.repeat(4000), '/tmp/./././x', '',
+  ]
+  for (let i = 0; i < 50; i++) {
+    samples.push(`/tmp/file-${i}.txt`)
+    samples.push(`../${'../'.repeat(i % 5)}etc/passwd`)
+    samples.push(`C:\\Users\\me\\docs-${i}\\file`)
+  }
+  for (const sample of samples) {
+    expect(() => plugin.mapToAllowedPaths(sample), JSON.stringify(sample)).not.toThrow()
+    const mapped = plugin.mapToAllowedPaths(sample)
+    expect(mapped === null || mapped === '/tmp' || mapped.startsWith('/tmp/') || mapped === '/home/user/Documents' || mapped.startsWith('/home/user/Documents/'), `${sample} => ${mapped}`).toBe(true)
+  }
+})
+
+test('Filesystem plugin map path - parent traversal and empty allow lists', () => {
+  store.config.plugins.filesystem.allowedPaths = ['/tmp/allowed']
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  expect(plugin.mapToAllowedPaths('/tmp/allowed/notes.txt')).toBe('/tmp/allowed/notes.txt')
+  expect(plugin.mapToAllowedPaths('/tmp/allowed/./nested/../notes.txt')).toBe('/tmp/allowed/notes.txt')
+  expect(plugin.mapToAllowedPaths('/tmp/allowed/../etc/passwd')).toBeNull()
+  expect(plugin.mapToAllowedPaths('/tmp/allowed/../../etc/passwd')).toBeNull()
+  expect(plugin.mapToAllowedPaths('')).toBeNull()
+  store.config.plugins.filesystem.allowedPaths = []
+  expect(new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId).mapToAllowedPaths('/tmp/allowed/file')).toBeNull()
+  expect(window.api.file.resolveAllowedPath).toHaveBeenCalledTimes(5)
+})
+
+test('Filesystem plugin map path - allowed paths of a reactive config are sent as a plain array', () => {
+  const plugin = new FilesystemPlugin(reactive(store.config.plugins.filesystem) as any, workspaceId)
+  expect(plugin.mapToAllowedPaths('/tmp/test')).toBe('/tmp/test')
+  const allowedPaths = vi.mocked(window.api.file.resolveAllowedPath).mock.calls[0][1]
+  expect(allowedPaths).toEqual(['/tmp', '~/Documents'])
+  expect(isReactive(allowedPaths)).toBe(false)
+})
+
 test('Filesystem plugin path validation', async () => {
   const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
   const allowedResult = await plugin.execute(context, {
@@ -109,19 +228,38 @@ test('Filesystem plugin list directory', async () => {
   })
   expect(window.api.file.listDirectory).toHaveBeenCalledWith('/tmp/test', false)
   expect(result.items).toEqual([
-    { name: 'file1.txt', fullPath: '/home/user/file1.txt', isDirectory: false, size: 100 },
-    { name: 'subdir', fullPath: '/home/user/subdir', isDirectory: true }
+    { name: 'file1.txt', fullPath: '/tmp/test/file1.txt', isDirectory: false, size: 100 },
+    { name: 'subdir', fullPath: '/tmp/test/subdir', isDirectory: true, size: 100 }
   ])
 })
 
 test('Filesystem plugin list directory with hidden files', async () => {
   const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
-  await plugin.execute(context, {
+  const result = await plugin.execute(context, {
     action: 'list',
     path: '/tmp/test',
     includeHidden: true
   })
   expect(window.api.file.listDirectory).toHaveBeenCalledWith('/tmp/test', true)
+  expect(result.items.map((item: any) => item.name)).toEqual(['file1.txt', 'subdir', '.hidden'])
+})
+
+test('Filesystem plugin list directory - entries outside the allowed paths are left out', async () => {
+  window.api.file.listDirectory = vi.fn((): ListDirectoryResponse => ({
+    success: true,
+    items: [
+      { name: 'file1.txt', fullPath: '/tmp/test/file1.txt', isDirectory: false, size: 100 },
+      { name: 'passwd', fullPath: '/etc/passwd', isDirectory: false, size: 100 },
+      { name: 'secret.txt', fullPath: '/tmp-secret/secret.txt', isDirectory: false, size: 100 },
+      { name: 'id_rsa', fullPath: '/tmp/test/../../home/user/.ssh/id_rsa', isDirectory: false, size: 100 },
+    ]
+  }))
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  const result = await plugin.execute(context, { action: 'list', path: '/tmp/test' })
+  expect(result.success).toBe(true)
+  expect(result.items).toEqual([
+    { name: 'file1.txt', fullPath: '/tmp/test/file1.txt', isDirectory: false, size: 100 },
+  ])
 })
 
 test('Filesystem plugin read file', async () => {
@@ -133,6 +271,31 @@ test('Filesystem plugin read file', async () => {
   expect(window.api.file.read).toHaveBeenCalledWith('/tmp/test.txt')
   expect(window.api.file.extractText).toHaveBeenCalledWith('/tmp/test.txt_encoded', 'txt')
   expect(result.contents).toBe('/tmp/test.txt_encoded_extracted')
+})
+
+test('Filesystem plugin read file decodes UTF-8 for non-document files', async () => {
+  const text = 'café 😀'
+  const base64 = Buffer.from(text, 'utf-8').toString('base64')
+  const identityAtob = global.atob
+  global.atob = (value: string) => Buffer.from(value, 'base64').toString('latin1')
+  window.api.file.read = vi.fn(() => ({
+    url: '/tmp/note.md',
+    contents: base64,
+    mimeType: 'text/markdown',
+  }))
+  try {
+    const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+    const result = await plugin.execute(context, {
+      action: 'read',
+      path: '/tmp/note.md'
+    })
+    expect(window.api.file.read).toHaveBeenCalledWith('/tmp/note.md')
+    expect(window.api.file.extractText).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(result.contents).toBe(text)
+  } finally {
+    global.atob = identityAtob
+  }
 })
 
 test('Filesystem plugin write file - new file', async () => {
@@ -383,9 +546,24 @@ test('Filesystem plugin find files', async () => {
   })
   expect(window.api.file.findFiles).toHaveBeenCalledWith('/tmp', '*.txt', 10)
   expect(result.success).toBe(true)
-  expect(result.files).toEqual(['/home/user/file1.txt', '/home/user/subdir/file2.txt'])
+  expect(result.files).toEqual(['/tmp/file1.txt', '/tmp/subdir/file2.txt'])
   expect(result.count).toBe(2)
   expect(result.truncated).toBe(false)
+})
+
+test('Filesystem plugin find files - results outside the allowed paths are left out', async () => {
+  window.api.file.findFiles = vi.fn(async () => ['/tmp/file1.txt', '/etc/hosts.txt', '/tmp-secret/secret.txt', '/tmp/sub/../../etc/passwd.txt'])
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  const result = await plugin.execute(context, {
+    action: 'find',
+    path: '/tmp',
+    pattern: '*.txt',
+    maxResults: 4
+  })
+  expect(result.success).toBe(true)
+  expect(result.files).toEqual(['/tmp/file1.txt'])
+  expect(result.count).toBe(1)
+  expect(result.truncated).toBe(true)
 })
 
 test('Filesystem plugin find files with maxResults', async () => {
@@ -398,7 +576,7 @@ test('Filesystem plugin find files with maxResults', async () => {
   })
   expect(window.api.file.findFiles).toHaveBeenCalledWith('/tmp', '*.txt', 1)
   expect(result.success).toBe(true)
-  expect(result.files).toEqual(['/home/user/file1.txt'])
+  expect(result.files).toEqual(['/tmp/file1.txt'])
   expect(result.count).toBe(1)
   expect(result.truncated).toBe(true)
 })
@@ -463,4 +641,133 @@ test('Filesystem plugin path traversal prevention - action blocked', async () =>
     path: '../../../etc/passwd'
   })
   expect(result.error).toContain('plugins.filesystem.invalidPath')
+})
+
+test('Filesystem plugin no action reaches a sibling folder or a dot-dot path', async () => {
+  window.api.file.exists = vi.fn(existsOutside)
+  store.config.plugins.filesystem.allowWrite = true
+  store.config.plugins.filesystem.skipConfirmation = true
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  for (const target of ['/tmp-evil/file.txt', '/home/user/Documents-private/tax.txt', 'Documents/../.ssh/id_rsa', '/tmp/../etc/passwd']) {
+    for (const action of ['list', 'read', 'write', 'delete', 'find'] as const) {
+      const result = await plugin.execute(context, { action, path: target, content: 'x', pattern: '*' })
+      expect(result.error, `${action} ${target}`).toContain('plugins.filesystem.invalidPath')
+    }
+  }
+  expect(window.api.file.listDirectory).not.toHaveBeenCalled()
+  expect(window.api.file.read).not.toHaveBeenCalled()
+  expect(window.api.file.write).not.toHaveBeenCalled()
+  expect(window.api.file.delete).not.toHaveBeenCalled()
+  expect(window.api.file.findFiles).not.toHaveBeenCalled()
+  expect(Dialog.show).not.toHaveBeenCalled()
+})
+
+test('Filesystem plugin missing path', async () => {
+  const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+  const result = await plugin.execute(context, { action: 'read' } as any)
+  expect(result.error).toContain('plugins.filesystem.invalidPath')
+  expect(window.api.file.read).not.toHaveBeenCalled()
+})
+
+describe.skipIf(process.platform === 'win32')('Filesystem plugin on a real folder with symlinks', () => {
+
+  let root: string
+  let allowed: string
+  let outside: string
+
+  const newPlugin = () => new FilesystemPlugin({ enabled: true, allowedPaths: [allowed], allowWrite: true, skipConfirmation: true }, workspaceId)
+
+  beforeEach(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'witsy-fsplugin-')))
+    allowed = path.join(root, 'allowed')
+    outside = path.join(root, 'allowed-not')
+    fs.mkdirSync(path.join(allowed, 'sub'), { recursive: true })
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(allowed, 'notes.txt'), 'notes')
+    fs.writeFileSync(path.join(allowed, 'sub', 'deep.txt'), 'deep')
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret')
+    fs.symlinkSync(outside, path.join(allowed, 'linkdir'))
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(allowed, 'link.txt'))
+    fs.symlinkSync(path.join(outside, 'created.txt'), path.join(allowed, 'dangling.txt'))
+    fs.symlinkSync(path.join(allowed, 'sub'), path.join(allowed, 'alias'))
+
+    // what the main process does, on the real file system
+    window.api.file.resolveAllowedPath = vi.fn((targetPath: string, allowedPaths: string[]) => resolveAllowedPath(targetPath, allowedPaths))
+    window.api.file.exists = vi.fn((filePath: string) => fs.existsSync(filePath))
+    window.api.file.listDirectory = vi.fn((dirPath: string): ListDirectoryResponse => ({
+      success: true,
+      items: fs.readdirSync(dirPath, { withFileTypes: true }).map((item) => ({
+        name: item.name,
+        fullPath: path.join(dirPath, item.name),
+        isDirectory: item.isDirectory(),
+      }))
+    }))
+    window.api.file.findFiles = vi.fn(async (basePath: string) => {
+      return fs.readdirSync(basePath).map((name) => path.join(basePath, name))
+    })
+  })
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  test('paths inside are mapped, existing or not', () => {
+    const plugin = newPlugin()
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'notes.txt'))).toBe(path.join(allowed, 'notes.txt'))
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'new', 'file.txt'))).toBe(path.join(allowed, 'new', 'file.txt'))
+    expect(plugin.mapToAllowedPaths('sub/deep.txt')).toBe(path.join(allowed, 'sub', 'deep.txt'))
+    expect(plugin.mapToAllowedPaths('allowed/sub/deep.txt')).toBe(path.join(allowed, 'sub', 'deep.txt'))
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'alias', 'deep.txt'))).toBe(path.join(allowed, 'alias', 'deep.txt'))
+  })
+
+  test('a symlink that leaves the allowed folder is not followed', () => {
+    const plugin = newPlugin()
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'linkdir'))).toBeNull()
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'linkdir', 'secret.txt'))).toBeNull()
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'link.txt'))).toBeNull()
+    expect(plugin.mapToAllowedPaths(path.join(allowed, 'dangling.txt'))).toBeNull()
+    expect(plugin.mapToAllowedPaths('linkdir/secret.txt')).toBeNull()
+    expect(plugin.mapToAllowedPaths('allowed/link.txt')).toBeNull()
+    expect(plugin.mapToAllowedPaths(path.join(outside, 'secret.txt'))).toBeNull()
+  })
+
+  test('nothing is done through a symlink that leaves the allowed folder', async () => {
+    const plugin = newPlugin()
+    expect((await plugin.execute(context, { action: 'read', path: path.join(allowed, 'link.txt') })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'read', path: 'linkdir/secret.txt' })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'list', path: path.join(allowed, 'linkdir') })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'find', path: path.join(allowed, 'linkdir'), pattern: '*' })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'write', path: path.join(allowed, 'dangling.txt'), content: 'x' })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'write', path: path.join(allowed, 'linkdir', 'new.txt'), content: 'x' })).error).toContain('plugins.filesystem.invalidPath')
+    expect((await plugin.execute(context, { action: 'delete', path: path.join(allowed, 'linkdir', 'secret.txt') })).error).toContain('plugins.filesystem.invalidPath')
+    expect(window.api.file.read).not.toHaveBeenCalled()
+    expect(window.api.file.listDirectory).not.toHaveBeenCalled()
+    expect(window.api.file.findFiles).not.toHaveBeenCalled()
+    expect(window.api.file.write).not.toHaveBeenCalled()
+    expect(window.api.file.delete).not.toHaveBeenCalled()
+  })
+
+  test('listing leaves out the symlinks that leave the allowed folder', async () => {
+    const result = await newPlugin().execute(context, { action: 'list', path: allowed })
+    expect(result.success).toBe(true)
+    expect(result.items.map((item: any) => item.name).sort()).toEqual(['alias', 'notes.txt', 'sub'])
+  })
+
+  test('searching leaves out the symlinks that leave the allowed folder', async () => {
+    const result = await newPlugin().execute(context, { action: 'find', path: allowed, pattern: '*' })
+    expect(result.success).toBe(true)
+    expect(result.files.sort()).toEqual(['alias', 'notes.txt', 'sub'].map((name) => path.join(allowed, name)))
+    expect(result.count).toBe(3)
+  })
+
+  test('reading and writing inside still work', async () => {
+    const plugin = newPlugin()
+    const read = await plugin.execute(context, { action: 'read', path: 'notes.txt' })
+    expect(read.success).toBe(true)
+    expect(window.api.file.read).toHaveBeenCalledWith(path.join(allowed, 'notes.txt'))
+    const write = await plugin.execute(context, { action: 'write', path: path.join(allowed, 'sub', '..', 'new.txt'), content: 'x' })
+    expect(write.success).toBe(true)
+    expect(window.api.file.write).toHaveBeenCalledWith(path.join(allowed, 'new.txt'), 'x')
+  })
+
 })

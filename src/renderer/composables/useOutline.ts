@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue'
+import { onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { Editor } from '@tiptap/vue-3'
 
 export interface OutlineHeading {
@@ -114,17 +114,25 @@ export function useOutline(editor: Ref<Editor | null | undefined>): OutlineCompo
   // Watch editor instance and set up update listener
   watch(
     editor,
-    (newEditor) => {
+    (newEditor, _oldEditor, onCleanup) => {
       if (newEditor) {
         // Initial extraction
         headings.value = extractHeadings()
 
         // Listen for editor updates
         newEditor.on('update', refreshHeadings)
+        onCleanup(() => newEditor.off('update', refreshHeadings))
       }
     },
     { immediate: true }
   )
+
+  onScopeDispose(() => {
+    if (updateTimeout) {
+      clearTimeout(updateTimeout)
+      updateTimeout = null
+    }
+  })
 
   return {
     headings,

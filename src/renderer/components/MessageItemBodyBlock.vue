@@ -14,11 +14,12 @@
 <script setup lang="ts">
 
 import Dialog from '@renderer/utils/dialog'
+import { escapeHtml } from '@renderer/utils/html'
 import { SearchState } from '@screens/Chat.vue'
 import { t } from '@services/i18n'
-import { Block } from '@services/message_block_parser'
+import { Block, highlightSearch } from '@services/message_block_parser'
 import { InfoIcon } from 'lucide-vue-next'
-import { h, inject, nextTick, PropType, ref, render } from 'vue'
+import { h, inject, nextTick, onBeforeUnmount, onUnmounted, onUpdated, PropType, ref, render } from 'vue'
 import MessageItemArtifactBlock from './MessageItemArtifactBlock.vue'
 import MessageItemHtmlBlock from './MessageItemHtmlBlock.vue'
 import MessageItemMediaBlock from './MessageItemMediaBlock.vue'
@@ -49,6 +50,8 @@ const onMediaLoaded = () => {
 
 const messageItemBodyBlock = ref<HTMLElement | null>(null)
 let customRenderTimeout: NodeJS.Timeout|null = null
+const customRenderContainers = new Set<HTMLElement>()
+let unmounted = false
 
 const setRef = (el: any) => {
   // For Vue components, get the root element via $el
@@ -80,18 +83,22 @@ const mdRender = (content: string) => {
 
   // replace <error>...</error> with a span with class error
   html = html.replace(/&lt;error&gt;([ \t]*?)&lt;\/error&gt;/g, '')
-  html = html.replace(/&lt;error&gt;([\s\S]*?)&lt;\/error&gt;/g, `
-    <span class="error-icon-placeholder" data-error="$1"></span>
-  `)
+  // what is between the tags is rendered markdown: its text goes in the attribute, not its markup
+  html = html.replace(/&lt;error&gt;([\s\S]*?)&lt;\/error&gt;/g, (_, error: string) => {
+    const text = new DOMParser().parseFromString(error, 'text/html').body.textContent ?? ''
+    return `
+    <span class="error-icon-placeholder" data-error="${escapeHtml(text)}"></span>
+  `
+  })
 
   // highlight search
   if (searchState?.filter.value) {
-    const regex = new RegExp(searchState.filter.value, 'gi')
-    html = html.replace(regex, (match) => `<mark>${match}</mark>`);
+    html = highlightSearch(html, searchState.filter.value)
   }
 
   // render error icons and mermaid blocks
   nextTick(() => {
+    if (unmounted) return
     clearTimeout(customRenderTimeout)
     customRenderTimeout = setTimeout(() => {
       renderErrorIcons()
@@ -127,6 +134,7 @@ const renderErrorIcons = () => {
     const vnode = h(ErrorIconWrapper)
     placeholder.innerHTML = ''
     render(vnode, placeholder)
+    customRenderContainers.add(placeholder)
   }
 }
 
@@ -139,6 +147,7 @@ const renderMermaidBlocks = async () => {
       const vnode = h(MessageItemMermaidBlock, { src: block.textContent })
       block.innerHTML = ''
       render(vnode, block)
+      customRenderContainers.add(block)
     } catch (error) {
       console.error('Error parsing mermaid block:', error)
     }
@@ -152,6 +161,27 @@ const showError = (errorContent: string) => {
     text: errorContent
   })
 }
+
+// subtrees mounted with render() are not unmounted by Vue
+const unmountCustomRenders = (all: boolean) => {
+  for (const container of customRenderContainers) {
+    if (all || !messageItemBodyBlock.value?.contains(container)) {
+      render(null, container)
+      customRenderContainers.delete(container)
+    }
+  }
+}
+
+// when v-html replaces the content, the containers it dropped are stale
+onUpdated(() => unmountCustomRenders(false))
+
+onBeforeUnmount(() => {
+  unmounted = true
+  clearTimeout(customRenderTimeout)
+})
+
+// not earlier: render() flushes the scheduler post queue, which must not happen while the parent is being patched
+onUnmounted(() => unmountCustomRenders(true))
 
 </script>
 

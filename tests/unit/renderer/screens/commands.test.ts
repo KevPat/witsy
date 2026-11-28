@@ -34,6 +34,12 @@ test('Closes on Escape', async () => {
   expect(window.api.commands.closePicker).toHaveBeenLastCalledWith({ id: 'appId', name: 'appName', path: 'appPath' })
 })
 
+test('Closes when focus leaves the picker', async () => {
+  mount(CommandPicker, { props: { extra: { sourceApp: { id: 'appId', name: 'appName', path: 'appPath' } } } })
+  document.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+  expect(window.api.commands.closePicker).toHaveBeenLastCalledWith({ id: 'appId', name: 'appName', path: 'appPath' })
+})
+
 test('Changes selection on arrow keys', async () => {
   const wrapper = mount(CommandPicker, { props: { extra: {  } } } )
   await wrapper.vm.$nextTick()

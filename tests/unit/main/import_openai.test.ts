@@ -478,6 +478,48 @@ describe('OpenAI Import', () => {
       expect(assistantMessage.content).toBe('Cats are great pets【reference】. They are independent animals[Image of a cat].')
     })
 
+    test('should remove only private use characters from the text', async () => {
+      const kept = '你好，世界！ ❤️ ﬁne 豈 😀 \uFFFD'
+      const data = [{
+        id: 'conv-1',
+        title: 'Characters Chat',
+        mapping: {
+          'client-created-root': { children: ['msg-1'] },
+          'msg-1': {
+            id: 'msg-1',
+            children: ['msg-2'],
+            message: {
+              author: { role: 'user' },
+              content: { parts: ['Say hello'] }
+            }
+          },
+          'msg-2': {
+            id: 'msg-2',
+            children: ['msg-3'],
+            message: {
+              author: { role: 'assistant' },
+              end_turn: true,
+              content: { parts: [`\uE000${kept}\uE200cite\uE202turn0search0\uE201\uF8FF`] }
+            }
+          },
+          'msg-3': {
+            id: 'msg-3',
+            children: [] as any[],
+            message: {
+              author: { role: 'user' },
+              end_turn: true,
+              content: { parts: ['Thanks!'] }
+            }
+          }
+        }
+      }]
+
+      const result = await importOai.importOpenAIConversations('user-123', data, mockHistory, '/mock', '/mock/attachments')
+
+      expect(result).toBe(true)
+      expect(mockHistory.chats[0].messages[1].content).toBe(`${kept}citeturn0search0`)
+    })
+
     test('should skip chats with less than 3 messages', async () => {
       const data = [{
         id: 'conv-1',

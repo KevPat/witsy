@@ -5,35 +5,84 @@ on:
   workflow_dispatch:
 jobs:
   build-win32-arm64:
-    runs-on: ubuntu-latest
+    runs-on: windows-11-arm
     permissions:
       contents: write
     steps:
       - name: Github checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: get-package-version
         id: package-version
-        uses: beaconbrigade/package-json-version@v0.3.2
+        uses: beaconbrigade/package-json-version@1da990953ac5abf189b6833724706acaae203fe4 # v0.3.2
       - name: Install Dependencies
         run: npm ci
         env:
           PREBUILDS_ONLY: "1"
-          npm_config_platform: "win32"
-          npm_config_arch: "arm64"
-          AUTOLIB: "1"
+      - name: Verify native binary architectures
+        run: node ./build/check_native_architecture.mjs --platform win32 --arch arm64
+      - name: Check DigiCert signing secrets
+        id: signing
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        shell: bash
+        run: |
+          missing=0
+          for name in SM_HOST SM_API_KEY SM_CLIENT_CERT_PASSWORD SM_CODE_SIGNING_CERT_SHA1_HASH SM_CLIENT_CERT_FILE_B64; do
+            if [ -z "${!name}" ]; then missing=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "DigiCert certificate is not configured. The Windows arm64 package will be unsigned."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup DigiCert Code Signing Tools
+        id: digicert
+        if: steps.signing.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: digicert/ssm-code-signing@b300bb7e8c2ab85257d660fe5b6c6374131ca2ef # v1.0.0
+      - name: Setup Certificate
+        id: certfile
+        if: steps.signing.outputs.enabled == 'true' && steps.digicert.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+      # secrets go to the steps that use them, never to GITHUB_ENV (every later step, third-party actions included, would get them)
+      - name: Set DigiCert Environment Variables
+        if: steps.signing.outputs.enabled == 'true' && steps.certfile.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
+      - name: Sync Certificates
+        id: certsync
+        if: steps.signing.outputs.enabled == 'true' && steps.certfile.outcome == 'success'
+        continue-on-error: true
+        run: smctl windows certsync
+        shell: cmd
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
       - name: Build script
-        run: make win-arm64
+        run: ./build/build.ps1
         env:
           NODE_OPTIONS: --max_old_space_size=4096
           PREBUILDS_ONLY: "1"
-          npm_config_platform: "win32"
-          npm_config_arch: "arm64"
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          # signing is enabled only when the certificate sync worked; an empty hash builds the unsigned package
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ steps.certsync.outcome == 'success' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
       - name: List packages
-        uses: mathiasvr/command-output@v2.0.0
+        uses: mathiasvr/command-output@34408ea3d0528273faff3d9e201761ae96106cd0 # v2.0.0
         id: packagelist
         with:
           run: node ./build/list_packages.mjs

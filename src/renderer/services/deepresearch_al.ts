@@ -1,6 +1,7 @@
 import { addUsages, LlmChunk, LlmChunkToolAbort, LlmEngine, Plugin } from 'multi-llm-ts'
 import { Configuration } from 'types/config'
-import { z } from 'zod'
+import { z } from 'zod/v3'
+import { v3Structure } from './schema'
 import Agent from '@models/agent'
 import Chat from '@models/chat'
 import Message from '@models/message'
@@ -149,7 +150,18 @@ export default class DeepResearchAgentLoop implements dr.DeepResearch {
 
       // we need a llm
       opts.engine = this.agent.engine || opts.engine
-      opts.model = this.agent.model || this.llmManager.getChatModel(opts.engine, opts.model).id
+      opts.model = this.agent.model || this.llmManager.getChatModel(opts.engine, opts.model)?.id
+      if (!opts.model) {
+        if (llmLocale) {
+          setLlmLocale(llmLocale)
+          this.config.llm.forceLocale = forceLocale
+        }
+        const errorMessage = chat.lastMessage()
+        if (errorMessage) {
+          errorMessage.appendText({ type: 'content', text: t('generator.errors.invalidModel'), done: true })
+        }
+        return 'invalid_model'
+      }
 
       // initialize tools (once per run)
       if (!this.toolCatalog) {
@@ -491,7 +503,8 @@ export default class DeepResearchAgentLoop implements dr.DeepResearch {
     let prompt = agent.steps[0].prompt
     for (const [key, value] of Object.entries(cleanParams)) {
       const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value)
-      prompt = prompt.replace(new RegExp(`{{${key}}}`, 'g'), valueStr)
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      prompt = prompt.replace(new RegExp(`{{${escapedKey}}}`, 'g'), () => valueStr)
     }
 
     messages.push(new Message('user', prompt))
@@ -948,7 +961,7 @@ Decide which deepresearch agent to invoke next to fulfill this research request.
 // Add structured output schema
 mainLoopAgent.steps[0].structuredOutput = {
   name: 'research_decision',
-  structure: z.object({
+  structure: v3Structure(z.object({
     status: z.enum(['continue', 'done']).describe("Status: continue with work or done (complete)"),
     nextAction: z.string().nullable().optional().describe("Human-readable description of next action"),
     agentName: z.string().nullable().optional().describe("Which deepresearch agent to call: planning, search, analysis, writer, title, or synthesis"),
@@ -956,5 +969,5 @@ mainLoopAgent.steps[0].structuredOutput = {
     reasoning: z.string().describe("Explanation of decision and current progress"),
     estimatedRemaining: z.number().nullable().optional().describe("Estimated number of remaining actions (helps with progress tracking)"),
     deliveryMessage: z.string().nullable().optional().describe("Summary message when status='done'")
-  })
+  }))
 }

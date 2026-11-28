@@ -1,12 +1,20 @@
-import { session, shell, webContents } from 'electron'
+import { session, webContents, WebContents } from 'electron'
+import { openExternalUrl } from './external_links'
 import { getCleanUserAgent } from './utils'
+
+const initializedPartitions = new Set<string>()
 
 /**
  * Initialize the webview session with custom user agent
  * Removes "Witsy" and "Electron" from the user agent to avoid detection
  */
-export function initWebviewSession(): void {
-  const wvSession = session.fromPartition('persist:webview')
+export function initWebviewSession(partition = 'persist:webview'): void {
+  if (partition !== 'persist:webview' && !partition.startsWith('persist:webapp_')) {
+    throw new Error(`Invalid webview partition: ${partition}`)
+  }
+  if (initializedPartitions.has(partition)) return
+
+  const wvSession = session.fromPartition(partition)
   const originUA = wvSession.getUserAgent()
   const newUA = getCleanUserAgent(originUA)
 
@@ -17,6 +25,42 @@ export function initWebviewSession(): void {
       'User-Agent': newUA
     }
     cb({ requestHeaders: headers })
+  })
+  initializedPartitions.add(partition)
+}
+
+const isWebUrl = (url: unknown): boolean => {
+  try {
+    return typeof url === 'string' && ['http:', 'https:'].includes(new URL(url).protocol)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Keep every <webview> of a window an isolated web page, whatever attributes the tag
+ * was given by the page that embeds it: no preload script, no node, sandboxed,
+ * web security on, and nothing but an http(s) url to start with.
+ * Partition, popups and user agent are left as the tag asked.
+ * @param embedder The webContents of the window that may embed webviews
+ */
+export function isolateWebviews(embedder: WebContents): void {
+  embedder.on('will-attach-webview', (event, webPreferences, params) => {
+
+    delete webPreferences.preload
+    delete (webPreferences as Record<string, unknown>).preloadURL
+
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+
+    if (!isWebUrl(params?.src)) {
+      console.warn('[webview] refused to attach a webview that does not load a web page')
+      event.preventDefault()
+    }
+
   })
 }
 
@@ -31,7 +75,7 @@ export function setWebviewLinkBehavior(webviewId: number, isExternal: boolean): 
 
   webview.setWindowOpenHandler(({ url }) => {
     if (isExternal) {
-      shell.openExternal(url)
+      openExternalUrl(url)
       return { action: 'deny' }
     } else {
       return { action: 'allow' }

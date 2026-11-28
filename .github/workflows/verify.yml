@@ -1,0 +1,68 @@
+# .github/workflows/verify.yml
+# The verification suites of VERIFY.md (npm run verify) on macOS, Windows and Linux runners: packaged app, fuses, CSP and
+# HTML artifacts, PDF export, renderer crash, watcher, backup/restore, MCP stdio, clipboard, Python
+# sandbox and the archiver/rfc6902 differentials. Unsigned build (WITSY_UNSIGNED): no signing secrets,
+# no notarization. Dummy keys only.
+name: Verify suites
+on:
+  push:
+    branches: [ 'fixall/verify' ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: verify-${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ macos-latest, windows-latest, ubuntu-24.04 ]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Github checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libevdev-dev xvfb xclip poppler-utils unzip
+      - name: Allow Chromium's user namespace sandbox (Ubuntu 24.04 restricts it by default)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: No core dump handler (the crash suites kill renderers on purpose)
+        if: runner.os == 'Linux'
+        run: |
+          sudo systemctl stop apport.service || true
+          sudo sysctl -w kernel.core_pattern=core
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install Dependencies
+        run: npm ci --onnxruntime-node-install-cuda=skip
+        env:
+          PREBUILDS_ONLY: "1"
+      - name: Run the verification suites
+        run: node tools/verify.mjs
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          WITSY_UNSIGNED: "1"
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs'); const f = 'verify-report/summary.json'
+            if (!fs.existsSync(f)) { console.log('no summary'); process.exit(0) }
+            const s = JSON.parse(fs.readFileSync(f, 'utf8'))
+            const lines = ['| suite | status | passed | failed | skipped |', '| --- | --- | --- | --- | --- |']
+            for (const [n, b] of Object.entries(s.builds)) lines.push('| build ' + n + ' | ' + (b.ok ? 'ok' : 'FAILED') + ' | | | |')
+            for (const [n, r] of Object.entries(s.suites)) lines.push('| ' + n + ' | ' + r.status + ' | ' + (r.tests?.passed ?? '') + ' | ' + (r.tests?.failed ?? '') + ' | ' + (r.tests?.skipped ?? '') + ' |')
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n')
+          "
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verify-report-${{ matrix.runner }}
+          path: verify-report/
+          retention-days: 14

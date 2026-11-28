@@ -76,8 +76,22 @@ Non-exhaustive feature list:
 
 You can download a binary from from the [releases](https://github.com/Kochava-Studios/witsy/releases) page or build yourself:
 
+On Debian/Ubuntu, install the native input dependency first:
+
+```bash
+sudo apt-get install libevdev-dev
+npm ci --onnxruntime-node-install-cuda=skip
+```
+
+On macOS and Windows:
+
 ```
 npm ci
+```
+
+Then start Witsy:
+
+```
 npm start
 ```
 
@@ -182,6 +196,15 @@ Witsy provides a local HTTP API that allows external applications to trigger var
 **Security Note:**
 The HTTP server runs on localhost only by default. If you need external access, consider using a reverse proxy with proper authentication.
 
+The API is meant for local scripts and tools, not for web pages. Every request is checked before it reaches an endpoint:
+- the `Host` header must be `localhost`, `127.0.0.1` or `[::1]` (any port), otherwise the request is refused with `403`;
+- requests sent by a web page are refused with `403`: any request with an `Origin` header (CORS preflights included) or flagged `cross-site`/`same-site` by the browser;
+- a `POST` body is only read when sent with `Content-Type: application/json` (`415` otherwise).
+
+Agent webhooks are authenticated by the token of their URL and are exempt from the `Host` and `Origin` checks, so they can be reached through a tunnel.
+
+Each time Witsy starts, it writes a new API token to the `http-api-token` file of its user data folder, readable by your user only. `/api/complete` accepts a `workDir` parameter (`{ "path": "...", "access": "ro" | "rw" }`, which gives the model file and command tools in that folder) only with an `Authorization: Bearer <token>` header and answers `403` without it. The Witsy CLI does this for you; requests without `workDir` need no token.
+
 ### Finding the Server Port
 
 The current HTTP server port is displayed in the tray menu below the Settings option:
@@ -190,21 +213,21 @@ The current HTTP server port is displayed in the tray menu below the Settings op
 
 ### Available Endpoints
 
-All endpoints support both `GET` (with query parameters) and `POST` (with JSON or form-encoded body) requests.
+Endpoints that trigger an action only accept `POST` requests (`405` otherwise), with their parameters in the query string or in a JSON body. Read-only endpoints use `GET`.
 
 | Endpoint | Description | Optional Parameters |
 |----------|-------------|---------------------|
 | `GET /api/health` | Server health check | - |
-| `GET/POST /api/chat` | Open main window in chat view | `text` - Pre-fill chat input |
-| `GET/POST /api/scratchpad` | Open scratchpad | - |
-| `GET/POST /api/settings` | Open settings window | - |
-| `GET/POST /api/studio` | Open design studio | - |
-| `GET/POST /api/forge` | Open agent forge | - |
-| `GET/POST /api/realtime` | Open realtime chat (voice mode) | - |
-| `GET/POST /api/prompt` | Trigger Prompt Anywhere | `text` - Pre-fill prompt |
-| `GET/POST /api/command` | Trigger AI command picker | `text` - Pre-fill command text |
-| `GET/POST /api/transcribe` | Start transcription/dictation | - |
-| `GET/POST /api/readaloud` | Start read aloud | - |
+| `POST /api/chat` | Open main window in chat view | `text` - Pre-fill chat input |
+| `POST /api/scratchpad` | Open scratchpad | - |
+| `POST /api/settings` | Open settings window | - |
+| `POST /api/studio` | Open design studio | - |
+| `POST /api/forge` | Open agent forge | - |
+| `POST /api/realtime` | Open realtime chat (voice mode) | - |
+| `POST /api/prompt` | Trigger Prompt Anywhere | `text` - Pre-fill prompt |
+| `POST /api/command` | Trigger AI command picker | `text` - Pre-fill command text |
+| `POST /api/transcribe` | Start transcription/dictation | - |
+| `POST /api/readaloud` | Start read aloud | - |
 | `GET /api/engines` | List available AI engines | Returns configured chat engines |
 | `GET /api/models/:engine` | List models for an engine | Returns available models for specified engine |
 | `POST /api/complete` | Run chat completion | `stream` (default: true), `engine`, `model`, `thread` (Message[]) |
@@ -217,8 +240,8 @@ All endpoints support both `GET` (with query parameters) and `POST` (with JSON o
 # Health check
 curl http://localhost:8090/api/health
 
-# Open chat with pre-filled text (GET with query parameter)
-curl "http://localhost:8090/api/chat?text=Hello%20World"
+# Open chat with pre-filled text (POST with query parameter)
+curl -X POST "http://localhost:8090/api/chat?text=Hello%20World"
 
 # Open chat with pre-filled text (POST with JSON)
 curl -X POST http://localhost:8090/api/chat \
@@ -226,7 +249,7 @@ curl -X POST http://localhost:8090/api/chat \
   -d '{"text":"Hello World"}'
 
 # Trigger Prompt Anywhere with text
-curl "http://localhost:8090/api/prompt?text=Write%20a%20poem"
+curl -X POST "http://localhost:8090/api/prompt?text=Write%20a%20poem"
 
 # Trigger AI command on selected text
 curl -X POST http://localhost:8090/api/command \
@@ -282,17 +305,22 @@ Witsy includes a command-line interface that allows you to interact with the AI 
 The CLI is automatically installed when you launch Witsy for the first time:
 - **macOS**: Creates a symlink at `/usr/local/bin/witsy` (requires admin password)
 - **Windows**: Adds the CLI to your user PATH (restart terminal for changes to take effect)
-- **Linux**: Creates a symlink at `/usr/local/bin/witsy` (uses pkexec if needed)
+- **Linux**: Creates a symlink at `/usr/local/bin/witsy-cli` (uses pkexec if needed). This avoids shadowing the desktop launcher installed as `/usr/bin/witsy` by deb/rpm packages.
 
 **Usage**
 
-Once installed, you can use the `witsy` command from any terminal:
+Once installed, use `witsy` on macOS and Windows, or `witsy-cli` on Linux:
 
 ```bash
-witsy
+witsy-cli # Linux
+witsy     # macOS and Windows
 ```
 
 The CLI will connect to your running Witsy application and provide an interactive chat interface. It uses the same configuration (engine, model, API keys) as your desktop application.
+
+**Windows**
+
+The installer (Squirrel) copies the `witsy.cmd` and `witsy.ps1` launchers next to the `app-X.Y.Z` folders of Witsy (`%LOCALAPPDATA%\Witsy`) and adds that folder to your user PATH; the launchers always run the highest installed version. A zip install adds its own `resources\cli\bin` folder to the PATH instead. Open a new terminal afterwards. `witsy` then works from cmd.exe (`witsy.cmd`) and from PowerShell (`witsy.ps1`, Windows PowerShell 5.1 or PowerShell 7). If the execution policy does not allow scripts, run `witsy.cmd` from PowerShell instead; the launchers never change the policy. `witsy.ps1` writes straight to the console: to capture or pipe the output inside PowerShell, use `witsy.cmd` as well. The launchers start the `Witsy.exe` of the app with `ELECTRON_RUN_AS_NODE` (set for the CLI process only), or, in a build made with `WITSY_CLI_RUNTIME=node`, the `node.exe` found on your PATH (Node.js 18 or later; the current folder is never searched).
 
 **Available Commands**
 - `/help` - Show available commands
@@ -305,6 +333,7 @@ The CLI will connect to your running Witsy application and provide an interactiv
 **Requirements**
 - Witsy desktop application must be running
 - HTTP API server enabled (default port: 4321)
+- The CLI runs on the Witsy binary itself, used as a Node.js runtime. A build made with `WITSY_CLI_RUNTIME=node` runs it on the Node.js of your computer instead (version 18 or later); the binary of such a build can no longer be turned into a Node.js runtime with `ELECTRON_RUN_AS_NODE`.
 
 ### CLI Chat Completion API
 
@@ -403,9 +432,11 @@ Agent webhooks allow you to trigger agent execution via HTTP requests, enabling 
 1. Open the Agent Forge and select or create an agent
 2. Navigate to the "Invocation" tab (last step in the wizard)
 3. Check the "🌐 Webhook" checkbox
-4. A unique 8-character token is automatically generated for your agent
+4. A unique random token (32 characters) is automatically generated for your agent: anyone who knows it can run the agent, keep the URL private
 5. Copy the webhook URL displayed (format: `http://localhost:{port}/api/agent/run/{token}`)
 6. You can regenerate the token at any time using the refresh button
+
+**Tokens from older versions:** webhooks created with an older version of Witsy have a short 8-character token. These tokens still work, but they are weak: they are flagged in the agent editor (and in the application log each time they are used) and are replaced by a strong token the next time you save the agent in the editor. Witsy then shows you the new URL: update your callers with it, as the old URL stops working.
 
 **Using the webhook:**
 - Send GET or POST requests to the webhook URL

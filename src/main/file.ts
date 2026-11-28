@@ -1,5 +1,5 @@
-import autolib from 'autolib';
-import { execSync } from 'child_process';
+import autolib from './native_automation';
+import { execFileSync } from 'child_process';
 import { App, dialog } from 'electron';
 import icns from 'icns-lib';
 import { minimatch } from 'minimatch';
@@ -9,7 +9,8 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import plist from 'plist';
 import process from 'process';
-import { FileContents, FileDownloadParams, FilePickParams, FileProperties, FileSaveParams, FileStats, SearchMatch, SearchOptions, SearchResult } from 'types/file';
+import { resolveInside, safeBasename } from './path_containment';
+import { AppDirectory, FileContents, FileDownloadParams, FilePickParams, FileProperties, FileSaveParams, FileStats, SearchMatch, SearchOptions, SearchResult } from 'types/file';
 import { DirectoryItem } from 'types/filesystem';
 import { ExternalApp } from 'types/index';
 
@@ -193,11 +194,21 @@ export const pickDirectory = (app: App): string|null => {
 
 }
 
-export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[]): string[] => {
+export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[], visited: Set<string> = new Set()): string[] => {
 
   let fileList: string[] = []
 
   try {
+
+    // a directory is listed once: a symbolic link that leads back to it (a link to a parent) would never end
+    let realPath = path.resolve(directoryPath)
+    try {
+      realPath = fs.realpathSync(directoryPath)
+    } catch { /* not resolvable: listed by its own path */ }
+    if (visited.has(realPath)) {
+      return fileList
+    }
+    visited.add(realPath)
 
     // Read the contents of the directory
     const files = fs.readdirSync(directoryPath)
@@ -215,11 +226,18 @@ export const listFilesRecursively = (directoryPath: string, excludePatterns?: st
       }
 
       const filePath = path.join(directoryPath, file)
-      const stat = fs.statSync(filePath);
+
+      // a broken symbolic link (or a file removed meanwhile) is skipped, not the rest of its directory
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue
+      }
 
       if (stat.isDirectory()) {
         // If it's a directory, recursively call the function
-        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns));
+        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns, visited));
       } else {
         // If it's a file, add it to the list
         fileList.push(filePath);
@@ -382,29 +400,67 @@ export const normalizePath = (app: App, filePath: string): string => {
   }
 }
 
-export const findProgram = (app: App, program: string) => {
+// a bare program name: no path, no whitespace, nothing a shell or the lookup tool could interpret
+const PROGRAM_NAME_PATTERN = /^[A-Za-z0-9_+][A-Za-z0-9._+-]{0,127}$/
+
+export const findProgram = (app: App, program: string): string|null => {
+  if (typeof program !== 'string' || !PROGRAM_NAME_PATTERN.test(program)) {
+    console.error('Refusing to look up an invalid program name');
+    return null;
+  }
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
-    const path = execSync(`${which} ${program}`).toString().split('\n')[0].trim();
-    return path;
+    const output = execFileSync(which, [program], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.split('\n')[0].trim() || null;
   } catch (error) {
     console.error(`Error while finding program ${program}`, error);
   }
   return null;
 }
 
+const SAVE_DIRECTORIES: AppDirectory[] = ['home', 'appData', 'userData', 'sessionData', 'temp', 'documents', 'downloads']
+
+// without a save dialog nobody sees where the file goes: only the folders where the app keeps its own files are accepted
+// (generated media and attachments in userData, drawings of the design studio in temp).
+// with a save dialog the directory is only where the dialog opens
+const UNPROMPTED_SAVE_DIRECTORIES: AppDirectory[] = ['userData', 'temp']
+
+const DEFAULT_SAVE_PROPERTIES: FileProperties = {
+  directory: 'downloads',
+  prompt: false,
+  subdir: false,
+}
+
+const isSaveDirectoryAccepted = (properties: FileProperties): boolean => {
+  if (!SAVE_DIRECTORIES.includes(properties.directory)) {
+    console.error('Refusing to save file in unknown directory', properties.directory);
+    return false;
+  }
+  if (!properties.prompt && !UNPROMPTED_SAVE_DIRECTORIES.includes(properties.directory)) {
+    console.error('Refusing to save file without a save dialog in directory', properties.directory);
+    return false;
+  }
+  return true;
+}
+
 export const writeFileContents = (app: App, payload: FileSaveParams): string => {
+  return saveFileContents(app, payload).url
+}
+
+// same as writeFileContents, and tells a save dialog the user cancelled from a failure
+const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null, cancelled: boolean } => {
 
   // defaults
   const defaultPayload = {
     contents: '',
-    properties: {
-      directory: 'downloads',
-      prompt: false,
-      subdir: false,
-    } as FileProperties,
+    properties: DEFAULT_SAVE_PROPERTIES,
   };
-  
+
   payload = {
     ...defaultPayload,
     ...payload,
@@ -416,49 +472,72 @@ export const writeFileContents = (app: App, payload: FileSaveParams): string => 
 
   // parse properties
   const properties = payload.properties;
+  if (!isSaveDirectoryAccepted(properties)) {
+    return { url: null, cancelled: false };
+  }
+
+  // the file name is a single segment: directory parts of the requested name are dropped
+  const requestedName = properties.filename || (typeof payload.url === 'string' ? payload.url.split('?')[0] : null);
+  const filename = requestedName ? safeBasename(requestedName) : null;
+  if (!filename) {
+    console.error('Refusing to save file without a valid name', requestedName);
+    return { url: null, cancelled: false };
+  }
+
+  // workspace and subdir come from the caller: they select a folder below the base directory, never one outside of it
   let defaultPath = app.getPath(properties.directory);
-  
-  // handle workspace-specific paths
   if (properties.workspace && properties.directory === 'userData') {
-    const workspaceFolder = path.join(defaultPath, 'workspaces', properties.workspace);
-    if (!fs.existsSync(workspaceFolder)) {
-      fs.mkdirSync(workspaceFolder, { recursive: true });
+    const workspace = safeBasename(properties.workspace);
+    const workspaceFolder = workspace === properties.workspace
+      ? resolveInside(path.join(defaultPath, 'workspaces'), workspace, { excludeBase: true })
+      : null;
+    if (!workspaceFolder) {
+      console.error('Refusing to save file in invalid workspace', properties.workspace);
+      return { url: null, cancelled: false };
     }
     defaultPath = workspaceFolder;
   }
-  
-  const defaultFileName = properties.filename ? properties.filename : payload.url.split('?')[0].split(path.sep).pop();
   if (properties.subdir) {
-    defaultPath = path.join(defaultPath, properties.subdir);
-    if (!fs.existsSync(defaultPath)) {
-      fs.mkdirSync(defaultPath, { recursive: true })
+    const subdirPath = resolveInside(defaultPath, properties.subdir);
+    if (!subdirPath) {
+      console.error('Refusing to save file in sub-directory outside of target directory', properties.subdir);
+      return { url: null, cancelled: false };
     }
+    defaultPath = subdirPath;
   }
 
-  // destination
-  let destinationURL = path.join(defaultPath, defaultFileName);
-  if (payload.url?.startsWith('file://')) {
-    destinationURL = payload.url.slice(7);
+  // without a prompt the file lands in that folder; with one it is only the suggestion and the user picks the destination
+  let destinationURL = properties.prompt
+    ? path.join(defaultPath, filename)
+    : resolveInside(defaultPath, filename, { excludeBase: true });
+  if (!destinationURL) {
+    console.error('Refusing to save file outside of target directory', filename);
+    return { url: null, cancelled: false };
+  }
+  if (!fs.existsSync(defaultPath)) {
+    fs.mkdirSync(defaultPath, { recursive: true });
   }
   if (properties.prompt) {
     destinationURL = dialog.showSaveDialogSync({
       defaultPath: destinationURL
     });
-    if (!destinationURL) return null;
+    if (!destinationURL) return { url: null, cancelled: true };
   }
 
   // try
   try {
     fs.writeFileSync(destinationURL, Buffer.from(payload.contents, 'base64'));
-    return `file://${destinationURL}`;
+    return { url: `file://${destinationURL}`, cancelled: false };
   } catch (error) {
     console.error('Error while writing file', error);
-    return null
+    return { url: null, cancelled: false }
   }
 
 }
 
-export const downloadFile = async (app: App, payload: FileDownloadParams) => {
+// returns the url of the saved file, null when the download or the save failed,
+// and an empty string when the user cancelled the save dialog (nothing to report)
+export const downloadFile = async (app: App, payload: FileDownloadParams): Promise<string|null> => {
 
   const savePayload: FileSaveParams = {
     contents: '',
@@ -466,13 +545,22 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     properties: payload.properties
   }
 
+  // a save that will be refused is not worth a request, or reading a local file
+  if (!isSaveDirectoryAccepted({ ...DEFAULT_SAVE_PROPERTIES, ...payload.properties })) {
+    return null;
+  }
+
   try {
 
     // get contents
     if (payload.url.startsWith('file://')) {
 
-      savePayload.contents = fs.readFileSync(payload.url.slice(7)).toString('base64');
-      //savePayload.properties.filename = payload.url.split('?')[0].split(path.sep).pop();
+      const source = payload.url.slice(7);
+      savePayload.contents = fs.readFileSync(source).toString('base64');
+      // the url is reset below: without a file name, the copy is named after its source
+      if (!payload.properties?.filename) {
+        savePayload.properties = { ...payload.properties, filename: path.basename(source) }
+      }
       savePayload.url = null
 
     } else {
@@ -483,6 +571,11 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
       // }
 
       const response = await fetch(payload.url);
+      if (!response.ok) {
+        // the body of an error answer is an error page, not the file
+        console.error(`Error while downloading file: HTTP ${response.status}`);
+        return null
+      }
       const contents = await response.arrayBuffer();
       savePayload.contents = Buffer.from(contents).toString('base64');
 
@@ -492,7 +585,8 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     }
 
     // now just save
-    return writeFileContents(app, savePayload);
+    const saved = saveFileContents(app, savePayload);
+    return saved.cancelled ? '' : saved.url;
 
   } catch (error) {
     console.error('Error while downloading file', error);
@@ -556,11 +650,14 @@ const SKIP_DIRECTORIES = new Set([
 /**
  * Find files recursively with glob filtering
  */
-const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): string[] => {
+const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): { files: string[], capped: boolean } => {
   const files: string[] = []
   const stack: string[] = [dir]
 
-  while (stack.length > 0 && files.length < maxFiles) {
+  // set when a file had to be left out because of maxFiles
+  let capped = false
+
+  while (stack.length > 0 && !capped) {
     const currentDir = stack.pop()!
 
     let entries: fs.Dirent[]
@@ -571,8 +668,6 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
     }
 
     for (const entry of entries) {
-      if (files.length >= maxFiles) break
-
       // Skip hidden files and common non-code directories
       if (entry.name.startsWith('.') || SKIP_DIRECTORIES.has(entry.name)) {
         continue
@@ -589,12 +684,16 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
             continue
           }
         }
+        if (files.length >= maxFiles) {
+          capped = true
+          break
+        }
         files.push(fullPath)
       }
     }
   }
 
-  return files
+  return { files, capped }
 }
 
 /**
@@ -617,10 +716,17 @@ export const searchContent = (
 
   const matches: SearchMatch[] = []
   let truncated = false
+  let incomplete = false
 
   // Handle file vs directory
   const stats = fs.statSync(basePath)
-  const files = stats.isFile() ? [basePath] : findFilesForSearch(basePath, glob)
+  const { files, capped } = stats.isFile() ? { files: [basePath], capped: false } : findFilesForSearch(basePath, glob)
+
+  // the result is also incomplete when not every file could be searched
+  if (capped) {
+    truncated = true
+    incomplete = true
+  }
 
   for (const file of files) {
     if (matches.length >= maxResults) {
@@ -632,6 +738,8 @@ export const searchContent = (
     try {
       content = fs.readFileSync(file, 'utf-8')
     } catch {
+      // a file that cannot be read was not searched
+      incomplete = true
       continue
     }
 
@@ -677,6 +785,7 @@ export const searchContent = (
   return {
     matches,
     filesSearched: files.length,
-    truncated
+    truncated,
+    ...(incomplete ? { incomplete: true } : {}),
   }
 }

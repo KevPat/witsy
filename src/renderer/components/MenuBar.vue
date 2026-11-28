@@ -5,36 +5,36 @@
 
     <div class="menu">
 
-      <ButtonIcon class="app-menu" @click="onAppMenu">
+      <ButtonIcon :label="t('common.actions')" class="app-menu" @click="onAppMenu">
         <MenuIcon/>
       </ButtonIcon>
 
-      <MenuBarItem class="chat" action="chat" :active="mode === 'chat'" @click="emit('new-chat')">
+      <MenuBarItem :label="t('common.chat')" class="chat" action="chat" :active="mode === 'chat'" @click="emit('new-chat')">
         <IconChat />
         <span>{{ t('common.chat') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="studio" :active="mode === 'studio'" @click="emit('change', 'studio')" v-if="store.isFeatureEnabled('studio') && !isFeatureHidden('studio')">
+      <MenuBarItem :label="t('designStudio.title')" action="studio" :active="mode === 'studio'" @click="emit('change', 'studio')" v-if="store.isFeatureEnabled('studio') && !isFeatureHidden('studio')">
         <PaletteIcon />
         <span>{{ t('designStudio.title') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="scratchpad" :active="mode === 'scratchpad'" @click="emit('change', 'scratchpad')" v-if="store.isFeatureEnabled('scratchpad') && !isFeatureHidden('scratchpad')">
+      <MenuBarItem :label="t('scratchpad.title')" action="scratchpad" :active="mode === 'scratchpad'" @click="emit('change', 'scratchpad')" v-if="store.isFeatureEnabled('scratchpad') && !isFeatureHidden('scratchpad')">
         <FileTextIcon />
         <span>{{ t('scratchpad.title') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="dictation" :active="mode === 'booth'" @click="emit('change', 'booth')" v-if="store.isFeatureEnabled('dictation') && !isFeatureHidden('dictation')">
+      <MenuBarItem :label="t('transcribe.title')" action="dictation" :active="mode === 'booth'" @click="emit('change', 'booth')" v-if="store.isFeatureEnabled('dictation') && !isFeatureHidden('dictation')">
         <MicIcon />
         <span>{{ t('transcribe.title') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="voice-mode" :active="mode === 'voice-mode'" @click="emit('change', 'voice-mode')" v-if="store.isFeatureEnabled('voiceMode') && !isFeatureHidden('voiceMode')">
+      <MenuBarItem :label="t('realtimeChat.title')" action="voice-mode" :active="mode === 'voice-mode'" @click="emit('change', 'voice-mode')" v-if="store.isFeatureEnabled('voiceMode') && !isFeatureHidden('voiceMode')">
         <HeadsetIcon />
         <span>{{ t('realtimeChat.title') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="computer-use" :active="mode === 'computer-use'" @click="emit('change', 'computer-use')" v-if="hasComputerUse">
+      <MenuBarItem :label="t('computerUse.title')" action="computer-use" :active="mode === 'computer-use'" @click="emit('change', 'computer-use')" v-if="hasComputerUse">
         <MouseIcon />
         <span>{{ t('computerUse.title') }}</span>
       </MenuBarItem>
@@ -43,6 +43,7 @@
       <MenuBarItem
         v-for="webapp in enabledWebapps"
         :key="webapp.id"
+        :label="webapp.name"
         :action="`webapp-${webapp.id}`"
         :active="mode === `webapp-${webapp.id}`"
         @click="emit('change', `webapp-${webapp.id}`)"
@@ -54,17 +55,17 @@
 
       <div class="flex-push"></div>
 
-      <MenuBarItem action="agents" :active="mode === 'agents'" @click="emit('change', 'agents')" v-if="store.isFeatureEnabled('agents')">
+      <MenuBarItem :label="t('agent.forge.title')" action="agents" :active="mode === 'agents'" @click="emit('change', 'agents')" v-if="store.isFeatureEnabled('agents')">
         <IconAgent />
         <span>{{ t('agent.forge.title') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="mcp" :active="mode === 'mcp'" @click="emit('change', 'mcp')" v-if="hasMcp">
+      <MenuBarItem :label="t('mcp.mcpServers')" action="mcp" :active="mode === 'mcp'" @click="emit('change', 'mcp')" v-if="hasMcp">
         <PlugIcon />
         <span>{{ t('mcp.mcpServers') }}</span>
       </MenuBarItem>
 
-      <MenuBarItem action="docrepo" :active="mode === 'docrepos'" @click="emit('change', 'docrepos')" v-if="store.isFeatureEnabled('docrepos')">
+      <MenuBarItem :label="t('docRepo.list.title')" action="docrepo" :active="mode === 'docrepos'" @click="emit('change', 'docrepos')" v-if="store.isFeatureEnabled('docrepos')">
         <LightbulbIcon />
         <span>{{ t('docRepo.list.title') }}</span>
       </MenuBarItem>
@@ -74,7 +75,7 @@
         <span>{{ t('docRepo.list.title') }}</span>
       </MenuBarItem> -->
 
-      <MenuBarItem action="settings" :active="mode === 'settings'" @click="emit('change', 'settings')">
+      <MenuBarItem :label="t('common.settings')" action="settings" :active="mode === 'settings'" @click="emit('change', 'settings')">
         <SettingsIcon />
         <span>{{ t('common.settings') }}</span>
       </MenuBarItem>

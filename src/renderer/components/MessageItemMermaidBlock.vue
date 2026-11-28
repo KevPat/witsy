@@ -21,6 +21,7 @@ import mermaid, { RenderResult } from 'mermaid'
 import { onMounted, ref } from 'vue'
 
 import useEventBus from '@composables/event_bus'
+import { t } from '@services/i18n'
 const { emitBusEvent } = useEventBus()
 
 // Serialize mermaid.render() calls — it is not reentrant
@@ -46,7 +47,7 @@ const props = defineProps({
 
 const render = ref<RenderResult|null>(null)
 const viewCode = ref(false)
-const copyLabel = ref('Copy Code')
+const copyLabel = ref(t('message.mermaid.copyCode'))
 const theme = ref('light')
 
 mermaid.initialize({
@@ -97,9 +98,9 @@ const onViewCode = () => {
 
 const onCopyCode = () => {
   navigator.clipboard.writeText(props.src)
-  copyLabel.value = 'Copied!'
+  copyLabel.value = t('message.mermaid.copied')
   setTimeout(() => {
-    copyLabel.value = 'Copy Code'
+    copyLabel.value = t('message.mermaid.copyCode')
   }, 1000)
 }
 

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { Configuration } from 'types/config'
 import { Skill, SkillFileManifestItem, SkillFileReadResult, SkillInstallResult, SkillSaveResult, SkillHeader, SkillUninstallResult } from 'types/skills'
 import { loadSettings } from './config'
+import { resolveInside } from './path_containment'
 
 const kMaxSkillFileCount = 300
 const kMaxFileReadChars = 40000
@@ -105,12 +106,13 @@ const resolveSkillLocations = (app: App, workspaceId: string, config: Configurat
     ? config.skills.locations
     : []
 
+  // an empty entry would resolve to the working directory: drop it before it is resolved
   const locations = [
     ...defaultSkillLocations(app, workspaceId),
     ...customLocations,
   ]
+    .filter(location => typeof location === 'string' && location.trim().length > 0)
     .map(location => normalizePath(expandHome(app, location)))
-    .filter(Boolean)
 
   return [...new Set(locations)]
 }
@@ -163,8 +165,9 @@ const findSkillFolders = (skillsRoot: string): string[] => {
 }
 
 const readSkillSummary = (skillRoot: string): SkillHeader | null => {
-  const skillMdPath = path.join(skillRoot, 'SKILL.md')
-  if (!fs.existsSync(skillMdPath)) {
+  // a SKILL.md that is a link to a file outside of the skill folder is not a skill
+  const skillMdPath = resolveInside(skillRoot, 'SKILL.md', { excludeBase: true })
+  if (!skillMdPath || !fs.existsSync(skillMdPath)) {
     return null
   }
 
@@ -315,12 +318,13 @@ export const getSkillFile = (
     return { success: false, error: `Unknown skill: ${skillId}` }
   }
 
-  if (!relativePath || !relativePath.trim()) {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
     return { success: false, error: 'File path is required' }
   }
 
-  const absolutePath = path.resolve(skill.rootPath, relativePath)
-  if (!isPathInside(skill.rootPath, absolutePath)) {
+  // checked after symlink resolution too: a link inside the skill folder can point anywhere
+  const absolutePath = resolveInside(skill.rootPath, relativePath, { excludeBase: true })
+  if (!absolutePath) {
     return { success: false, error: 'Path escapes skill directory' }
   }
 
@@ -402,13 +406,20 @@ export const uninstallSkill = (app: App, workspaceId: string, skillId: string): 
   }
 }
 
+// device names that Windows reserves, with or without an extension
+const kReservedFolderNames = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
+
+// The folder name of a skill comes from the user or from the SKILL.md of a repository.
+// It must be one folder inside the skills folder: "." and ".." are not names, a leading dot
+// hides the folder, and Windows refuses a trailing dot and its reserved device names.
 const sanitizeFolderName = (name: string): string => {
-  return name
+  const folderName = String(name ?? '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/^[-.]+|[-.]+$/g, '')
     || 'skill'
+  return kReservedFolderNames.test(folderName) ? `skill-${folderName}` : folderName
 }
 
 const serializeSkillMd = (payload: { name: string, description?: string, instructions: string }): string => {
@@ -620,7 +631,17 @@ const discoverSkillFoldersFromExtractedRepo = (extractRoot: string, repoSubPath?
 }
 
 export const installSkillFromUrl = async (app: App, url: string, installPath: string): Promise<SkillInstallResult> => {
-  const parsedInput = extractRepoAndSkillFromInstallInput(url)
+
+  // an empty path would resolve to the working directory
+  if (typeof installPath !== 'string' || !installPath.trim()) {
+    return {
+      success: false,
+      installed: [],
+      error: 'Install path is required',
+    }
+  }
+
+const parsedInput = extractRepoAndSkillFromInstallInput(url)
   if (!parsedInput) {
     return {
       success: false,
@@ -658,7 +679,8 @@ export const installSkillFromUrl = async (app: App, url: string, installPath: st
 
     await downloadToFile(archiveUrl, zipPath)
     fs.mkdirSync(extractPath, { recursive: true })
-    await extractZip(zipPath, { dir: extractPath })
+    // no link is ever created from a skill archive (patches/extract-zip+2.0.1.patch)
+    await extractZip(zipPath, { dir: extractPath, skipSymlinks: true } as extractZip.Options)
 
     let skillFolders = discoverSkillFoldersFromExtractedRepo(extractPath, parsedInput.repoSubPath)
     if (parsedInput.skillName) {

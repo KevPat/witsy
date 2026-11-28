@@ -88,12 +88,42 @@ export interface ComputeBlocksOptions {
   filter?: string | null
 }
 
-const highlightSearch = (html: string, filter?: string | null): string => {
-  if (filter) {
-    const regex = new RegExp(filter, 'gi')
-    html = html.replace(regex, (match) => `<mark>${match}</mark>`)
+export const highlightSearch = (html: string, filter?: string | null): string => {
+  if (!filter) return html
+
+  const template = document.createElement('template')
+  template.innerHTML = html
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    if (!(node.parentElement?.closest('mark, script, style'))) {
+      nodes.push(node as Text)
+    }
   }
-  return html
+
+  const needle = filter.toLocaleLowerCase()
+  for (const textNode of nodes) {
+    const text = textNode.data
+    const lowerText = text.toLocaleLowerCase()
+    let start = 0
+    let index = lowerText.indexOf(needle, start)
+    if (index < 0) continue
+
+    const fragment = document.createDocumentFragment()
+    while (index >= 0) {
+      fragment.append(text.slice(start, index))
+      const mark = document.createElement('mark')
+      mark.textContent = text.slice(index, index + filter.length)
+      fragment.append(mark)
+      start = index + filter.length
+      index = lowerText.indexOf(needle, start)
+    }
+    fragment.append(text.slice(start))
+    textNode.replaceWith(fragment)
+  }
+
+  return template.innerHTML
 }
 
 /**

@@ -3,26 +3,26 @@
     <header class="toolbar">
       <template v-if="message">
         <div class="title">{{ message.content }}</div>
-        <ButtonIcon class="undo" @click="$emit('undo')" v-if="canUndo || canRedo" :class="{ disabled: isGenerating || !canUndo }">
+        <ButtonIcon :label="t('common.undo')" class="undo" @click="$emit('undo')" v-if="canUndo || canRedo" :class="{ disabled: isGenerating || !canUndo }">
           <UndoIcon />
         </ButtonIcon>
-        <ButtonIcon class="redo" @click="$emit('redo')" v-if="canUndo || canRedo" :class="{ disabled: isGenerating || !canRedo }">
+        <ButtonIcon :label="t('common.redo')" class="redo" @click="$emit('redo')" v-if="canUndo || canRedo" :class="{ disabled: isGenerating || !canRedo }">
           <RedoIcon />
         </ButtonIcon>
-        <ButtonIcon class="info" @click="onInfo">
+        <ButtonIcon :label="t('common.info')" class="info" @click="onInfo">
           <InfoIcon />
         </ButtonIcon>
-        <ButtonIcon class="fullscreen" @click="onFullScreen" v-if="!message.isVideo()">
+        <ButtonIcon :label="t('common.fullscreen')" class="fullscreen" @click="onFullScreen" v-if="!message.isVideo()">
           <FullscreenIcon />
         </ButtonIcon>
-        <ButtonIcon class="copy" @click="onCopy" v-if="!message.isVideo()">
+        <ButtonIcon :label="t('common.copy')" class="copy" @click="onCopy" v-if="!message.isVideo()">
           <ClipboardCheckIcon v-if="copying" />
           <ClipboardIcon v-else />
         </ButtonIcon>
-        <ButtonIcon class="save" @click="onDownload">
+        <ButtonIcon :label="t('common.save')" class="save" @click="onDownload">
           <DownloadIcon />
         </ButtonIcon> 
-        <ButtonIcon class="delete" @click="onDelete">
+        <ButtonIcon :label="t('common.delete')" class="delete" @click="onDelete">
           <Trash2Icon />
         </ButtonIcon>
       </template>
@@ -57,6 +57,7 @@ import useEventListener from '@composables/event_listener'
 const { onDomEvent } = useEventListener()
 import Loader from '@components/Loader.vue'
 import Dialog from '@renderer/utils/dialog'
+import { downloadWithPrompt } from '@services/download'
 import Message from '@models/message'
 import { t } from '@services/i18n'
 
@@ -148,14 +149,7 @@ const onCopy = async () => {
 
 const onDownload = () => {
   const url = props.message.attachments[0].url
-  window.api.file.download({
-    url: url,
-    properties: {
-      prompt: true,
-      directory: 'downloads',
-      filename: `${props.message.isVideo() ? 'video' : 'image'}.${url.split('.').pop()}`,
-    }
-  })
+  downloadWithPrompt(url, `${props.message.isVideo() ? 'video' : 'image'}.${url.split('.').pop()}`)
 }
 
 const onDelete = () => {

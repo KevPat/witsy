@@ -1,8 +1,9 @@
 <template>
-  <ButtonIcon ref="item"
+  <ButtonIcon
+    :label="label"
     class="item" 
     :class="{ active: active }" 
-    v-tooltip="{ text: tooltipText, position: 'right' }"
+    v-tooltip="{ text: label, position: 'right' }"
     @click="onClick"
   >
     <slot />
@@ -11,15 +12,15 @@
 
 <script setup lang="ts">
 
-import { onMounted, ref } from 'vue'
 import ButtonIcon from './ButtonIcon.vue'
-
-const item = ref<typeof ButtonIcon>(null)
-const tooltipText = ref('')
 
 const emit = defineEmits(['click'])
 
 const props = defineProps({
+  label: {
+    type: String,
+    required: true,
+  },
   action: {
     type: String,
     required: true,
@@ -28,11 +29,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-})
-
-onMounted(() => {
-  const span = item.value.$el.querySelector('span') as HTMLElement
-  tooltipText.value = span ? span.innerText : ''
 })
 
 const onClick = () => {

@@ -9,12 +9,24 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { execSync } from 'child_process';
+import { cliRuntime, runAsNodeFuse, writeCliRuntime } from './build/cli_runtime';
 import prePackage from './build/prepackage';
 import { purgeAutolib, purgeLibnut, purgeOnnxRuntime } from './build/purge_native';
 import { signDarwinBinaries, signWindowsBinaries } from './build/sign_binaries';
 
 import dotenv from 'dotenv';
 dotenv.config();
+
+// The platform being packaged: the Makefile and the workflows pass it (`-p darwin`, `-p win32`,
+// `-p linux`), and without it Forge packages for the host.
+const targetPlatform = ((): string => {
+  const args = process.argv;
+  const index = args.findIndex((arg) => arg === '-p' || arg === '--platform');
+  if (index !== -1 && args[index + 1]) return args[index + 1];
+  const inline = args.find((arg) => arg.startsWith('--platform='));
+  return inline ? inline.slice('--platform='.length) : process.platform;
+})();
+const isDarwinTarget = ['darwin', 'mas'].includes(targetPlatform);
 
 // osx special configuration
 let osxPackagerConfig = {}
@@ -31,11 +43,12 @@ const dmgOptions: MakerDMGConfig = {
   }
 }
 
-if (isDarwin) {
+// WITSY_UNSIGNED: a macOS build without Developer ID signing and notarization (npm run verify on a
+// Mac or a CI runner that has no signing secrets); the release workflows never set it
+if (isDarwin && !process.env.WITSY_UNSIGNED) {
   osxPackagerConfig = {
     osxSign: {
       identity: process.env.IDENTIFY_DARWIN_CODE,
-      provisioningProfile: './build/Witsy_Darwin.provisionprofile',
       optionsForFile: () => { return {
         hardenedRuntime: true,
         entitlements: './build/Entitlements.darwin.plist'
@@ -54,20 +67,24 @@ const config: ForgeConfig = {
     asar: true,
 
     /*
-     * electron-forge 7.9.0 fix but increases image size significantly
+     * Since electron-forge 7.9, the Vite plugin no longer copies node_modules into the package, but
+     * the main process keeps every runtime dependency external (vite.base.config.ts): without this
+     * the packaged app dies at launch on its first require (found by npm run verify:smoke).
+     * The packager still prunes devDependencies from the copied node_modules.
      */
-    // ignore: (file: string): boolean => {
-    //   if (!file) return false;
-    //   if (file.startsWith('/node_modules')) return false;
-    //   if (!file.startsWith('/.vite')) return true;
-    //   return false;
-    // },
+    ignore: (file: string): boolean => {
+      if (!file) return false;
+      if (file.startsWith('/node_modules')) return false;
+      if (file === '/package.json') return false;
+      if (!file.startsWith('/.vite')) return true;
+      return false;
+    },
 
     icon: 'assets/icon',
     executableName: process.platform == 'linux' ? 'witsy' : 'Witsy',
     appBundleId: 'com.nabocorp.witsy',
     extendInfo: './build/Info.plist',
-    buildVersion: `${process.env.BUILD_NUMBER}`,
+    buildVersion: process.env.BUILD_NUMBER ?? '0',
     extraResource: [
       'assets/trayTemplate.png',
       'assets/trayTemplate@2x.png',
@@ -78,6 +95,7 @@ const config: ForgeConfig = {
       'assets/trayUpdateWhite.png',
       'assets/trayUpdateWhite@2x.png',
       'assets/icon.ico',
+      'assets/icon.png',
       'assets/gladia.png',
       'assets/speechmatics.png',
       'assets/apple-speechanalyzer-cli',
@@ -90,11 +108,6 @@ const config: ForgeConfig = {
           // Sign macOS native binaries
           if (platform === 'darwin') {
             signDarwinBinaries(buildPath, arch);
-          }
-
-          // Sign Windows binaries before the zip and the Squirrel installer are built.
-          if (platform === 'win32') {
-            signWindowsBinaries(buildPath, arch);
           }
 
           callback();
@@ -117,7 +130,17 @@ const config: ForgeConfig = {
         signWithParams: `/sha1 ${process.env.SM_CODE_SIGNING_CERT_SHA1_HASH} /tr http://timestamp.digicert.com /td SHA256 /fd SHA256`
       } : {})
     }),
-    /* linux  */ new MakerRpm({}), new MakerDeb({})
+    /* linux  */ new MakerRpm({
+      options: {
+        requires: ['libevdev'],
+        icon: './assets/icon.png',
+      }
+    }), new MakerDeb({
+      options: {
+        depends: ['libevdev2'],
+        icon: './assets/icon.png',
+      }
+    })
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
@@ -146,11 +169,19 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
-      [FuseV1Options.RunAsNode]: true,
+      // With this fuse, ELECTRON_RUN_AS_NODE=1 turns the app binary into a Node.js runtime for any local
+      // process. On by default so the CLI can run without Node.js; off when the build is made with
+      // WITSY_CLI_RUNTIME=node (see build/cli_runtime.ts).
+      [FuseV1Options.RunAsNode]: runAsNodeFuse(targetPlatform),
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-      [FuseV1Options.EnableNodeCliInspectArguments]: true,
-      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
+      // Playwright drives the e2e build (TEST=1) through --inspect; release builds must not accept it
+      [FuseV1Options.EnableNodeCliInspectArguments]: !!process.env.TEST,
+      // The packager writes the hash of app.asar in Info.plist (macOS) and Electron refuses to start
+      // when the file was changed. On for macOS, where a modified asar runs with the permissions
+      // granted to the signed app. Still off for Windows (the check failed there, see 7ab83b00) and
+      // without effect on Linux.
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: isDarwinTarget,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
@@ -158,7 +189,18 @@ const config: ForgeConfig = {
     prePackage: async (_forgeConfig, platform, arch) => {
       // Build CLI before packaging
       execSync('npm run build:cli', { stdio: 'inherit' })
+      // and tell its launcher which Node.js this build runs it on (the RunAsNode fuse follows the same rule)
+      writeCliRuntime('dist/cli', cliRuntime(platform))
       prePackage(platform, arch)
+    },
+    postPackage: async (_forgeConfig, packageResult) => {
+      // Fuses mutate the executable after afterCopy. Sign the finalized package
+      // so ZIP and Squirrel makers receive a valid Authenticode signature.
+      if (packageResult.platform === 'win32') {
+        for (const outputPath of packageResult.outputPaths) {
+          signWindowsBinaries(outputPath, packageResult.arch)
+        }
+      }
     },
     
     /*
@@ -209,7 +251,7 @@ const config: ForgeConfig = {
       console.log(`🧹 Cleaning up platform-specific binaries for ${platform}-${arch}`);
 
       purgeOnnxRuntime(buildPath, platform, arch);
-      purgeLibnut(buildPath, platform);
+      purgeLibnut(buildPath, platform, arch);
       purgeAutolib(buildPath, platform, arch);
 
       console.log(`✅ Cleanup complete`);

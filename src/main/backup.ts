@@ -1,19 +1,27 @@
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import { App, dialog } from 'electron'
 import extractZip from 'extract-zip'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import defaultSettings from '@root/defaults/settings.json'
+import { writeFileAtomicSync } from './atomic'
+import { keepLocalSecrets, keepLocalSettingsSecrets, stripSecrets } from './backup_secrets'
 import { commandsFilePath } from './commands'
-import { apiKeysFilePath, settingsFilePath } from './config'
+import { extractApiKeys, loadApiKeys, settingsFilePath } from './config'
 import * as file from './file'
 import { useI18n } from './i18n'
 import { workspacesFolder } from './workspace'
 
+// A backup never carries key material: the key store (apiKeys.json) is not part of it, and the
+// files that can hold a key, a token or a password go in, and come back, without them
+// (see backup_secrets.ts). Restoring never imports a key: the ones of this computer are kept.
+
+const kSettingsFile = 'settings.json'
+
 // files to backup with their respective paths
 const filesToBackup = (app: App) => ([
-  { name: 'settings.json', path: settingsFilePath(app) },
-  { name: 'apiKeys.json', path: apiKeysFilePath(app) },
+  { name: kSettingsFile, path: settingsFilePath(app) },
   { name: 'commands.json', path: commandsFilePath(app) }
 ])
 
@@ -22,6 +30,47 @@ const foldersToBackup = (app: App) => ([
   { name: 'engines', path: path.join(app.getPath('userData'), 'engines') },
   { name: 'workspaces', path: workspacesFolder(app) },
 ])
+
+// the files of a folder that can hold a secret: the definition of a workspace (web app urls)
+// and its agents (webhook token). relative is the path inside the folder, with forward slashes.
+// agent runs, one level below, are conversations: they are not looked at
+const holdsSecrets = (folder: string, relative: string): boolean => {
+  return folder === 'workspaces' && /^[^/]+\/(workspace\.json|agents\/[^/]+\.json)$/i.test(relative)
+}
+
+const isPlainObject = (value: unknown): value is Record<string, any> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+// (a byte order mark is accepted)
+const readJson = (source: string): unknown => {
+  return JSON.parse(fs.readFileSync(source, 'utf-8').replace(/^\uFEFF/, ''))
+}
+
+// the content of a JSON file without its secrets. null when it cannot be parsed:
+// what cannot be checked never goes in a backup, or out of one, as it is
+const readWithoutSecrets = (source: string): string | null => {
+  try {
+    return JSON.stringify(stripSecrets(readJson(source)), null, 2)
+  } catch (error) {
+    console.warn(`Backup: ${source} is not valid JSON and is left out:`, error instanceof Error ? error.message : error)
+    return null
+  }
+}
+
+// the files of a folder, down to a given depth, as relative paths with forward slashes
+const listFiles = (root: string, depth: number, prefix: string = ''): string[] => {
+  const files: string[] = []
+  for (const entry of fs.readdirSync(prefix ? path.join(root, prefix) : root, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      if (depth > 1) files.push(...listFiles(root, depth - 1, relative))
+    } else {
+      files.push(relative)
+    }
+  }
+  return files
+}
 
 export const exportBackup = async (app: App): Promise<boolean> => {
   try {
@@ -38,56 +87,119 @@ export const exportBackup = async (app: App): Promise<boolean> => {
 
     // Create a file to stream archive data to
     const output = fs.createWriteStream(backupPath)
-    const archive = archiver('zip', {
+    const archive = new ZipArchive({
       zlib: { level: 9 } // Compression level
     })
+
+    // an error of the archiver or of the file makes the export fail: throwing from these event
+    // handlers would be an uncaught exception, out of reach of the try/catch below
+    let failed = false
+    let reportFailure: () => void = () => {}
+    const fail = (err: Error) => {
+      if (failed) return
+      failed = true
+      console.error('Error creating backup:', err)
+      try { output.destroy() } catch { /* empty */ }
+      reportFailure()
+    }
 
     // Good practice to catch warnings (ie stat failures and other non-blocking errors)
     archive.on('warning', (err) => {
       if (err.code === 'ENOENT') {
         console.warn('Backup warning:', err)
       } else {
-        throw err
+        fail(err)
       }
     })
 
     // Good practice to catch this error explicitly
-    archive.on('error', (err) => {
-      throw err
-    })
+    archive.on('error', fail)
+    output.on('error', fail)
 
     // Pipe archive data to the file
     archive.pipe(output)
 
-    // Add individual files
+    // Add individual files: the settings as a copy without secrets, never as the file itself
     for (const fileInfo of filesToBackup(app)) {
-      if (fs.existsSync(fileInfo.path)) {
+      if (!fs.existsSync(fileInfo.path)) continue
+      if (fileInfo.name === kSettingsFile) {
+        const content = readWithoutSecrets(fileInfo.path)
+        if (content !== null) {
+          archive.append(content, { name: fileInfo.name })
+        }
+      } else {
         archive.file(fileInfo.path, { name: fileInfo.name })
       }
     }
 
-    // Add folders if they exist
+    // Add folders if they exist: same for the files that can hold a secret
     for (const folder of foldersToBackup(app)) {
-      if (fs.existsSync(folder.path)) {
-        archive.directory(folder.path, folder.name)
+      if (!fs.existsSync(folder.path)) continue
+      archive.directory(folder.path, folder.name, (entry) => {
+        return holdsSecrets(folder.name, String(entry.name).replace(/\\/g, '/')) ? false : entry
+      })
+      let checked: string[] = []
+      try {
+        checked = listFiles(folder.path, 3).filter((name) => holdsSecrets(folder.name, name))
+      } catch (error) {
+        // without the list these files would be missing from the backup: better no backup than half of one
+        fail(error as Error)
+        break
+      }
+      for (const relative of checked) {
+        const content = readWithoutSecrets(path.join(folder.path, relative))
+        if (content !== null) {
+          archive.append(content, { name: `${folder.name}/${relative}` })
+        }
       }
     }
 
     // Wait for stream to close
-    return await new Promise<boolean>((resolve) => {
+    const created = await new Promise<boolean>((resolve) => {
+
+      reportFailure = () => resolve(false)
+
       output.on('close', () => {
+        if (failed) {
+          // do not leave half a backup behind
+          try { fs.rmSync(backupPath, { force: true }) } catch { /* empty */ }
+          return
+        }
         console.log(`Backup created: ${backupPath} (${archive.pointer()} bytes)`)
         resolve(true)
       })
 
-      output.on('error', (err) => {
-        console.error('Error creating backup:', err)
-        resolve(false)
-      })
+      // (a failure while the files were added: the file is removed when it closes)
+      if (failed) {
+        return resolve(false)
+      }
 
       // Finalize the archive
-      archive.finalize()
+      try {
+        const finalizing: any = archive.finalize()
+        finalizing?.catch?.(fail)
+      } catch (err) {
+        fail(err as Error)
+      }
     })
+
+    // the user must know now, while the keys are at hand, that the backup does not hold them
+    if (created) {
+      try {
+        const t = useI18n(app)
+        await dialog.showMessageBox({
+          type: 'info',
+          title: t('backup.export.done.title'),
+          message: t('backup.export.done.message', { file: backupFilename }),
+          detail: t('backup.export.done.detail'),
+          buttons: [t('common.ok')]
+        })
+      } catch (dialogError) {
+        console.warn('Error reporting the backup:', dialogError)
+      }
+    }
+
+    return created
 
   } catch (error) {
     console.error('Error during backup export:', error)
@@ -106,7 +218,7 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
       type: 'warning',
       title: t('backup.restore.confirm.title'),
       message: t('backup.restore.confirm.message'),
-      detail: t('backup.restore.confirm.detail'),
+      detail: `${t('backup.restore.confirm.detail')}\n\n${t('backup.restore.confirm.keys')}`,
       buttons: [t('common.cancel'), t('backup.restore.confirm.restore')],
       defaultId: 0,
       cancelId: 0
@@ -133,34 +245,33 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
 
     try {
       // Extract the ZIP file
-      await extractZip(backupFile as string, { dir: tempDir })
+      // no link is ever created from a backup (patches/extract-zip+2.0.1.patch)
+      await extractZip(backupFile as string, { dir: tempDir, skipSymlinks: true } as extractZip.Options)
 
-      // Get target file paths
-      const targetFiles = filesToBackup(app).map(fileInfo => ({
-        source: path.join(tempDir, fileInfo.name),
-        target: fileInfo.path,
-      }))
+      // any zip can be picked: check that this one is a backup, and a readable one,
+      // before a single file of the user is replaced
+      validateBackup(app, tempDir, t)
 
-      // Restore individual files
-      for (const fileInfo of targetFiles) {
-        if (fs.existsSync(fileInfo.source)) {
-          fs.copyFileSync(fileInfo.source, fileInfo.target)
-          console.log(`Restored: ${fileInfo.target}`)
+      // Restore individual files. an apiKeys.json found in an older backup is not one of them:
+      // it is the key store of another install and is never copied
+      for (const fileInfo of filesToBackup(app)) {
+        const source = path.join(tempDir, fileInfo.name)
+        if (!fs.existsSync(source)) continue
+        if (fileInfo.name === kSettingsFile) {
+          restoreSettings(source, fileInfo.path)
+        } else {
+          fs.copyFileSync(source, fileInfo.path)
         }
+        console.log(`Restored: ${fileInfo.path}`)
       }
 
-      const targetFolders = foldersToBackup(app).map(folderInfo => ({
-        source: path.join(tempDir, folderInfo.name),
-        target: folderInfo.path,
-      }))
-
       // Restore folders if they exist
-      for (const folderInfo of targetFolders) {
-        const { source, target } = folderInfo
+      for (const folder of foldersToBackup(app)) {
+        const source = path.join(tempDir, folder.name)
         if (fs.existsSync(source)) {
-          fs.mkdirSync(target, { recursive: true })
-          copyDirectoryRecursive(source, target)
-          console.log(`Restored folder: ${target}`)
+          fs.mkdirSync(folder.path, { recursive: true })
+          restoreDirectory(source, folder.path, folder.name)
+          console.log(`Restored folder: ${folder.path}`)
         }
       }
 
@@ -169,7 +280,7 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
         type: 'info',
         title: t('backup.restore.restart.title'),
         message: t('backup.restore.restart.message'),
-        detail: t('backup.restore.restart.detail'),
+        detail: `${t('backup.restore.restart.keys')}\n\n${t('backup.restore.restart.detail')}`,
         buttons: [t('common.ok')]
       })
 
@@ -210,8 +321,81 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
   }
 }
 
-// Helper function to copy directory recursively
-const copyDirectoryRecursive = (src: string, dest: string) => {
+// what each JSON file of a backup must hold
+const jsonShapes: Record<string, (json: unknown) => boolean> = {
+  'settings.json': (json) => typeof json === 'object' && json !== null && !Array.isArray(json),
+  'commands.json': (json) => Array.isArray(json),
+}
+
+const validateBackup = (app: App, dir: string, t: CallableFunction): void => {
+
+  // at least one of the things we restore
+  const names = [...filesToBackup(app), ...foldersToBackup(app)].map(entry => entry.name)
+  if (!names.some(name => fs.existsSync(path.join(dir, name)))) {
+    throw new Error(t('backup.restore.error.notBackup'))
+  }
+
+  // files that are parsed at startup must be parseable
+  for (const [name, isValid] of Object.entries(jsonShapes)) {
+    const source = path.join(dir, name)
+    if (!fs.existsSync(source)) continue
+    let valid = false
+    try {
+      valid = isValid(readJson(source))
+    } catch { /* not JSON */ }
+    if (!valid) {
+      throw new Error(t('backup.restore.error.damaged', { file: name }))
+    }
+  }
+
+}
+
+// the settings of the backup, without any key it may hold (older backups, backups edited by hand),
+// with the secrets this computer already has for the same things. the key store is not touched:
+// its keys find their place again when the settings are loaded
+const restoreSettings = (source: string, target: string): void => {
+
+  const restored = readJson(source) as Record<string, any>
+
+  // settings that cannot be read have nothing to keep
+  let local: unknown = null
+  try {
+    if (fs.existsSync(target)) local = readJson(target)
+  } catch { /* empty */ }
+  if (!isPlainObject(local)) local = {}
+
+  let storedKeyNames: string[] = []
+  try {
+    storedKeyNames = loadApiKeys().map((entry) => entry.name)
+  } catch { /* empty */ }
+
+  const settings = keepLocalSettingsSecrets(restored, local as Record<string, any>, extractApiKeys(local as Record<string, any>), storedKeyNames, defaultSettings)
+  writeFileAtomicSync(target, JSON.stringify(settings, null, 2))
+
+}
+
+// same for a file of a folder that can hold a secret
+const restoreWithoutSecrets = (source: string, target: string): void => {
+
+  let restored: unknown
+  try {
+    restored = readJson(source)
+  } catch (error) {
+    console.warn(`Restore: ${path.basename(source)} is not valid JSON and is not restored:`, error instanceof Error ? error.message : error)
+    return
+  }
+
+  let local: unknown = null
+  try {
+    if (fs.existsSync(target)) local = readJson(target)
+  } catch { /* empty */ }
+
+  fs.writeFileSync(target, JSON.stringify(keepLocalSecrets(restored, local), null, 2))
+
+}
+
+// Helper function to copy a directory of the backup recursively
+const restoreDirectory = (src: string, dest: string, folder: string, prefix: string = '') => {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true })
   }
@@ -221,9 +405,12 @@ const copyDirectoryRecursive = (src: string, dest: string) => {
   for (const entry of entries) {
     const srcPath = path.join(src, entry.name)
     const destPath = path.join(dest, entry.name)
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name
 
     if (entry.isDirectory()) {
-      copyDirectoryRecursive(srcPath, destPath)
+      restoreDirectory(srcPath, destPath, folder, relative)
+    } else if (holdsSecrets(folder, relative)) {
+      restoreWithoutSecrets(srcPath, destPath)
     } else {
       fs.copyFileSync(srcPath, destPath)
     }

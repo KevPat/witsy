@@ -30,6 +30,7 @@ import CreateAgentRun from '@components/CreateAgentRun.vue'
 import useIpcListener from '@composables/ipc_listener'
 import Agent from '@models/agent'
 import Dialog from '@renderer/utils/dialog'
+import { escapeHtml } from '@renderer/utils/html'
 import A2AClient from '@services/a2a-client'
 import AgentWorkflowExecutor from '@services/agent_executor_workflow'
 import { remapAgentMcpTools } from '@services/agent_utils'
@@ -292,7 +293,7 @@ const onImportJson = async () => {
     if (warnings.length > 0) {
       await Dialog.show({
         title: t('agent.forge.import.warning.title'),
-        html: t('agent.forge.import.warning.text') + '<br><br>' + warnings.join('<br>'),
+        html: t('agent.forge.import.warning.text') + '<br><br>' + warnings.map(escapeHtml).join('<br>'),
         confirmButtonText: t('common.ok'),
       })
       await Dialog.waitUntilClosed()

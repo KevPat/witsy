@@ -393,8 +393,8 @@ onMounted(() => {
     requestAnimationFrame(initMenu)
   }
 
-  onDomEvent(document, 'keydown', onKeyUp)
-  onDomEvent(document, 'keyup', onKeyDown)
+  onDomEvent(document, 'keydown', onKeyDown)
+  onDomEvent(document, 'keyup', onKeyUp)
 })
 
 // Watch for items changes and update currentDataItems if in a submenu

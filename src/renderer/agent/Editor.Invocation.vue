@@ -40,6 +40,7 @@
               <RefreshCwIcon :size="16" />
             </button>
           </div>
+          <div class="help warning" v-if="hasLegacyWebhookToken">{{ t('agent.trigger.webhook_legacy') }}</div>
         </div>
       </template>
 
@@ -75,7 +76,7 @@ import { CopyIcon, RefreshCwIcon } from 'lucide-vue-next'
 import { computed, onMounted, PropType, ref, watch } from 'vue'
 import Scheduler from '@components/Scheduler.vue'
 import WizardStep from '@components/WizardStep.vue'
-import Agent from '@models/agent'
+import Agent, { isLegacyWebhookToken } from '@models/agent'
 import { t } from '@services/i18n'
 import { extractAllWorkflowInputs } from '@services/prompt'
 import { store } from '@services/store'
@@ -124,6 +125,9 @@ const webhookUrl = computed(() => {
   if (!props.agent.webhookToken) return ''
   return `http://localhost:${httpPort.value}${agentApiBasePath.value}/run/${props.agent.webhookToken}`
 })
+
+// a token of a former version still works but is weak: the editor replaces it on save
+const hasLegacyWebhookToken = computed(() => isLegacyWebhookToken(props.agent.webhookToken))
 
 const nextRuns = computed(() => {
   if (!props.agent.schedule) return ''
@@ -190,7 +194,7 @@ onMounted(() => {
   httpPort.value = window.api.app.getHttpPort()
 })
 
-defineExpose({ validate })
+defineExpose({ validate, webhookUrl })
 
 </script>
 
@@ -222,5 +226,10 @@ defineExpose({ validate })
     align-items: center;
     justify-content: center;
   }
+}
+
+/* the element makes it win over the color of .help in form.css */
+.form-field div.help.warning {
+  color: var(--color-warning);
 }
 </style>

@@ -6,7 +6,7 @@
         v-if="showMarpControls"
         @click="emit('switch-to-slideshow')"
         v-tooltip="{ text: t('playbooks.marp.viewSlideshow'), position: 'bottom' }"
-      >
+       :label="t('playbooks.marp.viewSlideshow')">
         <PlayIcon :size="16" />
       </ButtonIcon>
 
@@ -15,8 +15,8 @@
         v-if="showSourceToggle && !(showMarpControls)"
         @click="emit('toggle-view-mode')"
         :active="showSourceView"
-        v-tooltip="{ text: showSourceView ? 'Switch to WYSIWYG view' : 'Switch to source view', position: 'bottom' }"
-      >
+        v-tooltip="{ text: showSourceView ? t('playbooks.editor.toolbar.switchToWysiwyg') : t('playbooks.editor.toolbar.switchToSource'), position: 'bottom' }"
+       :label="showSourceView ? t('playbooks.editor.toolbar.switchToWysiwyg') : t('playbooks.editor.toolbar.switchToSource')">
         <Code2Icon v-if="showSourceView" :size="16" />
         <EyeIcon v-else :size="16" />
       </ButtonIcon>
@@ -28,8 +28,8 @@
         @click="emit('toggle-outline')"
         :active="isOutlineOpen"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Document outline', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.documentOutline'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.documentOutline')">
         <ListTreeIcon :size="16" />
       </ButtonIcon>
 
@@ -39,22 +39,22 @@
       <ButtonIcon
         @click="editor.chain().focus().undo().run()"
         :disabled="showSourceView || !editor.can().undo()"
-        v-tooltip="{ text: 'Undo (Cmd+Z)', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.undo'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.undo')">
         <UndoIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().redo().run()"
         :disabled="showSourceView || !editor.can().redo()"
-        v-tooltip="{ text: 'Redo (Cmd+Shift+Z)', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.redo'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.redo')">
         <RedoIcon :size="16" />
       </ButtonIcon>
 
       <div class="toolbar-separator"></div>
 
       <!-- Heading menu -->
-      <ContextMenuTrigger class="menu" position="below" :disabled="showSourceView">
+      <ContextMenuTrigger :label="t('playbooks.editor.toolbar.headingMenu')" class="menu" position="below" :disabled="showSourceView">
         <template #trigger>
           <HeadingIcon :size="16" />
           <ChevronDownIcon :size="16" />
@@ -79,7 +79,7 @@
       </ContextMenuTrigger>
 
       <!-- List menu -->
-      <ContextMenuTrigger class="menu" position="below" :disabled="showSourceView">
+      <ContextMenuTrigger :label="t('playbooks.editor.toolbar.listMenu')" class="menu" position="below" :disabled="showSourceView">
         <template #trigger>
           <ListIcon :size="16" />
           <ChevronDownIcon :size="16" />
@@ -102,8 +102,8 @@
         @click="editor.chain().focus().toggleCodeBlock().run()"
         :active="editor.isActive('codeBlock')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Code block', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.codeBlock'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.codeBlock')">
         <SquareCodeIcon :size="16" />
       </ButtonIcon>
 
@@ -112,8 +112,8 @@
         v-if="showTableControls"
         @click="editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Insert table (3x3)', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.insertTable'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.insertTable')">
         <Grid2x2Icon :size="16" />
       </ButtonIcon>
 
@@ -124,56 +124,56 @@
         @click="editor.chain().focus().toggleBold().run()"
         :active="editor.isActive('bold')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Bold (Cmd+B)', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.bold'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.bold')">
         <BoldIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().toggleItalic().run()"
         :active="editor.isActive('italic')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Italic (Cmd+I)', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.italic'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.italic')">
         <ItalicIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().toggleUnderline().run()"
         :active="editor.isActive('underline')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Underline', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.underline'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.underline')">
         <UnderlineIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().toggleStrike().run()"
         :active="editor.isActive('strike')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Strikethrough', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.strikethrough'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.strikethrough')">
         <StrikethroughIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().toggleCode().run()"
         :active="editor.isActive('code')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Inline code', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.inlineCode'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.inlineCode')">
         <CodeXmlIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="emit('set-link')"
         :active="editor.isActive('link')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Insert/edit link', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.insertLink'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.insertLink')">
         <LinkIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="editor.chain().focus().toggleHighlight().run()"
         :active="editor.isActive('highlight')"
         :disabled="showSourceView"
-        v-tooltip="{ text: 'Highlight', position: 'bottom' }"
-      >
+        v-tooltip="{ text: t('playbooks.editor.toolbar.highlight'), position: 'bottom' }"
+       :label="t('playbooks.editor.toolbar.highlight')">
         <HighlighterIcon :size="16" />
       </ButtonIcon>
 
@@ -185,32 +185,32 @@
           @click="editor.chain().focus().setTextAlign('left').run()"
           :active="editor.isActive({ textAlign: 'left' })"
           :disabled="showSourceView"
-          v-tooltip="{ text: 'Align left', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.alignLeft'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.alignLeft')">
           <AlignLeftIcon :size="16" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().setTextAlign('center').run()"
           :active="editor.isActive({ textAlign: 'center' })"
           :disabled="showSourceView"
-          v-tooltip="{ text: 'Align center', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.alignCenter'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.alignCenter')">
           <AlignCenterIcon :size="16" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().setTextAlign('right').run()"
           :active="editor.isActive({ textAlign: 'right' })"
           :disabled="showSourceView"
-          v-tooltip="{ text: 'Align right', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.alignRight'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.alignRight')">
           <AlignRightIcon :size="16" />
         </ButtonIcon>
         <ButtonIcon
           @click="editor.chain().focus().setTextAlign('justify').run()"
           :active="editor.isActive({ textAlign: 'justify' })"
           :disabled="showSourceView"
-          v-tooltip="{ text: 'Justify', position: 'bottom' }"
-        >
+          v-tooltip="{ text: t('playbooks.editor.toolbar.alignJustify'), position: 'bottom' }"
+         :label="t('playbooks.editor.toolbar.alignJustify')">
           <AlignJustifyIcon :size="16" />
         </ButtonIcon>
       </template>
@@ -223,7 +223,7 @@
           :id="exportButtonId"
           @click="onExportClick"
           v-tooltip="{ text: exportTooltip, position: 'bottom' }"
-        >
+         :label="exportTooltip">
           <DownloadIcon :size="16" />
         </ButtonIcon>
         <ContextMenuPlus

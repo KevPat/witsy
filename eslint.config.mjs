@@ -48,6 +48,11 @@ export default [
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      // SDK 1.32 uses wildcard package exports that eslint-import-resolver-
+      // typescript cannot resolve yet. TypeScript still validates these imports.
+      'import/no-unresolved': ['error', {
+        ignore: ['^@modelcontextprotocol/sdk/']
+      }],
     },
   },
   // Vue-specific configuration

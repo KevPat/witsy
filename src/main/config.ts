@@ -4,10 +4,12 @@ import Store from 'electron-store'
 import fs from 'fs'
 import path from 'path'
 import { Configuration } from 'types/config'
-import { anyDict } from 'types/index'
+import { anyDict, ApiKeyStorageStatus } from 'types/index'
 import defaultSettings from '@root/defaults/settings.json'
 import { favoriteMockEngine } from '../renderer/services/llms/llm'
 import Monitor from './monitor'
+import { writeFileAtomicSync } from './atomic'
+import { hasUnprotectedMcpSecrets, protectMcpSecrets, revealMcpSecrets } from './mcp_secrets'
 
 type ApiKeyEntry = {
   name: string
@@ -19,7 +21,12 @@ export const setSaveConfigInTests = () => {
   saveConfigInTest = true
 }
 
+const isPlainObject = (value: unknown): boolean => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 let errorLoadingConfig = false
+let lastBackedUpData: string|null = null
 let onSettingsChange: CallableFunction = () => {}
 let cachedAppConfig: Configuration = undefined
 
@@ -92,13 +99,16 @@ export const loadSettings = (app: App): Configuration => {
   let jsonConfig = null 
   try {
     jsonConfig = JSON.parse(data)
+    if (!isPlainObject(jsonConfig)) {
+      throw new Error('Settings data is not a JSON object')
+    }
   } catch (error) {
 
     // log
     console.log('Error parsing settings data', error)
 
     // save a backup before starting from scratch
-    if (firstLoad) {
+    if (firstLoad || data !== lastBackedUpData) {
       const now = new Date()
       const timestamp = now.getFullYear() + 
                ('0' + (now.getMonth() + 1)).slice(-2) + 
@@ -107,8 +117,13 @@ export const loadSettings = (app: App): Configuration => {
                ('0' + now.getMinutes()).slice(-2) + 
                ('0' + now.getSeconds()).slice(-2)
       const backupFile = settingsFile.replace('.json', `.${timestamp}.json`)
-      console.log('Saving backup of settings to', backupFile)
-      fs.writeFileSync(backupFile, data)
+      try {
+        console.log('Saving backup of settings to', backupFile)
+        fs.writeFileSync(backupFile, data)
+        lastBackedUpData = data
+      } catch (backupError) {
+        console.log('Error saving backup of settings', backupError)
+      }
     }
 
     // start with defaults
@@ -117,22 +132,33 @@ export const loadSettings = (app: App): Configuration => {
 
   }
 
+  // mcp secrets are encrypted in place: a file that has them in clear text is saved again
+  if (hasUnprotectedMcpSecrets(jsonConfig)) save = true
+  revealMcpSecrets(jsonConfig)
+
   // safe keys handling (default is true even when we have no config...)
-  if (!('general' in jsonConfig) || !('safeKeys' in jsonConfig.general) || jsonConfig.general.safeKeys !== false) {
-    let apiKeys = extractApiKeys(jsonConfig)
-    if (apiKeys.length > 0) {
-      saveApiKeys(apiKeys)
-      save = true
-    } else {
-      apiKeys = loadApiKeys()
-      injectApiKeys(jsonConfig, apiKeys)
-    }
+  // stored keys are injected wherever the settings file has no value of its own:
+  // a key found in the file (typed by hand, or left there because it could not be encrypted)
+  // must never make the other stored keys disappear
+  const safeKeys = !isPlainObject(jsonConfig.general) || jsonConfig.general.safeKeys !== false
+  const storedKeys = loadApiKeys()
+  const plainKeys = extractApiKeys(jsonConfig).filter((entry) => entry.apiKey.length > 0)
+  const plainNames = new Set(plainKeys.map((entry) => entry.name))
+  injectApiKeys(jsonConfig, storedKeys.filter((entry) => !plainNames.has(entry.name)))
+  if (safeKeys ? plainKeys.length > 0 : storedKeys.length > 0) {
+    // saving moves the keys to where they belong: the key store or the settings file
+    save = true
   }
 
   // now load engine models
-  if (jsonConfig.engines) {
+  if (isPlainObject(jsonConfig.engines)) {
     
     for (const engine of Object.keys(jsonConfig.engines)) {
+
+      // wrong shape: buildConfig restores the default
+      if (!isPlainObject(jsonConfig.engines[engine])) {
+        continue
+      }
 
       // initialize models
       if (!jsonConfig.engines[engine].models) {
@@ -204,16 +230,15 @@ export const saveSettings = (app: App, config: Configuration, always: boolean = 
     // make a copy
     const clone: Configuration = JSON.parse(JSON.stringify(config))
 
-    // save api keys separately
+    // save api keys separately: only the keys that made it to the key store are removed from the settings file
     if (config.general.safeKeys) {
       const apiKeys = extractApiKeys(clone)
       if (apiKeys.length > 0) {
-        if (saveApiKeys(apiKeys)) {
-          nullifyApiKeys(clone, apiKeys)
+        const result = storeApiKeys(apiKeys)
+        if (result) {
+          nullifyApiKeys(clone, apiKeys.filter((entry) => !result.failed.includes(entry)))
         }
       }
-    } else {
-      deleteApiKeys()
     }
 
     // save engines configuration separately
@@ -232,7 +257,7 @@ export const saveSettings = (app: App, config: Configuration, always: boolean = 
 
       // now save it
       const engineConfigFile = engineConfigFilePath(app, engine)
-      fs.writeFileSync(engineConfigFile, JSON.stringify(engineConfig, null, 2))
+      writeFileAtomicSync(engineConfigFile, JSON.stringify(engineConfig, null, 2))
 
       // clear clone
       delete clone.engines[engine].models
@@ -240,9 +265,17 @@ export const saveSettings = (app: App, config: Configuration, always: boolean = 
 
     }
 
+    // mcp secrets are encrypted in place, once the api keys have left the clone
+    if (config.general.safeKeys) protectMcpSecrets(clone)
+
     // save
     const settingsFile = settingsFilePath(app)
-    fs.writeFileSync(settingsFile, JSON.stringify(clone, null, 2))
+    writeFileAtomicSync(settingsFile, JSON.stringify(clone, null, 2))
+
+    // the keys leave the key store only once they are safely in the settings file
+    if (!config.general.safeKeys) {
+      deleteApiKeys()
+    }
 
   } catch (error) {
     console.log('Error saving settings data', error)
@@ -267,10 +300,48 @@ const mergeConfig = (defaults: anyDict, overrides: anyDict): Configuration => {
   return result
 }
 
+// valid JSON of the wrong shape (a section set to null, to a text, to a list...) would throw
+// at launch, before any window can report it: such a section is replaced by its default
+const restoreInvalidSections = (config: anyDict, defaults: anyDict): void => {
+
+  const restore = (parent: anyDict, parentDefaults: anyDict, key: string, label: string) => {
+    const expected = parentDefaults?.[key]
+    const valid = Array.isArray(expected) ? Array.isArray(parent[key]) : isPlainObject(parent[key])
+    if (valid) return
+    console.log(`Invalid settings section ${label}: restoring defaults`)
+    if (expected === undefined) {
+      delete parent[key]
+    } else {
+      parent[key] = JSON.parse(JSON.stringify(expected))
+    }
+  }
+
+  // top-level sections
+  for (const key of Object.keys(defaults)) {
+    if (isPlainObject(defaults[key])) {
+      restore(config, defaults, key, key)
+    }
+  }
+
+  // engines: also the ones that are not in the defaults (custom engines)
+  for (const engine of Object.keys(config.engines)) {
+    restore(config.engines, defaults.engines, engine, `engines.${engine}`)
+  }
+
+  // nested sections the code relies on
+  restore(config.appearance, defaults.appearance, 'chat', 'appearance.chat')
+  restore(config.plugins, defaults.plugins, 'mcp', 'plugins.mcp')
+  restore(config.llm, defaults.llm, 'defaults', 'llm.defaults')
+
+}
+
 const buildConfig = (defaults: anyDict, overrides: anyDict): Configuration => {
 
   // 1st merge
   const config = mergeConfig(defaults, overrides)
+
+  // then make sure the code below (and the application) can rely on the shape
+  restoreInvalidSections(config, defaults)
 
   // backwards compatibility
   if ('bypassProxy' in config.general) {
@@ -413,6 +484,56 @@ const nullifyDefaults = (settings: anyDict) => {
   }
 }
 
+// names of the stored keys that could not be decrypted (keychain locked or denied, keyring not ready,
+// profile copied from another machine...) and of the keys that could not be stored: for reporting
+const undecryptableKeys = new Set<string>()
+const notStoredKeys = new Set<string>()
+let weakKeyStorageWarned = false
+
+// on Linux without a keyring (gnome-libsecret, kwallet) Electron falls back to the basic_text backend:
+// the keys are encrypted with a hard-coded password, which is obfuscation, not protection
+export const isKeyStorageWeak = (): boolean => {
+  try {
+    return process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text'
+  } catch {
+    return false
+  }
+}
+
+const warnIfKeyStorageIsWeak = (): void => {
+  if (weakKeyStorageWarned || !isKeyStorageWeak()) return
+  weakKeyStorageWarned = true
+  console.warn('API keys are not protected: no system keyring (gnome-libsecret, kwallet) is available, so they are stored with the basic_text backend, which only obfuscates them. Install and unlock a keyring to have them encrypted.')
+}
+
+export const getApiKeyStorageStatus = (): ApiKeyStorageStatus => {
+  let encryptionAvailable = false
+  try {
+    encryptionAvailable = safeStorage.isEncryptionAvailable()
+  } catch { /* reported as not available */ }
+  return {
+    encryptionAvailable,
+    weak: isKeyStorageWeak(),
+    undecryptable: [...undecryptableKeys].sort(),
+    notStored: [...notStoredKeys].sort(),
+  }
+}
+
+// a decryption error is never a reason to delete the key: the ciphertext stays where it is and is tried again later
+const decryptStoredKey = (name: string, buffer: string): string|null => {
+  try {
+    const apiKey = safeStorage.decryptString(Buffer.from(buffer, 'latin1'))
+    undecryptableKeys.delete(name)
+    return apiKey
+  } catch (error) {
+    if (!undecryptableKeys.has(name)) {
+      console.warn(`Error decrypting API key for ${name}: the stored key is kept and will be tried again:`, error?.message ?? error)
+      undecryptableKeys.add(name)
+    }
+    return null
+  }
+}
+
 export const loadApiKeys = (): ApiKeyEntry[] => {
 
   // check
@@ -421,17 +542,15 @@ export const loadApiKeys = (): ApiKeyEntry[] => {
   }
 
   try {
-    const credentials = Object.entries(safeStore.store)
-    return credentials.reduce((apiKeys, [name, buffer]) => {
-      try {
-        const apiKey = safeStorage.decryptString(Buffer.from(buffer, 'latin1'))
-        return [...apiKeys, { name, apiKey }]
-      } catch (error) {
-        console.log(`Error decrypting API key for ${name}:`, error)
-        safeStore.delete(name)
-        return apiKeys
+    warnIfKeyStorageIsWeak()
+    const apiKeys: ApiKeyEntry[] = []
+    for (const [name, buffer] of Object.entries(safeStore.store)) {
+      const apiKey = decryptStoredKey(name, buffer)
+      if (apiKey !== null) {
+        apiKeys.push({ name, apiKey })
       }
-    }, [] as ApiKeyEntry[]);
+    }
+    return apiKeys
   } catch (error) {
     console.log('Error loading API keys:', error)
     return []
@@ -447,7 +566,7 @@ export const deleteApiKeys = (): boolean => {
       return false
     }
 
-    // First, delete all existing apiKey entries
+    // delete the entries we can read: one that cannot be decrypted is not in the settings either, so it is kept
     try {
       const credentials = loadApiKeys()
       for (const credential of credentials) {
@@ -469,40 +588,70 @@ export const deleteApiKeys = (): boolean => {
 
 }
 
-export const saveApiKeys = (apiKeys: ApiKeyEntry[]): boolean => {
+// makes the key store match the given keys and tells which ones could not be stored.
+// nothing is deleted before the new values are safely written, and a failure for
+// one key leaves the others (and the previous value of that key) untouched.
+// returns null when the key store cannot be used at all.
+const storeApiKeys = (apiKeys: ApiKeyEntry[]): { stored: ApiKeyEntry[], failed: ApiKeyEntry[] }|null => {
 
-  try {
+  // check
+  if (!safeStorage.isEncryptionAvailable()) {
+    return null
+  }
 
-    // check
-    if (!safeStorage.isEncryptionAvailable()) {
-      return false
-    }
+  warnIfKeyStorageIsWeak()
 
-    // First, delete all existing apiKey entries
-    if (!deleteApiKeys()) {
-      return false
-    }
-    
-    // Save new entries
-    for (const entry of apiKeys) {
-      if (entry.apiKey.length > 0) {
-        try {
-          const buffer = safeStorage.encryptString(entry.apiKey);
-          safeStore.set(entry.name, buffer.toString('latin1'));
-        } catch (error) {
-          console.log(`Error saving API key for ${entry.name}:`, error)
-        }
+  const existing: Record<string, string> = { ...safeStore.store }
+  const stored: ApiKeyEntry[] = []
+  const failed: ApiKeyEntry[] = []
+
+  // save new and modified entries
+  for (const entry of apiKeys) {
+    if (entry.apiKey.length === 0) continue
+    try {
+      const unchanged = entry.name in existing && !undecryptableKeys.has(entry.name) && decryptStoredKey(entry.name, existing[entry.name]) === entry.apiKey
+      if (!unchanged) {
+        const buffer = safeStorage.encryptString(entry.apiKey);
+        safeStore.set(entry.name, buffer.toString('latin1'));
       }
+      undecryptableKeys.delete(entry.name)
+      notStoredKeys.delete(entry.name)
+      stored.push(entry)
+    } catch (error) {
+      console.log(`Error saving API key for ${entry.name}: it stays in the settings file:`, error?.message ?? error)
+      notStoredKeys.add(entry.name)
+      failed.push(entry)
     }
+  }
 
-    // done
-    return true
+  // delete the entries the user removed. an entry that cannot be decrypted is missing from
+  // the configuration for that reason, not because it was removed: its ciphertext is kept
+  const names = new Set(apiKeys.filter((entry) => entry.apiKey.length > 0).map((entry) => entry.name))
+  for (const name of Object.keys(existing)) {
+    if (names.has(name) || undecryptableKeys.has(name)) continue
+    if (decryptStoredKey(name, existing[name]) === null) continue
+    try {
+      safeStore.delete(name)
+      notStoredKeys.delete(name)
+    } catch (error) {
+      console.log(`Error deleting API key for ${name}:`, error?.message ?? error)
+    }
+  }
 
+  // done
+  return { stored, failed }
+
+}
+
+// true only when every key is in the key store
+export const saveApiKeys = (apiKeys: ApiKeyEntry[]): boolean => {
+  try {
+    const result = storeApiKeys(apiKeys)
+    return result !== null && result.failed.length === 0
   } catch (error) {
     console.log('Error saving API keys:', error)
     return false
   }
-
 }
 
 export const extractApiKeys = (config: anyDict, path: string = ''): ApiKeyEntry[] => {
@@ -547,7 +696,7 @@ export const injectApiKeys = (config: Configuration, apiKeys: ApiKeyEntry[]): vo
       
       // Navigate to the parent object
       for (let i = 0; i < pathParts.length - 1; i++) {
-        if (!current[pathParts[i]]) {
+        if (!isPlainObject(current[pathParts[i]])) {
           current[pathParts[i]] = {}
         }
         current = current[pathParts[i]]

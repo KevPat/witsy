@@ -28,6 +28,12 @@ vi.mock('@main/windows/index', () => ({
   emitIpcEventToAll: vi.fn(),
 }))
 
+// settings are written through the atomic helper: route it to the mocked fs
+vi.mock('@main/atomic', async () => {
+  const fs = (await import('fs')).default
+  return { writeFileAtomicSync: (file: string, data: string) => fs.writeFileSync(file, data) }
+})
+
 // We'll mock fs for controlled testing
 vi.mock('fs', async (importOriginal) => {
   const actual: typeof fs = await importOriginal() as typeof fs

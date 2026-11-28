@@ -4,7 +4,7 @@
     <div class="sp-sidebar">
       <header>
         <div class="title">{{ t('docRepo.list.title') }}</div>
-        <ButtonIcon class="config" v-tooltip="{ text: t('docRepo.list.tooltips.config'), position: 'bottom' }" @click="onConfig">
+        <ButtonIcon class="config" v-tooltip="{ text: t('docRepo.list.tooltips.config'), position: 'bottom' }" @click="onConfig" :label="t('docRepo.list.tooltips.config')">
           <Settings2Icon />
         </ButtonIcon>
       </header>
@@ -20,21 +20,21 @@
         <div class="title-section">
           <div class="title-display">
             <span class="title">{{ selectedRepo?.name }}</span>
-            <ButtonIcon class="edit-title" v-tooltip="{ text: t('common.rename'), position: 'bottom' }" @click="onRenameRepo(selectedRepo)">
+            <ButtonIcon class="edit-title" v-tooltip="{ text: t('common.rename'), position: 'bottom' }" @click="onRenameRepo(selectedRepo)" :label="t('common.rename')">
               <PencilIcon />
             </ButtonIcon>
           </div>
         </div>
-        <ButtonIcon class="search" v-tooltip="{ text: t('docRepo.search.title'), position: 'bottom-left' }" @click="onSearch">
+        <ButtonIcon class="search" v-tooltip="{ text: t('docRepo.search.title'), position: 'bottom-left' }" @click="onSearch" :label="t('docRepo.search.title')">
           <SearchIcon />
         </ButtonIcon>
-        <ButtonIcon v-if="scanning">
+        <ButtonIcon :label="t('docRepo.view.tooltips.scanForChanges')" v-if="scanning">
           <SpinningIcon :spinning="true" />
         </ButtonIcon>
-        <ButtonIcon class="scan" v-tooltip="{ text: t('docRepo.view.tooltips.scanForChanges'), position: 'bottom-left' }" @click="onScanForChanges" v-else>
+        <ButtonIcon class="scan" v-tooltip="{ text: t('docRepo.view.tooltips.scanForChanges'), position: 'bottom-left' }" @click="onScanForChanges" v-else :label="t('docRepo.view.tooltips.scanForChanges')">
           <FolderSyncIcon />
         </ButtonIcon>
-        <ButtonIcon class="delete" v-tooltip="{ text: t('docRepo.list.tooltips.delete'), position: 'bottom-left' }" @click="onDeleteRepo(selectedRepo)">
+        <ButtonIcon class="delete" v-tooltip="{ text: t('docRepo.list.tooltips.delete'), position: 'bottom-left' }" @click="onDeleteRepo(selectedRepo)" :label="t('docRepo.list.tooltips.delete')">
           <Trash2 />
         </ButtonIcon>
       </header>
@@ -271,11 +271,13 @@ const onSearch = async () => {
         
       if (result.metadata?.title) {
         html += '<div class="result-title">'
-        if (result.metadata.url) {
-          html += `<a href="${result.metadata?.url || '#'}" target="_blank" rel="noopener noreferrer">`
+        // only web pages are links: local documents cannot be opened from a link
+        const url = /^https?:\/\//i.test(result.metadata.url ?? '') ? result.metadata.url : null
+        if (url) {
+          html += `<a href="${escapeHtml(url).replace(/"/g, '&quot;')}" target="_blank" rel="noopener noreferrer">`
         }
         html += escapeHtml(result.metadata.title)
-        if (result.metadata.url) {
+        if (url) {
           html += `</a>`
         }
         html += `</div>`

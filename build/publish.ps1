@@ -8,7 +8,9 @@ Write-Host "Detected architecture: $architecture"
 $packageJsonContent = Get-Content -Raw -Path "package.json"
 $version = ($packageJsonContent | ConvertFrom-Json).version
 Write-Host "Version: $version"
+. "$PSScriptRoot\windows_artifacts.ps1"
+$artifacts = Get-WitsyWindowsArtifactPaths -Version $version -Architecture $architecture
 
 # Upload
-gh release upload v$version "out\make\squirrel.windows\$architecture\RELEASES" "out\make\squirrel.windows\$architecture\Witsy-$version-win32-$architecture Setup.exe" "out\make\squirrel.windows\$architecture\witsy-$version-win32-$architecture-full.nupkg"
-gh release upload v$version "out\make\zip\win32/$architecture\Witsy-$version-win32-$architecture.zip"
+gh release upload "v$version" $artifacts.Releases $artifacts.Installer $artifacts.Nupkg
+gh release upload "v$version" $artifacts.Zip

@@ -112,3 +112,13 @@ test('Embed Google', async () => {
   expect(embedder.google.models.embedContent).toHaveBeenCalled()
   expect(embeddings).toStrictEqual([[111, 108, 108, 101, 104]])
 })
+
+test('Create unsupported engine', async () => {
+  await expect(Embedder.init(app, defaultSettings, 'unknown', 'model')).rejects.toThrow('Unsupported embedding engine: unknown')
+})
+
+test('Embed without a client', async () => {
+  // callers read embeddings[0]: a null result would fail far from the cause
+  const embedder = new Embedder(defaultSettings, 'unknown', 'model')
+  await expect(embedder.embed(['hello'])).rejects.toThrow('Unsupported embedding engine: unknown')
+})

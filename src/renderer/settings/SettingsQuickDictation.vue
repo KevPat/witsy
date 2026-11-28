@@ -6,6 +6,7 @@
       <InputShortcut v-model="shortcut" :accept-native="areNativeShortcutsSupported" @change="onChange" />
       <div class="help" v-html="nativeShortcutsHint" v-if="areNativeShortcutsSupported"></div>
       <div class="help warning" v-html="t('settings.voice.quickDictation.linuxPermissionWarning')" v-if="isLinux && areNativeShortcutsSupported"></div>
+      <div class="help warning native-unsupported" v-if="!areNativeShortcutsSupported">{{ t('settings.voice.quickDictation.nativeShortcutsUnsupported') }}</div>
     </div>
     
     <div class="form-field" v-if="areNativeShortcutsSupported">

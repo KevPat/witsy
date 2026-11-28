@@ -6,7 +6,7 @@ import { LlmChunk, PluginTool } from 'multi-llm-ts';
 import * as IPC from './ipc_consts';
 import { Size } from './main/computer';
 import Agent from './models/agent';
-import { Command, ComputerAction, Expert, ExpertCategory, ExternalApp, LocalSearchResponse, MainWindowMode, NativeShortcut, NetworkRequest, OpenSettingsPayload, anyDict, strDict } from './types';
+import { ApiKeyStorageStatus, Command, ComputerAction, Expert, ExpertCategory, ExternalApp, LocalSearchResponse, MainWindowMode, NativeShortcut, NetworkRequest, OpenSettingsPayload, anyDict, strDict } from './types';
 import { AgentRun, RunningAgentRuns } from './types/agents';
 import { Application, RunCommandParams } from './types/automation';
 import { Configuration } from './types/config';
@@ -99,6 +99,7 @@ contextBridge.exposeInMainWorld(
     },
     file: {
       normalize: (filePath: string): string => { return ipcRenderer.sendSync(IPC.FILE.NORMALIZE_PATH, filePath) },
+      resolveAllowedPath: (targetPath: string, allowedPaths: string[]): string | null => { return ipcRenderer.sendSync(IPC.FILE.RESOLVE_ALLOWED_PATH, targetPath, allowedPaths) },
       exists: (filePath: string): boolean => { return ipcRenderer.sendSync(IPC.FILE.FILE_EXISTS, filePath) },
       stats: (filePath: string): FileStats | null => { return ipcRenderer.sendSync(IPC.FILE.FILE_STATS, filePath) },
       read: (filepath: string): FileContents => { return ipcRenderer.sendSync(IPC.FILE.READ_FILE, filepath) },
@@ -140,6 +141,7 @@ contextBridge.exposeInMainWorld(
       getI18nMessages(): anyDict { return ipcRenderer.sendSync(IPC.CONFIG.GET_I18N_MESSAGES) },
       load: (): Configuration => { return JSON.parse(ipcRenderer.sendSync(IPC.CONFIG.LOAD)) },
       save: (data: Configuration) => { return ipcRenderer.send(IPC.CONFIG.SAVE, JSON.stringify(data)) },
+      keyStorageStatus: (): ApiKeyStorageStatus => { return ipcRenderer.sendSync(IPC.CONFIG.GET_KEY_STORAGE_STATUS) },
     },
     history: {
       load: (workspaceId: string): History => { return JSON.parse(ipcRenderer.sendSync(IPC.HISTORY.LOAD, workspaceId)) },
@@ -229,6 +231,7 @@ contextBridge.exposeInMainWorld(
     },
     markdown: {
       render: (markdown: string): string => { return ipcRenderer.sendSync(IPC.MARKDOWN.RENDER, markdown) },
+      resolveMediaUrl: (url: string): string | null => { return ipcRenderer.sendSync(IPC.MARKDOWN.RESOLVE_MEDIA_URL, url) },
     },
     interpreter: {
       python: (code: string): Promise<any> => { return ipcRenderer.invoke(IPC.INTERPRETER.PYTHON_RUN, code) },
@@ -353,6 +356,9 @@ contextBridge.exposeInMainWorld(
       install: (): Promise<{ success: boolean, message: string }> => { return ipcRenderer.invoke(IPC.CLI.INSTALL) },
     },
     webview: {
+      initSession: (partition: string): Promise<void> => {
+        return ipcRenderer.invoke(IPC.WEBVIEW.INIT_SESSION, partition)
+      },
       setLinkBehavior: (webviewId: number, isExternal: boolean): Promise<void> => {
         return ipcRenderer.invoke(IPC.WEBVIEW.SET_LINK_BEHAVIOR, webviewId, isExternal)
       },

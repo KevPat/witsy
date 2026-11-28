@@ -120,6 +120,27 @@ test('Save agent', () => {
   expect(result).toBe(true)
 })
 
+test('Save agent never replaces a webhook token', () => {
+
+  // this is the save of run bookkeeping, imports, migrations... a legacy token
+  // is only replaced by the agent editor, where the user gets the new url
+  const legacy = { uuid: 'agent-legacy', name: 'Legacy', description: '', steps: [] as any[], webhookToken: 'abc12345' }
+  expect(main.saveAgent(app, 'test-workspace', legacy)).toBe(true)
+  let saved = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string)
+  expect(saved.webhookToken).toBe('abc12345')
+
+  const strong = { ...legacy, uuid: 'agent-strong', webhookToken: '0123456789abcdef0123456789abcdef' }
+  expect(main.saveAgent(app, 'test-workspace', strong)).toBe(true)
+  saved = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[1][1] as string)
+  expect(saved.webhookToken).toBe('0123456789abcdef0123456789abcdef')
+
+  const none = { ...legacy, uuid: 'agent-none', webhookToken: null as string|null }
+  expect(main.saveAgent(app, 'test-workspace', none)).toBe(true)
+  saved = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[2][1] as string)
+  expect(saved.webhookToken).toBeNull()
+
+})
+
 test('Delete agent', () => {
   const result = main.deleteAgent(app, 'test-workspace', 'agent1')
   expect(fs.unlinkSync).toHaveBeenCalledWith('tests/fixtures/workspaces/test-workspace/agents/agent1.json')
