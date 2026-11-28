@@ -126,7 +126,14 @@ test('the release build starts and answers on its local API', async () => {
     record(suite, { releaseHealth: health.slice(0, 200) })
     expect(health).toBeTruthy()
     // the window loaded: the main log says so and no exception was logged
-    const log = fs.readFileSync(path.join(home, 'logs', 'main.log'), 'utf8')
+    // electron-log writes under WITSY_HOME on Windows and Linux, in ~/Library/Logs/<app> on macOS
+    const startedAt = Date.now() - 120000
+    const macLogs = path.join(os.homedir(), 'Library', 'Logs')
+    const candidates = [path.join(home, 'logs', 'main.log'), ...(process.platform === 'darwin' && fs.existsSync(macLogs) ? fs.readdirSync(macLogs).map((d) => path.join(macLogs, d, 'main.log')) : [])]
+    const logFile = candidates.find((f) => fs.existsSync(f) && fs.statSync(f).mtimeMs >= startedAt)
+    record(suite, { releaseLogFile: logFile ?? null })
+    expect(logFile, `no fresh main.log in ${candidates.join(', ')}`).toBeTruthy()
+    const log = fs.readFileSync(logFile!, 'utf8')
     expect(log).not.toMatch(/Uncaught Exception|Cannot find module/)
   } finally {
     child.kill()

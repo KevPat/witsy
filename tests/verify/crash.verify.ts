@@ -42,7 +42,9 @@ test('the main window reloads after its renderer crashes, and works again', asyn
   const after = await waitFor(async () => { const s = await state(); return s.loads >= 1 && !s.crashed ? s : null }, 30000)
   record(suite, { afterFirstCrash: after })
   expect(after.destroyed).toBe(false)
-  expect(after.gone).toEqual(['crashed'])
+  // forcefullyCrashRenderer is reported as 'crashed' on Windows and Linux, 'killed' on macOS
+  expect(after.gone).toHaveLength(1)
+  expect(['crashed', 'killed']).toContain(after.gone[0])
   // Playwright gives up on a page whose renderer crashed: look at the new one from the main process
   const rendered = await waitFor(() => launched.app.evaluate(() => (globalThis as any).__verifyMain.webContents.executeJavaScript(
     `!!document.querySelector('.main-window .prompt') && typeof window.api?.app?.getVersion === 'function'`)), 30000)
