@@ -211,6 +211,59 @@ describe('RunInfo.vue', () => {
     expect(wrapper.find('.output-section').exists()).toBe(true)
   })
 
+  describe('links in the output', () => {
+
+    const mountOutput = async (content: string) => {
+      const wrapper = mount(RunInfo, {
+        attachTo: document.body,
+        props: {
+          agent: createMockAgent(),
+          run: createMockRun({ messages: [new Message('system', 'System'), new Message('user', 'User'), new Message('assistant', content)] }),
+        },
+      })
+      await nextTick()
+      return wrapper
+    }
+
+    // the click is cancelled once it has gone through the page so that jsdom does not try to navigate
+    const click = (link: Element) => {
+      const cancel = (event: Event) => event.preventDefault()
+      window.addEventListener('click', cancel)
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      window.removeEventListener('click', cancel)
+    }
+
+    test('open in a new window', async () => {
+      const wrapper = await mountOutput('Read the [report](https://example.com/report) or <mailto:someone@example.com>.')
+      const links = wrapper.findAll('.output-content a[href]')
+      expect(links.map((link) => link.attributes('href'))).toEqual(['https://example.com/report', 'mailto:someone@example.com'])
+      for (const link of links) {
+        expect(link.attributes('target')).toBe('_blank')
+        expect(link.attributes('rel')).toBe('noopener noreferrer')
+      }
+      wrapper.unmount()
+    })
+
+    test('open in a new window whatever rendered them', async () => {
+      const wrapper = await mountOutput('Read the [**full** report](https://example.com/report).')
+      const link = wrapper.find('.output-content a[href]').element
+      link.removeAttribute('target')
+      link.removeAttribute('rel')
+      click(link.querySelector('strong'))
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+      wrapper.unmount()
+    })
+
+    test('are not links when they do not go to the web', async () => {
+      const wrapper = await mountOutput('Open [the report](file:///C:/Windows/System32/calc.exe), [the share](smb://evil.example/share) or [settings](#/settings).')
+      expect(wrapper.find('.output-content a').exists()).toBe(false)
+      expect(wrapper.find('.output-content').text()).toContain('[the report](file:///C:/Windows/System32/calc.exe)')
+      wrapper.unmount()
+    })
+
+  })
+
   test('hides output section for non-success runs', async () => {
     const wrapper = mount(RunInfo, {
       props: {

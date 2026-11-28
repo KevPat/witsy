@@ -9,12 +9,24 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { execSync } from 'child_process';
+import { cliRuntime, runAsNodeFuse, writeCliRuntime } from './build/cli_runtime';
 import prePackage from './build/prepackage';
 import { purgeAutolib, purgeLibnut, purgeOnnxRuntime } from './build/purge_native';
 import { signDarwinBinaries, signWindowsBinaries } from './build/sign_binaries';
 
 import dotenv from 'dotenv';
 dotenv.config();
+
+// The platform being packaged: the Makefile and the workflows pass it (`-p darwin`, `-p win32`,
+// `-p linux`), and without it Forge packages for the host.
+const targetPlatform = ((): string => {
+  const args = process.argv;
+  const index = args.findIndex((arg) => arg === '-p' || arg === '--platform');
+  if (index !== -1 && args[index + 1]) return args[index + 1];
+  const inline = args.find((arg) => arg.startsWith('--platform='));
+  return inline ? inline.slice('--platform='.length) : process.platform;
+})();
+const isDarwinTarget = ['darwin', 'mas'].includes(targetPlatform);
 
 // osx special configuration
 let osxPackagerConfig = {}
@@ -146,11 +158,19 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
-      [FuseV1Options.RunAsNode]: true,
+      // With this fuse, ELECTRON_RUN_AS_NODE=1 turns the app binary into a Node.js runtime for any local
+      // process. On by default so the CLI can run without Node.js; off when the build is made with
+      // WITSY_CLI_RUNTIME=node (see build/cli_runtime.ts).
+      [FuseV1Options.RunAsNode]: runAsNodeFuse(targetPlatform),
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-      [FuseV1Options.EnableNodeCliInspectArguments]: true,
-      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
+      // Playwright drives the e2e build (TEST=1) through --inspect; release builds must not accept it
+      [FuseV1Options.EnableNodeCliInspectArguments]: !!process.env.TEST,
+      // The packager writes the hash of app.asar in Info.plist (macOS) and Electron refuses to start
+      // when the file was changed. On for macOS, where a modified asar runs with the permissions
+      // granted to the signed app. Still off for Windows (the check failed there, see 7ab83b00) and
+      // without effect on Linux.
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: isDarwinTarget,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
@@ -158,6 +178,8 @@ const config: ForgeConfig = {
     prePackage: async (_forgeConfig, platform, arch) => {
       // Build CLI before packaging
       execSync('npm run build:cli', { stdio: 'inherit' })
+      // and tell its launcher which Node.js this build runs it on (the RunAsNode fuse follows the same rule)
+      writeCliRuntime('dist/cli', cliRuntime(platform))
       prePackage(platform, arch)
     },
     

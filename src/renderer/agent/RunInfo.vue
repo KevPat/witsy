@@ -86,7 +86,7 @@
         <CheckCircle2Icon />
         <span>{{ t('agent.run.output') }}</span>
       </div>
-      <div class="output-content messages openai" :class="'size' + store.config.appearance.chat.fontSize">
+      <div class="output-content messages openai" :class="'size' + store.config.appearance.chat.fontSize" @click.capture="onOutputClick">
         <div class="message assistant">
           <div class="body">
             <MessageItemBody :message="lastStepOutput" tool-calls-display="none" />
@@ -138,6 +138,16 @@ defineEmits(['delete'])
 const isDebug = computed(() => {
   return window.api.debug.isDebug
 })
+
+// the output is written by a model: whatever rendered a link in it, a click must go
+// to the window-open handler of the main process and never replace the page of the app
+const onOutputClick = (event: MouseEvent) => {
+  const link = (event.target as Element | null)?.closest?.('a[href]')
+  if (link) {
+    link.setAttribute('target', '_blank')
+    link.setAttribute('rel', 'noopener noreferrer')
+  }
+}
 
 // Get engine/model from second message (first assistant response)
 const runEngine = computed(() => {

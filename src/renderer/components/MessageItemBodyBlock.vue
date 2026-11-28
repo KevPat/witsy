@@ -14,6 +14,7 @@
 <script setup lang="ts">
 
 import Dialog from '@renderer/utils/dialog'
+import { escapeHtml } from '@renderer/utils/html'
 import { SearchState } from '@screens/Chat.vue'
 import { t } from '@services/i18n'
 import { Block } from '@services/message_block_parser'
@@ -80,9 +81,13 @@ const mdRender = (content: string) => {
 
   // replace <error>...</error> with a span with class error
   html = html.replace(/&lt;error&gt;([ \t]*?)&lt;\/error&gt;/g, '')
-  html = html.replace(/&lt;error&gt;([\s\S]*?)&lt;\/error&gt;/g, `
-    <span class="error-icon-placeholder" data-error="$1"></span>
-  `)
+  // what is between the tags is rendered markdown: its text goes in the attribute, not its markup
+  html = html.replace(/&lt;error&gt;([\s\S]*?)&lt;\/error&gt;/g, (_, error: string) => {
+    const text = new DOMParser().parseFromString(error, 'text/html').body.textContent ?? ''
+    return `
+    <span class="error-icon-placeholder" data-error="${escapeHtml(text)}"></span>
+  `
+  })
 
   // highlight search
   if (searchState?.filter.value) {

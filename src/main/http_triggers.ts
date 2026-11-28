@@ -5,13 +5,14 @@ import Commander from './automations/commander'
 import ReadAloud from './automations/readaloud'
 import Dictation from './automations/dictation'
 import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendError, sendJson } from './http_utils'
+import { isHttpEndpointsEnabled, parseParams, requirePost, sendHandlerError, sendJson } from './http_utils'
 import { putCachedText } from './utils'
 import * as window from './window'
 
 /**
  * Install HTTP trigger endpoints on the server
  * These endpoints allow external applications to trigger Witsy commands via HTTP
+ * Every endpoint that changes state requires POST
  */
 export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
@@ -28,73 +29,80 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
   // Window commands
   httpServer.register('/api/chat', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       window.openMainWindow({ queryParams: { view: 'chat', ...(params.text ? { text: params.text } : {}) } })
       sendJson(res, { success: true, action: 'chat' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/scratchpad', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl) // Parse for consistency even if not used
       window.openMainWindow({ queryParams: { view: 'scratchpad' } })
       sendJson(res, { success: true, action: 'scratchpad' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/settings', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openSettingsWindow()
       sendJson(res, { success: true, action: 'settings' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/studio', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openDesignStudioWindow()
       sendJson(res, { success: true, action: 'studio' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/forge', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openAgentForgeWindow()
       sendJson(res, { success: true, action: 'forge' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/realtime', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openRealtimeChatWindow()
       sendJson(res, { success: true, action: 'realtime' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   // Automation commands
   httpServer.register('/api/prompt', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       if (params.text) {
@@ -105,12 +113,13 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       }
       sendJson(res, { success: true, action: 'prompt' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/command', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       if (params.text) {
@@ -123,29 +132,31 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       }
       sendJson(res, { success: true, action: 'command' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/transcribe', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       await Dictation.initDictation()
       sendJson(res, { success: true, action: 'transcribe' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
   httpServer.register('/api/readaloud', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       await ReadAloud.read(app)
       sendJson(res, { success: true, action: 'readaloud' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 

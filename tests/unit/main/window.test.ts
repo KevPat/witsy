@@ -1,6 +1,7 @@
 
-import { BrowserWindow, Menu } from 'electron'
-import { beforeAll, beforeEach, expect, Mock, test, vi } from 'vitest'
+import { BrowserWindow, Menu, shell } from 'electron'
+import { pathToFileURL } from 'node:url'
+import { afterEach, beforeAll, beforeEach, expect, Mock, test, vi } from 'vitest'
 import * as window from '@main/window'
 import { store } from '@services/store'
 import { Application } from '@/types/automation'
@@ -126,6 +127,8 @@ vi.mock('@main/utils', async () => {
 const expectCreateWebPreferences = (callParams: any) => {
   expect(callParams.webPreferences.nodeIntegration).toBe(false)
   expect(callParams.webPreferences.contextIsolation).toBe(true)
+  // these tests run with the dev server (MAIN_WINDOW_VITE_DEV_SERVER_URL above): an http page.
+  // The packaged app has web security on: see 'The packaged app window has web security on'
   expect(callParams.webPreferences.webSecurity).toBe(false)
   expect(callParams.webPreferences.defaultEncoding).toBe('UTF-8')
   expect(callParams.webPreferences.sandbox).toBe(true)
@@ -143,6 +146,36 @@ beforeEach(async () => {
   //try { await window.closeWaitingPanel() } catch { /* empty */ }
   vi.clearAllMocks()
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+const kUrlsNotForTheSystem = [
+  'file:///C:/Windows/System32/calc.exe',
+  'file:///etc/passwd',
+  'file://evil.example/share/invoice.exe',
+  'smb://evil.example/share',
+  'ms-msdt:/id PCWDiagnostic /skip force',
+  'search-ms:query=invoice&crumb=location:\\\\evil.example\\share',
+  'vscode://vscode.git/clone?url=https://evil.example/repo.git',
+  'javascript:alert(1)',
+  'data:text/html,<script>alert(1)</script>',
+  'not a url',
+  '',
+]
+
+const lastWebContentsListener = (name: string): (...args: any[]) => void => {
+  const calls = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.filter((call) => call[0] === name)
+  expect(calls.length).toBeGreaterThan(0)
+  return calls[calls.length - 1][1]
+}
+
+const navigate = (url: string) => {
+  const event = { preventDefault: vi.fn(), url, isMainFrame: true, isSameDocument: false }
+  lastWebContentsListener('will-navigate')(event, url)
+  return event.preventDefault.mock.calls.length > 0 ? 'cancelled' : 'allowed'
+}
 
 test('All windows are null', async () => {
   expect(window.mainWindow).toBeNull()
@@ -355,6 +388,180 @@ test('Open Debug window', async () => {
   expect(BrowserWindow.prototype.loadURL).toHaveBeenLastCalledWith('http://localhost:3000/#/debug')
   const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
   expectCreateWebPreferences(callParams)
+})
+
+test('Links that open a new window only reach the system as web or mail links', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+  const handler = (BrowserWindow.prototype.webContents.setWindowOpenHandler as Mock).mock.calls[0][0]
+
+  for (const url of ['https://example.com/docs?q=1#top', 'http://example.com/', 'HTTPS://EXAMPLE.COM/', 'mailto:someone@example.com?subject=Hello']) {
+    expect(handler({ url })).toEqual({ action: 'deny' })
+    expect(shell.openExternal).toHaveBeenLastCalledWith(url)
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(4)
+
+  for (const url of kUrlsNotForTheSystem) {
+    expect(handler({ url })).toEqual({ action: 'deny' })
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(4)
+})
+
+test('The app window only navigates to the dev server', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+
+  expect(navigate('http://localhost:3000/')).toBe('allowed')
+  expect(navigate('http://localhost:3000/?view=settings#/chat')).toBe('allowed')
+  expect(shell.openExternal).not.toHaveBeenCalled()
+
+  const elsewhere = ['https://evil.example/', 'http://localhost:3001/', 'https://localhost:3000/', 'http://localhost.evil.example:3000/', 'http://localhost:3000@evil.example/', 'mailto:someone@example.com']
+  for (const url of elsewhere) {
+    expect(navigate(url), url).toBe('cancelled')
+    expect(shell.openExternal).toHaveBeenLastCalledWith(url)
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(elsewhere.length)
+
+  for (const url of kUrlsNotForTheSystem) {
+    expect(navigate(url), url).toBe('cancelled')
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(elsewhere.length)
+})
+
+test('The packaged app window has web security on', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined)
+  window.createWindow()
+  const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
+  expect(callParams.webPreferences.webSecurity).toBe(true)
+  // nothing gives it back what web security takes away
+  expect(callParams.webPreferences.allowRunningInsecureContent).toBeUndefined()
+  expect(callParams.webPreferences.nodeIntegration).toBe(false)
+  expect(callParams.webPreferences.contextIsolation).toBe(true)
+  expect(callParams.webPreferences.sandbox).toBe(true)
+})
+
+test('The dev server window has web security off', async () => {
+  // an http page: with web security it could not call the model providers nor show a local image
+  window.createWindow()
+  const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
+  expect(callParams.webPreferences.webSecurity).toBe(false)
+})
+
+test('The packaged app window only navigates to its own page', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined)
+  window.createWindow({ hash: '/chat', queryParams: { view: 'chat' } })
+  expect(BrowserWindow.prototype.loadURL).not.toHaveBeenCalled()
+  const [pagePath, options] = (BrowserWindow.prototype.loadFile as Mock).mock.calls[0]
+  expect(pagePath).toMatch(/renderer[\\/]vite[\\/]index\.html$/)
+  expect(options).toEqual({ hash: '/chat', query: { view: 'chat' } })
+  const pageUrl = pathToFileURL(pagePath).href
+
+  expect(navigate(pageUrl)).toBe('allowed')
+  expect(navigate(`${pageUrl}?view=chat#/chat`)).toBe('allowed')
+  expect(navigate(`${pageUrl}#/settings`)).toBe('allowed')
+  expect(navigate(pageUrl.replace('/vite/', '/v%69te/'))).toBe('allowed')
+
+  for (const url of [
+    pageUrl.replace('index.html', 'other.html'),
+    pageUrl.replace('index.html', ''),
+    pageUrl.replace('file:///', 'file://evil.example/'),
+    `${pageUrl}/../../../../etc/passwd`,
+    `file:///tmp/index.html`,
+    ...kUrlsNotForTheSystem,
+  ]) {
+    expect(navigate(url), url).toBe('cancelled')
+  }
+  expect(shell.openExternal).not.toHaveBeenCalled()
+
+  expect(navigate('http://localhost:3000/')).toBe('cancelled')
+  expect(shell.openExternal).toHaveBeenLastCalledWith('http://localhost:3000/')
+  expect(navigate('https://evil.example/')).toBe('cancelled')
+  expect(shell.openExternal).toHaveBeenLastCalledWith('https://evil.example/')
+  expect(shell.openExternal).toHaveBeenCalledTimes(2)
+})
+
+test('Every app window is guarded', async () => {
+  window.openMainWindow()
+  window.createWindow({ hash: '/computer' })
+  window.createWindow({ hash: '/readaloud', keepHidden: true })
+  const windows = (BrowserWindow as unknown as Mock).mock.calls.length
+  expect(windows).toBe(3)
+  const listeners = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.map((call) => call[0])
+  expect(listeners.filter((name) => name === 'will-navigate')).toHaveLength(windows)
+  expect(BrowserWindow.prototype.webContents.setWindowOpenHandler).toHaveBeenCalledTimes(windows)
+})
+
+const attachWebview = (webPreferences: Record<string, unknown>, params: Record<string, string>) => {
+  const event = { preventDefault: vi.fn() }
+  lastWebContentsListener('will-attach-webview')(event, webPreferences, params)
+  return event.preventDefault.mock.calls.length > 0 ? 'refused' : 'attached'
+}
+
+test('A webview is attached as an isolated web page', async () => {
+  window.createWindow({ hash: '/chat' })
+
+  // what WebAppViewer asks for
+  const webPreferences: Record<string, unknown> = { partition: 'persist:webapp_Mail', disablePopups: false, plugins: undefined, zoomFactor: 1 }
+  const params = { src: 'https://mail.example.com/inbox', partition: 'persist:webapp_Mail', allowpopups: 'true', useragent: 'Mozilla/5.0' }
+  expect(attachWebview(webPreferences, params)).toBe('attached')
+  expect(webPreferences).toEqual({
+    partition: 'persist:webapp_Mail', disablePopups: false, plugins: undefined, zoomFactor: 1,
+    nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true,
+  })
+  expect(params).toEqual({ src: 'https://mail.example.com/inbox', partition: 'persist:webapp_Mail', allowpopups: 'true', useragent: 'Mozilla/5.0' })
+
+  expect(attachWebview({}, { src: 'http://localhost:8080/app' })).toBe('attached')
+})
+
+test('A webview never gets a preload script, node or an unsandboxed page', async () => {
+  window.createWindow({ hash: '/chat' })
+
+  // what a tag written by something else than the app could ask for
+  const webPreferences: Record<string, unknown> = {
+    preload: '/tmp/evil.js', preloadURL: 'file:///tmp/evil.js',
+    nodeIntegration: true, nodeIntegrationInSubFrames: true, contextIsolation: false, sandbox: false, webSecurity: false,
+    partition: 'persist:webapp_Mail',
+  }
+  expect(attachWebview(webPreferences, { src: 'https://evil.example/', preload: 'file:///tmp/evil.js', nodeintegration: 'true', disablewebsecurity: 'true' })).toBe('attached')
+  expect(webPreferences).toEqual({
+    nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true,
+    partition: 'persist:webapp_Mail',
+  })
+})
+
+test('A webview only starts on a web page', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+
+  for (const src of [
+    'file:///etc/passwd',
+    'file:///app/renderer/vite/index.html#/chat',
+    'http://localhost:3000.evil.example/',
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'about:blank',
+    'chrome://gpu',
+    'smb://evil.example/share',
+    'example.com',
+    '',
+    undefined,
+  ]) {
+    const webPreferences: Record<string, unknown> = { preload: '/tmp/evil.js', nodeIntegration: true }
+    expect(attachWebview(webPreferences, { src }), String(src)).toBe('refused')
+    expect(webPreferences.preload).toBeUndefined()
+    expect(webPreferences.nodeIntegration).toBe(false)
+  }
+  expect(attachWebview({}, undefined)).toBe('refused')
+})
+
+test('Every app window isolates its webviews', async () => {
+  window.openMainWindow()
+  window.createWindow({ hash: '/computer' })
+  const listeners = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.map((call) => call[0])
+  expect(listeners.filter((name) => name === 'will-attach-webview')).toHaveLength(2)
 })
 
 test('Utilities', async () => {

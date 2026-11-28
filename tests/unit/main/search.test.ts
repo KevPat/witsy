@@ -1,6 +1,6 @@
 
-import { vi, expect, test } from 'vitest'
-import LocalSearch from '@main/search'
+import { vi, expect, test, describe, afterEach } from 'vitest'
+import LocalSearch, { fetchPublicUrl } from '@main/search'
 
 // Mock fetch for content fetching
 // @ts-expect-error mock
@@ -40,11 +40,11 @@ vi.mock('electron', async () => {
           return 'title'
         } else {
           return [
-            { title: 'title1', url: 'url1' },
-            { title: 'title2', url: 'url2' },
-            { title: 'title3', url: 'url2' },
-            { title: 'title4', url: 'url4' },
-            { title: 'title5', url: 'url5' },
+            { title: 'title1', url: 'https://example.com/url1' },
+            { title: 'title2', url: 'https://example.com/url2' },
+            { title: 'title3', url: 'https://example.com/url2' },
+            { title: 'title4', url: 'https://example.com/url4' },
+            { title: 'title5', url: 'https://example.com/url5' },
           ]
         }
       }),
@@ -71,9 +71,9 @@ test('search', async () => {
   const search = new LocalSearch()
   const res = await search.search('witsy', 3)
   expect(res).toEqual({ results: [
-    { title: 'title1', url: 'url1', html: '<html><body>test</body></html>' },
-    { title: 'title2', url: 'url2', html: '<html><body>test</body></html>' },
-    { title: 'title4', url: 'url4', html: '<html><body>test</body></html>' },
+    { title: 'title1', url: 'https://example.com/url1', html: '<html><body>test</body></html>' },
+    { title: 'title2', url: 'https://example.com/url2', html: '<html><body>test</body></html>' },
+    { title: 'title4', url: 'https://example.com/url4', html: '<html><body>test</body></html>' },
   ]})
 
 })
@@ -84,9 +84,9 @@ test('search with abortSignal - basic completion', async () => {
 
   const res = await search.search('witsy', 3, false, abortController.signal)
   expect(res).toEqual({ results: [
-    { title: 'title1', url: 'url1', html: '<html><body>test</body></html>' },
-    { title: 'title2', url: 'url2', html: '<html><body>test</body></html>' },
-    { title: 'title4', url: 'url4', html: '<html><body>test</body></html>' },
+    { title: 'title1', url: 'https://example.com/url1', html: '<html><body>test</body></html>' },
+    { title: 'title2', url: 'https://example.com/url2', html: '<html><body>test</body></html>' },
+    { title: 'title4', url: 'https://example.com/url4', html: '<html><body>test</body></html>' },
   ]})
 })
 
@@ -200,4 +200,118 @@ test('search handles fetch error', async () => {
 
   // Results should be empty since all fetches failed
   expect(res.results).toHaveLength(0)
+})
+
+describe('result pages come from the web', () => {
+
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  const page = (status = 200, location?: string) => ({
+    ok: status < 300,
+    status,
+    headers: { get: (name: string) => name === 'location' ? (location ?? null) : 'text/html' },
+    text: async () => '<html><body>page</body></html>',
+  })
+
+  test.each([
+    'http://localhost:8090/api/conversations',
+    'http://127.0.0.1:8090/',
+    'http://2130706433/',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://10.0.0.1/',
+    'http://192.168.1.1/admin',
+    'http://[::1]/',
+    'http://[fd00::1]/',
+    'http://printer.local/',
+    'https://user:secret@example.com/',
+    'file:///etc/passwd',
+    'file:///C:/Windows/win.ini',
+    'ftp://example.com/',
+    '/search?q=relative',
+    '',
+  ])('does not request %s', async (url) => {
+    global.fetch = vi.fn() as any
+    await expect(fetchPublicUrl(url)).rejects.toThrow()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('requests a public page without following redirects on its own', async () => {
+    global.fetch = vi.fn(async () => page()) as any
+    const signal = new AbortController().signal
+
+    const response = await fetchPublicUrl('https://example.com/page', signal)
+
+    expect(await response.text()).toContain('page')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledWith('https://example.com/page', { signal, redirect: 'manual' })
+  })
+
+  test('follows a redirect to another public page, relative or not', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(page(301, '/moved'))
+      .mockResolvedValueOnce(page(302, 'https://www.example.org/final'))
+      .mockResolvedValueOnce(page()) as any
+
+    const response = await fetchPublicUrl('https://example.com/page')
+
+    expect(response.status).toBe(200)
+    expect(vi.mocked(global.fetch).mock.calls.map((call) => call[0])).toEqual([
+      'https://example.com/page',
+      'https://example.com/moved',
+      'https://www.example.org/final',
+    ])
+  })
+
+  test.each([
+    'http://127.0.0.1:8090/api/conversations',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://localhost/',
+    'file:///etc/passwd',
+    '//192.168.1.1/admin',
+  ])('does not follow a redirect to %s', async (location) => {
+    global.fetch = vi.fn(async () => page(302, location)) as any
+
+    await expect(fetchPublicUrl('https://example.com/page')).rejects.toThrow()
+
+    // the private address was never requested
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledWith('https://example.com/page', expect.anything())
+  })
+
+  test('gives up on a redirect loop', async () => {
+    global.fetch = vi.fn(async () => page(302, 'https://example.com/again')) as any
+
+    await expect(fetchPublicUrl('https://example.com/page')).rejects.toThrow('Too many redirects')
+    expect(global.fetch).toHaveBeenCalledTimes(6)
+  })
+
+  test('a redirect answer without location is returned as it is', async () => {
+    global.fetch = vi.fn(async () => page(304)) as any
+    expect((await fetchPublicUrl('https://example.com/page')).status).toBe(304)
+  })
+
+  test('search skips the results it must not download', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { BrowserWindow } = await import('electron')
+    const executeJavaScript = vi.fn(async () => [
+      { title: 'local api', url: 'http://localhost:8090/api/conversations' },
+      { title: 'metadata', url: 'http://169.254.169.254/latest/meta-data/' },
+      { title: 'file', url: 'file:///etc/passwd' },
+      { title: 'public', url: 'https://example.com/public' },
+    ])
+    const windows: any[] = vi.mocked(BrowserWindow).mock.instances
+    for (const win of windows) win.webContents.executeJavaScript = executeJavaScript
+    global.fetch = vi.fn(async () => page()) as any
+
+    const res = await new LocalSearch().search('witsy', 3)
+
+    expect(executeJavaScript).toHaveBeenCalled()
+    expect(res.results).toEqual([{ title: 'public', url: 'https://example.com/public', html: '<html><body>page</body></html>' }])
+    expect(vi.mocked(global.fetch).mock.calls.map((call) => call[0])).toEqual(['https://example.com/public'])
+  })
+
 })

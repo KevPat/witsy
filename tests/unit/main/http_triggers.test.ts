@@ -55,6 +55,17 @@ vi.mock('@main/automations/dictation', () => ({
   },
 }))
 
+// what a local client sends: a POST, with an optional body
+const postRequest = (body?: string, contentType = 'application/json') => {
+  const req: any = { method: 'POST', headers: body === undefined ? {} : { 'content-type': contentType } }
+  req.on = vi.fn((event: string, callback: (chunk?: Buffer) => void) => {
+    if (event === 'data' && body !== undefined) callback(Buffer.from(body))
+    if (event === 'end') callback()
+    return req
+  })
+  return req as IncomingMessage
+}
+
 describe('HTTP Triggers', () => {
   let httpServer: HttpServer
   let mockRegister: any
@@ -124,7 +135,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/chat'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -143,7 +154,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/scratchpad'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -188,7 +199,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/settings'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -207,7 +218,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/studio'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -226,7 +237,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/forge'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -245,7 +256,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/realtime'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -264,7 +275,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/prompt'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -283,7 +294,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/command'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -302,7 +313,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/transcribe'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -321,7 +332,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/readaloud'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -340,7 +351,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/chat'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -360,7 +371,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/prompt'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -379,7 +390,7 @@ describe('HTTP Triggers', () => {
       (call: any) => call[0] === '/api/prompt'
     )?.[1]
 
-    const mockReq = {} as IncomingMessage
+    const mockReq = postRequest()
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn()
@@ -389,5 +400,67 @@ describe('HTTP Triggers', () => {
 
     expect(PromptAnywhere.open).toHaveBeenCalled()
     expect(window.openPromptAnywhere).not.toHaveBeenCalled()
+  })
+
+  describe('state-changing endpoints require POST', () => {
+    const kTriggers = ['/api/chat', '/api/scratchpad', '/api/settings', '/api/studio', '/api/forge', '/api/realtime', '/api/prompt', '/api/command', '/api/transcribe', '/api/readaloud']
+
+    const sideEffects = () => [
+      window.openMainWindow, window.openSettingsWindow, window.openDesignStudioWindow, window.openAgentForgeWindow,
+      window.openRealtimeChatWindow, window.openPromptAnywhere, window.openCommandPicker,
+      PromptAnywhere.open, Commander.initCommand, Dictation.initDictation, ReadAloud.read,
+    ]
+
+    const call = async (route: string, req: IncomingMessage, query = '') => {
+      const handler = mockRegister.mock.calls.find((call: any) => call[0] === route)?.[1]
+      const res: any = { writeHead: vi.fn(), end: vi.fn() }
+      await handler(req, res, new URL(`http://localhost:8090${route}${query}`))
+      return res
+    }
+
+    beforeEach(() => {
+      installHttpTriggers(httpServer, mockApp)
+    })
+
+    test('the list covers every registered endpoint but the health check', () => {
+      const registered = mockRegister.mock.calls.map((call: any) => call[0]).filter((route: string) => route !== '/api/health')
+      expect(registered.sort()).toEqual([...kTriggers].sort())
+    })
+
+    test.each(kTriggers.flatMap((route) => ['GET', 'HEAD', 'PUT', 'DELETE'].map((method) => [method, route])))('%s %s answers 405 and does nothing', async (method, route) => {
+      const res = await call(route, { method, headers: {}, on: vi.fn() } as any, '?text=injected')
+      expect(res.writeHead).toHaveBeenCalledWith(405, { 'Content-Type': 'application/json', 'Allow': 'POST' })
+      expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({ success: false, error: expect.stringContaining('POST') })
+      for (const sideEffect of sideEffects()) expect(sideEffect).not.toHaveBeenCalled()
+    })
+
+    test.each(kTriggers)('POST %s triggers the action', async (route) => {
+      const res = await call(route, postRequest())
+      expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+      expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({ success: true, action: route.split('/').pop() })
+      expect(sideEffects().filter((sideEffect) => vi.mocked(sideEffect).mock.calls.length > 0)).toHaveLength(1)
+    })
+
+    test('POST reads its parameters from a JSON body', async () => {
+      await call('/api/chat', postRequest(JSON.stringify({ text: 'Hello World' })))
+      expect(window.openMainWindow).toHaveBeenCalledWith({ queryParams: { view: 'chat', text: 'Hello World' } })
+    })
+
+    test.each(['text/plain', 'text/plain;application/json', 'application/x-www-form-urlencoded'])('POST with a %s body answers 415 and does nothing', async (contentType) => {
+      const res = await call('/api/chat', postRequest('{"text":"injected"}', contentType))
+      expect(res.writeHead).toHaveBeenCalledWith(415, { 'Content-Type': 'application/json' })
+      for (const sideEffect of sideEffects()) expect(sideEffect).not.toHaveBeenCalled()
+    })
+
+    test('GET /api/health stays available', async () => {
+      const res = await call('/api/health', { method: 'GET', headers: {} } as any)
+      expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+    })
+
+    test.each(kTriggers)('GET %s answers 404 when endpoints are disabled', async (route) => {
+      vi.mocked(config.loadSettings).mockReturnValueOnce({ general: { enableHttpEndpoints: false } } as any)
+      const res = await call(route, { method: 'GET', headers: {}, on: vi.fn() } as any)
+      expect(res.writeHead).toHaveBeenCalledWith(404)
+    })
   })
 })

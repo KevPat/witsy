@@ -132,48 +132,18 @@ export default class extends Plugin {
 
   mapToAllowedPaths(targetPath: string): string|null {
 
-    // if no allowed paths are configured, return null
-    if (!this.config.allowedPaths || this.config.allowedPaths.length === 0) {
+    if (!Array.isArray(this.config.allowedPaths) || this.config.allowedPaths.length === 0) {
       return null
     }
 
-    // try to find the target path in the allowed paths
-    const normalizedTarget = window.api.file.normalize(targetPath)
-    for (const allowedPath of this.config.allowedPaths) {
-      const normalizedAllowed = window.api.file.normalize(allowedPath)
-      if (normalizedTarget.startsWith(normalizedAllowed)) {
-        return normalizedTarget
-      }
-    }
+    // containment depends on the real file system (symlinks, case, `..`): the main process decides.
+    // the allowed paths are copied because a reactive array cannot be sent over ipc
+    return window.api.file.resolveAllowedPath(targetPath, [...this.config.allowedPaths]) ?? null
+  }
 
-    // else let's try to see if the target path is a subdirectory of any allowed path
-    for (const allowedPath of this.config.allowedPaths) {
-      const normalizedAllowed = window.api.file.normalize(allowedPath)
-      const path = window.api.file.normalize(`${normalizedAllowed}/./${targetPath}`)
-      if (path.startsWith(normalizedAllowed) && window.api.file.exists(path)) {
-        return path
-      }
-    }
-
-    // else we can handle this case:
-    // - allowed = /Documents
-    // - target = ./Documents/folder/test.txt
-    const dirSep = window.api.platform === 'win32' ? '\\' : '/'
-    const path = targetPath.startsWith('./') ? targetPath.slice(2) : targetPath
-    const targetParts = path.split(dirSep)
-    for (const allowedPath of this.config.allowedPaths) {
-      const normalizedAllowed = window.api.file.normalize(allowedPath)
-      const allowedParts = normalizedAllowed.split(dirSep)
-      if (allowedParts.length && allowedParts[allowedParts.length - 1] === targetParts[0]) {
-        const targetPath = allowedParts.slice(0, -1).join(dirSep) + dirSep + path
-        if (targetPath.startsWith(normalizedAllowed) && window.api.file.exists(targetPath)) {
-          return targetPath
-        }
-      }
-    }
-
-    // if we reach here, it means the path is not allowed
-    return null
+  // a folder that is allowed can hold links that lead out of it
+  private isAllowed(itemPath: string): boolean {
+    return this.mapToAllowedPaths(itemPath) !== null
   }
 
   async execute(context: PluginExecutionContext, parameters: FileSystemArgs): Promise<anyDict> {
@@ -211,7 +181,11 @@ export default class extends Plugin {
 
   private async listDirectory(dirPath: string, includeHidden: boolean): Promise<ListDirectoryResponse> {
     try {
-      return await window.api.file.listDirectory(dirPath, includeHidden)
+      const response = await window.api.file.listDirectory(dirPath, includeHidden)
+      if (response.success && Array.isArray(response.items)) {
+        response.items = response.items.filter((item) => this.isAllowed(item.fullPath))
+      }
+      return response
     } catch (error) {
       return {
         success: false,
@@ -311,13 +285,14 @@ export default class extends Plugin {
       const limit = maxResults || 10
 
       // Call the file API (now async)
-      const files = await window.api.file.findFiles(basePath, pattern, limit)
+      const found = await window.api.file.findFiles(basePath, pattern, limit)
+      const files = found.filter((file) => this.isAllowed(file))
 
       return {
         success: true,
         files,
         count: files.length,
-        truncated: files.length >= limit
+        truncated: found.length >= limit
       }
     } catch (error) {
       return {

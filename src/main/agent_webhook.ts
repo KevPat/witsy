@@ -1,9 +1,10 @@
 import { App } from 'electron'
 import { v7 as uuidv7 } from 'uuid'
+import { isLegacyWebhookToken } from '@models/agent'
 import { AgentExecutor, findAgentByWebhookToken } from './agent_utils'
 import { getAgentRun } from './agents'
-import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendError, sendJson } from './http_utils'
+import { HttpServer, RouteOptions } from './http_server'
+import { isHttpEndpointsEnabled, parseParams, sendError, sendHandlerError, sendJson } from './http_utils'
 import Mcp from './mcp'
 import DocumentRepository from './rag/docrepo'
 
@@ -11,6 +12,9 @@ import DocumentRepository from './rag/docrepo'
  * Base path for agent API endpoints
  */
 export const AGENT_API_BASE_PATH = '/api/agent'
+
+// the token in the url authenticates the caller, which may be a remote service behind a tunnel
+const kWebhookRouteOptions: RouteOptions = { allowAnyHost: true, allowOrigin: true, allowCrossSite: true }
 
 /**
  * Install agent webhook endpoints on the HTTP server
@@ -34,6 +38,12 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
 
       const { agent, workspaceId } = result
 
+      // a token of a former version still runs its agent so that callers keep working,
+      // but it is weak: say so, with neither the token nor the path in the log
+      if (isLegacyWebhookToken(token)) {
+        console.warn(`[http] Agent webhook: agent ${agent.uuid} was called with an old weak token. Save the agent in the agent editor to replace it with a strong one, then update the callers with the new URL`)
+      }
+
       // Parse parameters from request
       const params = await parseParams(req, parsedUrl)
 
@@ -45,6 +55,7 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
 
       // Run agent
       const runId = uuidv7()
+      console.log(`[http] Agent webhook: running agent ${agent.uuid} (run ${runId})`)
       const executor = new AgentExecutor(app, mcp, docRepo)
       executor.runAgent(workspaceId, agent, 'webhook', values, runId)
 
@@ -56,9 +67,9 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
 
     } catch (error) {
       console.error('[http] Error in agent webhook:', error)
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
-  })
+  }, kWebhookRouteOptions)
 
   // Status endpoint: GET /api/agent/status/:token/:runId
   httpServer.register(`${AGENT_API_BASE_PATH}/status/*`, async (req, res, parsedUrl) => {
@@ -113,7 +124,7 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
       console.error('[http] Error in agent status:', error)
       sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
     }
-  })
+  }, kWebhookRouteOptions)
 
   console.log('[http] Agent webhook installed')
 }

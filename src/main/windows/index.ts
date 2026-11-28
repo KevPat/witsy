@@ -2,7 +2,7 @@
 import { strDict } from 'types/index';
 import { IpcSignal } from '../../ipc_consts';
 import { CreateWindowOpts, ReleaseFocusOpts } from 'types/window';
-import { app, BrowserWindow, BrowserWindowConstructorOptions, Menu, nativeTheme, Display, screen, shell } from 'electron';
+import { app, BrowserWindow, BrowserWindowConstructorOptions, Menu, nativeTheme, Display, screen } from 'electron';
 import { promptAnywhereWindow } from './anywhere';
 import { commandPicker } from './commands';
 import { dictationWindow } from './dictation';
@@ -11,11 +11,15 @@ import { wait } from '../utils';
 import MacosAutomator from '@main/automations/macos';
 import WindowsAutomator from '@main/automations/windows';
 import interceptNetwork from '../network';
+import { openExternalUrl } from '../external_links';
+import { isolateWebviews } from '../webview';
+import { isPyodideSandboxWindow } from '../pyodide';
 import * as config from '../config';
 import Store from 'electron-store';
 import process from 'node:process';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 // store
 export let electronStore: Store | null = null
@@ -119,6 +123,27 @@ export const ensureOnCurrentScreen = (window: BrowserWindow) => {
 
 }
 
+const appPagePath = (): string => path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+
+// the page of the app: the dev server, or the packaged index.html whatever its query and hash
+const isAppPageUrl = (url: string): boolean => {
+  try {
+    const target = new URL(url);
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      return target.origin === new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin;
+    }
+    if (target.protocol !== 'file:' || target.host !== '') {
+      return false;
+    }
+    // compared as paths: the url Chromium reports is not escaped the way node escapes it
+    const targetPath = path.normalize(fileURLToPath(target));
+    const pagePath = path.normalize(appPagePath());
+    return process.platform === 'win32' ? targetPath.toLowerCase() === pagePath.toLowerCase() : targetPath === pagePath;
+  } catch {
+    return false;
+  }
+}
+
 // create window
 export const createWindow = (opts: CreateWindowOpts = {}) => {
 
@@ -130,7 +155,12 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: false,
+      // on for the packaged app, whose page is a file: Electron lets such a page reach other origins
+      // (the model providers, local images drawn in a canvas) whatever this setting is. What it takes
+      // away is what a frame that is not the app had with it off: an html artifact could read local
+      // files. The page of the dev server is an http page: with web security it could neither call
+      // the providers nor show a local image. See src/main/web_security.ts.
+      webSecurity: !MAIN_WINDOW_VITE_DEV_SERVER_URL,
       defaultEncoding: 'UTF-8',
       devTools: process.env.DEBUG ? true : false,
       sandbox: true,
@@ -193,9 +223,21 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
 
   // open links in default browser
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalUrl(url);
     return { action: 'deny' };
   });
+
+  // this window has the preload api: it only ever shows the page of the app.
+  // a link, a form or a script that goes elsewhere is sent to the default browser
+  window.webContents.on('will-navigate', (event) => {
+    if (!isAppPageUrl(event.url)) {
+      event.preventDefault();
+      openExternalUrl(event.url);
+    }
+  });
+
+  // web apps are shown in <webview> tags: those never get what this window has
+  isolateWebviews(window.webContents);
 
   // to log network traffic
   interceptNetwork(window);
@@ -246,9 +288,9 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
     }
 
     // load file
-    console.log('[window] Loading file:', path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+    console.log('[window] Loading file:', appPagePath());
     console.log('[window] With options:', opts.hash||'', queryParams);
-    window.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), { hash: opts.hash||'', query: queryParams });
+    window.loadFile(appPagePath(), { hash: opts.hash||'', query: queryParams });
   
   }
 
@@ -375,7 +417,8 @@ export const persistentWindows = (): BrowserWindow[] => {
 export const areAllWindowsClosed = () => {
   let windows = BrowserWindow.getAllWindows();
   const permanentWindows = persistentWindows();
-  windows = windows.filter(window => !permanentWindows.includes(window));
+  // the hidden window python runs in is not a window of the app
+  windows = windows.filter(window => !permanentWindows.includes(window) && !isPyodideSandboxWindow(window));
   return windows.length === 0;
 };
 
@@ -393,6 +436,7 @@ export const emitIpcEventToAll = (signal: IpcSignal, ...args: unknown[]) => {
   try {
     const windows = BrowserWindow.getAllWindows();
     for (const window of windows) {
+      if (isPyodideSandboxWindow(window)) continue;
       emitIpcEvent(window, signal, ...args);
     }
   } catch (error) {
