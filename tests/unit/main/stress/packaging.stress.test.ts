@@ -187,7 +187,7 @@ describe('CI workflows', () => {
     const missing = (step: string, names: string[]) => names
       .filter(name => !new RegExp(`^\\s+${name}: \\$\\{\\{[^}]*\\bsecrets\\.${name}\\b[^}]*\\}\\}\\s*$`, 'm').test(step))
     const signing = workflows.filter(({ text }) => stepsOf(text).some(step => /\bsmctl\b/.test(step)))
-    expect(signing.map(({ file }) => file).sort()).toEqual(['build-win32-x64.yml', 'test.yml'])
+    expect(signing.map(({ file }) => file).sort()).toEqual(['build-win32-arm64.yml', 'build-win32-x64.yml', 'test.yml'])
     for (const { file, text } of signing) {
       const steps = stepsOf(text)
       const certsync = steps.filter(step => /\bsmctl\b/.test(step))
