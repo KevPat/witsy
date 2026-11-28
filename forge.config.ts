@@ -16,6 +16,17 @@ import { signDarwinBinaries, signWindowsBinaries } from './build/sign_binaries';
 import dotenv from 'dotenv';
 dotenv.config();
 
+// The platform being packaged: the Makefile and the workflows pass it (`-p darwin`, `-p win32`,
+// `-p linux`), and without it Forge packages for the host.
+const targetPlatform = ((): string => {
+  const args = process.argv;
+  const index = args.findIndex((arg) => arg === '-p' || arg === '--platform');
+  if (index !== -1 && args[index + 1]) return args[index + 1];
+  const inline = args.find((arg) => arg.startsWith('--platform='));
+  return inline ? inline.slice('--platform='.length) : process.platform;
+})();
+const isDarwinTarget = ['darwin', 'mas'].includes(targetPlatform);
+
 // osx special configuration
 let osxPackagerConfig = {}
 const isDarwin = process.platform == 'darwin';
@@ -152,7 +163,11 @@ const config: ForgeConfig = {
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       // Playwright drives the e2e build (TEST=1) through --inspect; release builds must not accept it
       [FuseV1Options.EnableNodeCliInspectArguments]: !!process.env.TEST,
-      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
+      // The packager writes the hash of app.asar in Info.plist (macOS) and Electron refuses to start
+      // when the file was changed. On for macOS, where a modified asar runs with the permissions
+      // granted to the signed app. Still off for Windows (the check failed there, see 7ab83b00) and
+      // without effect on Linux.
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: isDarwinTarget,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],

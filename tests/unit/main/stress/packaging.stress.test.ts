@@ -104,8 +104,29 @@ describe('forge configuration', () => {
     expect(forgeConfig).toMatch(/\[FuseV1Options\.EnableNodeCliInspectArguments\]:\s*!!process\.env\.TEST\b/)
   })
 
-  bug('asar integrity validation is enabled', () => {
+  test('asar integrity validation is enabled for macOS builds', () => {
+    // a modified app.asar would run with the permissions granted to the signed app.
+    // Windows is still off (7ab83b00: the check failed there) and Linux has no such check.
     expect(forgeConfig).not.toMatch(/\[FuseV1Options\.EnableEmbeddedAsarIntegrityValidation\]:\s*false/)
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.EnableEmbeddedAsarIntegrityValidation\]:\s*isDarwinTarget\b/)
+    expect(forgeConfig).toMatch(/const isDarwinTarget = \['darwin', 'mas'\]\.includes\(targetPlatform\)/)
+    // it only means something when the app cannot be loaded from anywhere else
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.OnlyLoadAppFromAsar\]:\s*true/)
+  })
+
+  test('the platform being packaged is the one given to forge, or the host', () => {
+    // the fuses are chosen when the configuration is loaded: `make all` builds every platform from one host
+    const source = forgeConfig.match(/const targetPlatform = (\(\(\): string => \{[\s\S]*?\}\)\(\));/)?.[1]
+    expect(source).toBeDefined()
+    const targetPlatform = (argv: string[], platform: string): string => {
+      return new Function('process', `return ${source!.replace('(): string =>', '() =>')}`)({ argv, platform })
+    }
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p', 'darwin', '-a', 'arm64'], 'linux')).toBe('darwin')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p', 'win32', '-a', 'x64'], 'darwin')).toBe('win32')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '--platform', 'linux'], 'darwin')).toBe('linux')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '--platform=win32'], 'darwin')).toBe('win32')
+    expect(targetPlatform(['node', 'electron-forge', 'package'], 'darwin')).toBe('darwin')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p'], 'win32')).toBe('win32')
   })
 
   bug('the patched MCP SDK CommonJS build still parses', () => {
