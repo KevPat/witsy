@@ -1,10 +1,18 @@
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { app, dialog } from 'electron'
 import log from 'electron-log/main'
 import fs from 'fs'
 import path from 'path'
 import * as config from './config'
 import { useI18n } from './i18n'
+
+// PowerShell is started without a shell and only ever gets these constant scripts. The folder to
+// add travels in the environment of the child process and the existing PATH is read again inside
+// PowerShell, so no part of either can be parsed as script.
+const kPowerShellArgs = ['-NoProfile', '-NonInteractive', '-Command']
+const kCliDirVariable = 'WITSY_CLI_DIR'
+const kReadUserPathScript = `[Environment]::GetEnvironmentVariable('Path', 'User')`
+const kAppendToUserPathScript = `[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:${kCliDirVariable}), 'User')`
 
 function isSymlinkValid(symlinkPath: string, expectedTarget: string): boolean {
   try {
@@ -228,9 +236,7 @@ async function installWindowsCLI(): Promise<boolean> {
 
   try {
     // Get current PATH
-    const checkScript = `[Environment]::GetEnvironmentVariable('Path', 'User')`
-    const currentPath = execSync(`powershell -Command "${checkScript}"`, {
-      shell: 'powershell.exe',
+    const currentPath = execFileSync('powershell.exe', [...kPowerShellArgs, kReadUserPathScript], {
       encoding: 'utf8'
     }).trim()
 
@@ -241,10 +247,9 @@ async function installWindowsCLI(): Promise<boolean> {
     }
 
     // Add target directory to PATH
-    const newPath = currentPath + ';' + targetDir
-    const psScript = `[Environment]::SetEnvironmentVariable('Path', '${newPath.replace(/'/g, "''")}', 'User')`
-
-    execSync(`powershell -Command "${psScript}"`, { shell: 'powershell.exe' })
+    execFileSync('powershell.exe', [...kPowerShellArgs, kAppendToUserPathScript], {
+      env: { ...process.env, [kCliDirVariable]: targetDir }
+    })
 
     log.info('CLI installed successfully, added to PATH:', targetDir)
 
