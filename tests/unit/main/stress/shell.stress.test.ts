@@ -35,7 +35,8 @@ describe.runIf(isPosix)('shell executeCommand', () => {
     results.forEach((result, i) => {
       expect(result.success).toBe(true)
       expect(result.stdout.trim()).toBe(`out-${i}`)
-      expect(result.stderr.trim()).toBe(`err-${i}`)
+      // a login shell may add its own warnings to stderr
+      expect(result.stderr.trim().split('\n').pop()).toBe(`err-${i}`)
       expect(result.exitCode).toBe(0)
     })
   })
