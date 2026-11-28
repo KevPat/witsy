@@ -412,7 +412,7 @@ Agent webhooks allow you to trigger agent execution via HTTP requests, enabling 
 1. Open the Agent Forge and select or create an agent
 2. Navigate to the "Invocation" tab (last step in the wizard)
 3. Check the "🌐 Webhook" checkbox
-4. A unique 8-character token is automatically generated for your agent
+4. A unique random token (32 characters) is automatically generated for your agent: anyone who knows it can run the agent, keep the URL private
 5. Copy the webhook URL displayed (format: `http://localhost:{port}/api/agent/run/{token}`)
 6. You can regenerate the token at any time using the refresh button
 

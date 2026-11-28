@@ -1,4 +1,5 @@
 import { vi, expect, test, beforeEach } from 'vitest'
+import crypto from 'node:crypto'
 import { App } from 'electron'
 import { Agent, AgentRun } from '@/types/agents'
 import { generateWebhookToken, findAgentByWebhookToken, AgentExecutor } from '@main/agent_utils'
@@ -36,36 +37,78 @@ beforeEach(() => {
   vi.mocked(agentsModule.saveAgent).mockReturnValue(true)
 })
 
-test('generateWebhookToken generates 8 character token', () => {
-  // Mocks already set in beforeEach
+test('generateWebhookToken generates a 32 hex character token from the system CSPRNG', () => {
+  const randomBytes = vi.spyOn(crypto, 'randomBytes')
+  const mathRandom = vi.spyOn(Math, 'random')
 
   const token = generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
 
-  expect(token).toHaveLength(8)
-  expect(token).toMatch(/^[a-z0-9]+$/)
+  // 128 bits, safe in a url path without encoding
+  expect(token).toMatch(/^[0-9a-f]{32}$/)
+  expect(encodeURIComponent(token)).toBe(token)
+  expect(randomBytes).toHaveBeenCalledWith(16)
+  expect(mathRandom).not.toHaveBeenCalled()
+
+  vi.restoreAllMocks()
+})
+
+test('generateWebhookToken does not depend on Math.random', () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0.5)
+
+  const first = generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
+  const second = generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
+
+  expect(first).not.toBe(second)
+
+  vi.restoreAllMocks()
+})
+
+test('generateWebhookToken never repeats a token', () => {
+  const tokens = new Set<string>()
+  for (let i = 0; i < 1000; i++) {
+    tokens.add(generateWebhookToken(mockApp, 'workspace-1', 'agent-1'))
+  }
+  expect(tokens.size).toBe(1000)
 })
 
 test('generateWebhookToken ensures uniqueness', () => {
-  // Mock existing agent with token 'aaaa0000'
-  const existingAgent = {
-    uuid: 'existing-agent',
-    webhookToken: 'aaaa0000'
-  }
+  // the first candidate is the token of an existing agent
+  const taken = Buffer.alloc(16, 0xaa)
+  const randomBytes = vi.spyOn(crypto, 'randomBytes').mockImplementationOnce(() => taken)
 
   vi.mocked(workspaceModule.listWorkspaces).mockReturnValue([
     { uuid: 'workspace-1', name: 'Workspace 1' }
   ])
 
   vi.mocked(agentsModule.listAgents).mockReturnValue([
-    existingAgent,
+    { uuid: 'existing-agent', webhookToken: taken.toString('hex') },
     { uuid: 'agent-1', webhookToken: null } as any
   ])
 
   const token = generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
 
   // Token should be different from existing one
-  expect(token).not.toBe('aaaa0000')
-  expect(token).toHaveLength(8)
+  expect(token).not.toBe(taken.toString('hex'))
+  expect(token).toMatch(/^[0-9a-f]{32}$/)
+  expect(randomBytes).toHaveBeenCalledTimes(2)
+
+  vi.restoreAllMocks()
+})
+
+test('generateWebhookToken may return again the token of the agent it generates for', () => {
+  const current = Buffer.alloc(16, 0xbb)
+  vi.spyOn(crypto, 'randomBytes').mockImplementationOnce(() => current)
+
+  vi.mocked(workspaceModule.listWorkspaces).mockReturnValue([
+    { uuid: 'workspace-1', name: 'Workspace 1' }
+  ])
+  vi.mocked(agentsModule.listAgents).mockReturnValue([
+    { uuid: 'agent-1', webhookToken: current.toString('hex') } as any
+  ])
+
+  expect(generateWebhookToken(mockApp, 'workspace-1', 'agent-1')).toBe(current.toString('hex'))
+
+  vi.restoreAllMocks()
 })
 
 test('generateWebhookToken returns unique token for agent', () => {
@@ -75,35 +118,43 @@ test('generateWebhookToken returns unique token for agent', () => {
 
   const token = generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
 
-  expect(token).toHaveLength(8)
-  expect(token).toMatch(/^[a-z0-9]+$/)
+  expect(token).toMatch(/^[0-9a-f]{32}$/)
   expect(agentsModule.saveAgent).not.toHaveBeenCalled()
 })
 
 test('generateWebhookToken throws after max attempts', () => {
-  // Mock that all tokens are taken
+  // every candidate is the token of an existing agent
+  const taken = Buffer.alloc(16, 0xaa)
+  const randomBytes = vi.spyOn(crypto, 'randomBytes').mockImplementation(() => taken)
+
   vi.mocked(workspaceModule.listWorkspaces).mockReturnValue([
     { uuid: 'workspace-1', name: 'Workspace 1' }
   ])
 
-  // Create 10 agents with different tokens that will collide with any generated token
-  const tokens = ['aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd', 'eeeeeeee', 'ffffffff', 'gggggggg', 'hhhhhhhh', 'iiiiiiii', 'jjjjjjjj']
-
-  vi.mocked(agentsModule.listAgents).mockReturnValue(
-    tokens.map((token, i) => ({ uuid: `existing-${i}`, webhookToken: token } as any))
-  )
-
-  // Mock Math.random to return values that will generate the same tokens as above
-  vi.spyOn(Math, 'random').mockImplementation(() => {
-    // Generate the same token each time by returning 0, which gives us 'aaaaaaaa'
-    return 0
-  })
+  vi.mocked(agentsModule.listAgents).mockReturnValue([
+    { uuid: 'existing', webhookToken: taken.toString('hex') } as any
+  ])
 
   expect(() => {
     generateWebhookToken(mockApp, 'workspace-1', 'agent-1')
   }).toThrow('Failed to generate unique webhook token')
+  expect(randomBytes).toHaveBeenCalledTimes(1000)
 
   vi.restoreAllMocks()
+})
+
+test('findAgentByWebhookToken still finds an agent by a token of the former 8 character format', () => {
+  const legacyAgent = { uuid: 'legacy', name: 'Legacy Agent', webhookToken: 'abc12345' }
+  const recentAgent = { uuid: 'recent', name: 'Recent Agent', webhookToken: 'a'.repeat(32) }
+
+  vi.mocked(workspaceModule.listWorkspaces).mockReturnValue([
+    { uuid: 'workspace-1', name: 'Workspace 1' }
+  ])
+  vi.mocked(agentsModule.listAgents).mockReturnValue([legacyAgent, recentAgent] as any)
+
+  expect(findAgentByWebhookToken(mockApp, 'abc12345')).toEqual({ agent: legacyAgent, workspaceId: 'workspace-1' })
+  expect(findAgentByWebhookToken(mockApp, 'a'.repeat(32))).toEqual({ agent: recentAgent, workspaceId: 'workspace-1' })
+  expect(findAgentByWebhookToken(mockApp, 'abc1234')).toBeNull()
 })
 
 test('findAgentByWebhookToken finds agent in first workspace', () => {

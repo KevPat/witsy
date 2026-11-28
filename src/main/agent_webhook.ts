@@ -48,6 +48,7 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
 
       // Run agent
       const runId = uuidv7()
+      console.log(`[http] Agent webhook: running agent ${agent.uuid} (run ${runId})`)
       const executor = new AgentExecutor(app, mcp, docRepo)
       executor.runAgent(workspaceId, agent, 'webhook', values, runId)
 

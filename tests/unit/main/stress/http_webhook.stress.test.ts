@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import crypto from 'node:crypto'
 import { installAgentWebhook } from '@main/agent_webhook'
 import { generateWebhookToken } from '@main/agent_utils'
 import { HttpServer } from '@main/http_server'
@@ -8,7 +9,7 @@ import * as config from '@main/config'
 import Agent from '@models/agent'
 import { bug } from './bug'
 
-// The agent webhook lets anything that knows an 8-character token start an agent. These tests drive
+// The agent webhook lets anything that knows the token of an agent start it. These tests drive
 // the real HttpServer request listener (captured from a mocked createServer, so no socket is opened)
 // with the real webhook handlers installed on it. The agent executor is mocked: no agent or model runs.
 
@@ -112,32 +113,31 @@ describe('webhook token generation', () => {
     vi.mocked(listAgents).mockReturnValue([])
   })
 
-  bug('tokens do not come from Math.random', () => {
-    // fails today: the token is built from Math.random(), so a fixed PRNG yields the same token twice
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  test('tokens do not come from Math.random', () => {
+    // a fixed PRNG would yield the same token twice
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const first = generateWebhookToken(mockApp, 'w1', 'agent-1')
     const second = generateWebhookToken(mockApp, 'w1', 'agent-2')
     expect(first).not.toBe(second)
+    expect(random).not.toHaveBeenCalled()
   })
 
-  bug('a token is long enough to carry 128 bits', () => {
-    // fails today: 8 characters of [a-z0-9] is about 41 bits; 22 base64url characters is the shortest 128-bit form
+  test('a token is long enough to carry 128 bits', () => {
+    // 22 base64url characters is the shortest 128-bit form
     expect(generateWebhookToken(mockApp, 'w1', 'agent-1').length).toBeGreaterThanOrEqual(22)
   })
 
   test('a token already used by another agent is never handed out', () => {
-    // first candidate is 'aaaaaaaa' (taken), the next one is different
-    const random = vi.spyOn(Math, 'random')
-    for (let i = 0; i < 8; i++) random.mockReturnValueOnce(0)
-    random.mockReturnValue(0.5)
-    vi.mocked(listAgents).mockReturnValue([{ uuid: 'other', webhookToken: 'aaaaaaaa' }] as any)
-    expect(generateWebhookToken(mockApp, 'w1', 'agent-1')).not.toBe('aaaaaaaa')
+    // first candidate is taken, the next one is different
+    const taken = Buffer.alloc(16, 0xaa)
+    vi.spyOn(crypto, 'randomBytes').mockImplementationOnce(() => taken)
+    vi.mocked(listAgents).mockReturnValue([{ uuid: 'other', webhookToken: taken.toString('hex') }] as any)
+    expect(generateWebhookToken(mockApp, 'w1', 'agent-1')).not.toBe(taken.toString('hex'))
+    expect(crypto.randomBytes).toHaveBeenCalledTimes(2)
   })
 
-  bug('duplicating an agent does not give the copy the same webhook token', () => {
-    // fails today: Agent.duplicate() copies webhookToken, so two agents answer to one token and the
-    // copy's webhook url runs whichever agent is listed first
-    // NOTE: tests/unit/models/agent_duplicate.test.ts currently asserts the copy keeps the token
+  test('duplicating an agent does not give the copy the same webhook token', () => {
+    // two agents answering to one token: the webhook url of the copy would run whichever agent is listed first
     const original = new Agent()
     original.webhookToken = kToken
     expect(original.duplicate().webhookToken).not.toBe(kToken)
@@ -173,12 +173,32 @@ describe('webhook run endpoint', () => {
     expect(run.handled, 'the promise returned by runAgent was dropped without a rejection handler').toBe(true)
   })
 
-  bug('the request log does not contain the webhook token', async () => {
-    // fails today: the listener logs `${req.method} ${req.url}` and main.ts routes console.log to the
-    // electron-log file, so the only credential of the webhook is written to disk in clear text
+  const logged = () => [console.log, console.warn, console.error]
+    .flatMap((log) => vi.mocked(log).mock.calls).map((args) => args.map(String).join(' ')).join('\n')
+
+  test('the request log does not contain the webhook token', async () => {
+    // main.ts routes console.log to the electron-log file: the only credential of the webhook must not be written to disk
     await get(`/api/agent/run/${kToken}?topic=cats`)
-    const logged = vi.mocked(console.log).mock.calls.map((args) => args.join(' ')).join('\n')
-    expect(logged).not.toContain(kToken)
+    expect(logged()).toContain('/api/agent/run/*')
+    expect(logged()).not.toContain(kToken)
+    expect(logged()).not.toContain('cats')
+  })
+
+  test('the log of a failed request does not contain the webhook token', async () => {
+    mockRunAgent.mockImplementation(() => { throw new Error('executor failure') })
+    const res = await get(`/api/agent/run/${kToken}`)
+    expect(res.statusCode).toBe(500)
+    expect(logged()).toContain('executor failure')
+    expect(logged()).not.toContain(kToken)
+  })
+
+  test.each([
+    ['a mistyped route', `/api/agents/run/${kToken}`],
+    ['a path under the token', `/api/agent/${kToken}/run`],
+  ])('the log of %s does not contain the webhook token', async (_, url) => {
+    const res = await get(url)
+    expect(res.statusCode).toBe(404)
+    expect(logged()).not.toContain(kToken)
   })
 
   // the token is the authentication of these routes and callers reach them through tunnels or from
@@ -224,6 +244,14 @@ describe('webhook status endpoint', () => {
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body).output).toBe('private output')
     expect(getAgentRun).toHaveBeenCalledWith(mockApp, 'w1', 'a1', 'run-1')
+  })
+
+  test('the status request log does not contain the webhook token', async () => {
+    vi.mocked(getAgentRun).mockReturnValue(kRun as any)
+    await get(`/api/agent/status/${kToken}/run-1`)
+    const logged = vi.mocked(console.log).mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    expect(logged).toContain('/api/agent/status/*')
+    expect(logged).not.toContain(kToken)
   })
 
   test('the status is readable through a tunnel Host', async () => {

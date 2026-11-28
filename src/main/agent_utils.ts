@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { App } from 'electron'
 import { Agent, AgentRun, AgentRunTrigger } from 'types/agents'
 import { v7 as uuidv7 } from 'uuid'
@@ -10,19 +11,15 @@ import DocumentRepository from './rag/docrepo'
 import { listWorkspaces } from './workspace'
 
 /**
- * Generate a unique 8-character alphanumeric webhook token for an agent
+ * Generate a unique webhook token for an agent: the token is the only credential
+ * of the webhook, so it is 128 bits from the system CSPRNG as 32 hex characters
  * Ensures uniqueness across all agents in all workspaces
  */
 export function generateWebhookToken(app: App, workspaceId: string, agentId: string): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
   const maxAttempts = 1000
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Generate 8 random characters
-    let token = ''
-    for (let i = 0; i < 8; i++) {
-      token += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
+    const token = crypto.randomBytes(16).toString('hex')
 
     // Check if token is unique across all workspaces
     let isUnique = true

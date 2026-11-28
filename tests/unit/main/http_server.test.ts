@@ -463,3 +463,62 @@ describe('request guard', () => {
   })
 
 })
+
+describe('request log', () => {
+
+  let log: ReturnType<typeof vi.spyOn>
+  let error: ReturnType<typeof vi.spyOn>
+
+  const send = (url: string) => {
+    const res = { writeHead: vi.fn(), end: vi.fn(), headersSent: false } as any as ServerResponse
+    requestListener({ method: 'GET', url, headers: { host: 'localhost:8090' } } as any as IncomingMessage, res)
+    return res
+  }
+
+  const logged = () => [...log.mock.calls, ...error.mock.calls].map((args) => args.map(String).join(' ')).join('\n')
+
+  beforeEach(() => {
+    log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    log.mockRestore()
+    error.mockRestore()
+  })
+
+  test('logs the route instead of the url, which may hold a token and user text', () => {
+    httpServer.register('/api/agent/run/*', vi.fn())
+    httpServer.register('/api/chat', vi.fn())
+
+    send('/api/agent/run/secret-token?input=private')
+    send('/api/chat?text=private')
+
+    expect(logged()).toContain('[http] GET /api/agent/run/*')
+    expect(logged()).toContain('[http] GET /api/chat')
+    expect(logged()).not.toContain('secret-token')
+    expect(logged()).not.toContain('private')
+  })
+
+  test('logs the route of a failing handler without its url', async () => {
+    httpServer.register('/api/agent/run/*', vi.fn(async () => { throw new Error('handler failure') }))
+
+    const res = send('/api/agent/run/secret-token?input=private')
+    await vi.waitFor(() => expect(res.writeHead).toHaveBeenCalledWith(500, { 'Content-Type': 'text/plain' }))
+
+    expect(logged()).toContain('handler failure')
+    expect(logged()).not.toContain('secret-token')
+    expect(logged()).not.toContain('private')
+  })
+
+  test('logs only the start of a path without route', () => {
+    send('/api/agents/run/secret-token?input=private')
+    send('/api/unknown')
+
+    expect(logged()).toContain('[http] GET /api/agents/…')
+    expect(logged()).toContain('[http] GET /api/unknown')
+    expect(logged()).not.toContain('secret-token')
+    expect(logged()).not.toContain('private')
+  })
+
+})

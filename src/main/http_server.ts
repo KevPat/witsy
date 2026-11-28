@@ -18,13 +18,19 @@ export type RouteOptions = {
   allowCrossSite?: boolean
 }
 
-type Route = { handler: RequestHandler, options: RouteOptions }
+type Route = { path: string, handler: RequestHandler, options: RouteOptions }
 
 const kLoopbackAuthority = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i
 
 // the OAuth provider redirects the browser to this route
 const kRouteOptions: Record<string, RouteOptions> = {
   '/mcp/callback': { allowCrossSite: true },
+}
+
+// what is logged of a path without route: the rest may hold a webhook token
+const redactPath = (pathname: string): string => {
+  const segments = pathname.split('/')
+  return segments.length > 3 ? `${segments.slice(0, 3).join('/')}/…` : pathname
 }
 
 const getRejection = (req: IncomingMessage, options: RouteOptions): string | null => {
@@ -104,7 +110,7 @@ export class HttpServer {
     if (this.routes.has(path)) {
       throw new Error(`Path conflict: Route '${path}' already registered`)
     }
-    this.routes.set(path, { handler, options: { ...kRouteOptions[path], ...options } })
+    this.routes.set(path, { path, handler, options: { ...kRouteOptions[path], ...options } })
     console.log(`[http] Registered route: ${path}`)
   }
 
@@ -150,8 +156,6 @@ export class HttpServer {
         return;
       }
 
-      console.log(`[http] ${req.method} ${req.url}`)
-
       try {
         const parsedUrl = new URL(req.url || '/', `http://localhost:${this.port}`)
         const path = parsedUrl.pathname
@@ -175,6 +179,10 @@ export class HttpServer {
           }
         }
 
+        // the url is never logged: its path may hold a webhook token and its query what the user sent
+        const loggedPath = route ? route.path : redactPath(path)
+        console.log(`[http] ${req.method} ${loggedPath}`)
+
         // unknown paths are checked too so that a web page cannot probe the routes
         const rejection = getRejection(req, route?.options ?? {})
         if (rejection) {
@@ -192,7 +200,7 @@ export class HttpServer {
           // If handler returns a promise, handle it
           if (result instanceof Promise) {
             result.catch((error) => {
-              console.error(`[http] Handler error for path ${path}:`, error)
+              console.error(`[http] Handler error for path ${loggedPath}:`, error)
               if (!res.headersSent) {
                 res.writeHead(500, { 'Content-Type': 'text/plain' })
                 res.end('Internal Server Error')
@@ -200,7 +208,7 @@ export class HttpServer {
             })
           }
         } else {
-          console.log(`[http] No handler found for path: ${path}`)
+          console.log(`[http] No handler found for path: ${loggedPath}`)
           res.writeHead(404, { 'Content-Type': 'text/plain' })
           res.end('Not Found')
         }

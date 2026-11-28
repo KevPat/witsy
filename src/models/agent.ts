@@ -100,7 +100,8 @@ export default class Agent implements AgentBase {
     duplicated.parameters = this.parameters ? [...this.parameters] : []
     duplicated.steps = this.steps ? JSON.parse(JSON.stringify(this.steps)) : []
     duplicated.schedule = this.schedule
-    duplicated.webhookToken = this.webhookToken
+    // the token is the credential of one agent: the copy gets its own when its webhook is enabled
+    duplicated.webhookToken = null
     duplicated.invocationValues = this.invocationValues ? { ...this.invocationValues } : {}
     return duplicated
   }
