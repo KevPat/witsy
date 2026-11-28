@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeEach, afterEach } from 'vitest'
-import CliPlugin from '@/main/cli_plugin'
+import CliPlugin, { MAX_FILE_SNAPSHOTS, fileSnapshotCount } from '@/main/cli_plugin'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -1195,6 +1195,330 @@ describe('CliPlugin', () => {
 
     test('getPreparationDescription', () => {
       expect(plugin.getPreparationDescription()).toBe('Accessing filesystem...')
+    })
+  })
+
+  describe('lastModified', () => {
+
+    // A whole-second timestamp survives utimesSync unchanged, so a test can put the mtime of a
+    // file back to exactly the value the plugin handed out: this is what two writes within one
+    // clock tick look like, whatever the resolution of the clock
+    const FIXED_TIME = new Date('2024-01-02T03:04:05.000Z')
+
+    const run = (parameters: Record<string, unknown>) => plugin.execute({ model: 'test' }, parameters as any)
+
+    const writeAt = (name: string, content: string, time: Date = FIXED_TIME): string => {
+      const filePath = path.join(tempDir, name)
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      fs.writeFileSync(filePath, content)
+      fs.utimesSync(filePath, time, time)
+      return filePath
+    }
+
+    test('edit_file refuses a same-size external change that left the mtime unchanged', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+      expect(read.lastModified).toBe(FIXED_TIME.getTime())
+
+      writeAt('test.txt', 'LINE1\nLINE2')
+      expect(fs.statSync(filePath).mtimeMs).toBe(read.lastModified)
+
+      const result = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('modified')
+      expect(result.error).toContain('Read the file again')
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('LINE1\nLINE2')
+    })
+
+    test('write_file refuses a same-size external change that left the mtime unchanged', async () => {
+      const filePath = writeAt('test.txt', 'content')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      writeAt('test.txt', 'CONTENT')
+      expect(fs.statSync(filePath).mtimeMs).toBe(read.lastModified)
+
+      const result = await run({ action: 'write_file', path: 'test.txt', content: 'new content', lastModified: read.lastModified })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('modified')
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('CONTENT')
+    })
+
+    test('refuses an external change of another size that left the mtime unchanged', async () => {
+      const filePath = writeAt('test.txt', 'content')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      writeAt('test.txt', 'longer content')
+
+      for (const action of ['edit_file', 'write_file']) {
+        const result = await run({ action, path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+        expect(result.success, action).toBe(false)
+        expect(result.error, action).toContain('modified')
+      }
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('longer content')
+    })
+
+    test('refuses when only the mtime changed', async () => {
+      const filePath = writeAt('test.txt', 'content')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      writeAt('test.txt', 'content', new Date(FIXED_TIME.getTime() + 1000))
+
+      for (const action of ['edit_file', 'write_file']) {
+        const result = await run({ action, path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+        expect(result.success, action).toBe(false)
+        expect(result.error, action).toContain('modified')
+        expect(result.error, action).toContain('2024-01-02T03:04:06.000Z')
+      }
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('content')
+    })
+
+    test('accepts the value from read_file when the file is unchanged', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('new\nline2')
+
+      const again = await run({ action: 'read_file', path: 'test.txt' })
+      const write = await run({ action: 'write_file', path: 'test.txt', content: 'all new', lastModified: again.lastModified })
+      expect(write.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('all new')
+    })
+
+    test('accepts the value from a partial read', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2\nline3\nline4')
+
+      const read = await run({ action: 'read_file', path: 'test.txt', start: 2, end: 3 })
+      expect(read.linesRead).toBe(2)
+
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 4, end: 4, content: 'new4', lastModified: read.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('line1\nline2\nline3\nnew4')
+    })
+
+    test('chains edits and writes with the value each one returns', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2\nline3')
+
+      let { lastModified } = await run({ action: 'read_file', path: 'test.txt' })
+      for (let i = 1; i <= 3; i++) {
+        const edit = await run({ action: 'edit_file', path: 'test.txt', start: i, end: i, content: `edit${i}`, lastModified })
+        expect(edit.success, `edit ${i}`).toBe(true)
+        expect(edit.lastModified).toBe(fs.statSync(filePath).mtimeMs)
+        lastModified = edit.lastModified
+      }
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('edit1\nedit2\nedit3')
+
+      const write = await run({ action: 'write_file', path: 'test.txt', content: 'written\nline', lastModified })
+      expect(write.success).toBe(true)
+
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 2, end: 2, content: 'last', lastModified: write.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('written\nlast')
+    })
+
+    test('refuses an external change made after its own edit', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'edit1', lastModified: read.lastModified })
+      expect(edit.success).toBe(true)
+
+      // right after the edit: on most systems this write gets the very same mtime
+      fs.writeFileSync(filePath, 'EDIT1\nLINE2')
+
+      const result = await run({ action: 'edit_file', path: 'test.txt', start: 2, end: 2, content: 'edit2', lastModified: edit.lastModified })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('modified')
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('EDIT1\nLINE2')
+    })
+
+    test('a new plugin instance accepts the value handed out by a previous one', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      const nextPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'rw' })
+      const edit = await nextPlugin.execute({ model: 'test' }, {
+        action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified
+      })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('new\nline2')
+
+      // and so does one that names the same file differently
+      const lastPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'rw' })
+      const write = await lastPlugin.execute({ model: 'test' }, {
+        action: 'write_file', path: path.join(tempDir, '.', 'test.txt'), content: 'newer', lastModified: edit.lastModified
+      })
+      expect(write.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('newer')
+    })
+
+    test('refuses the mtime of a file the plugin never read', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const lastModified = fs.statSync(filePath).mtimeMs
+
+      for (const action of ['edit_file', 'write_file']) {
+        const result = await run({ action, path: 'test.txt', start: 1, end: 1, content: 'new', lastModified })
+        expect(result.success, action).toBe(false)
+        expect(result.error, action).toContain('modified')
+        expect(result.error, action).toContain('Read the file again')
+      }
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('line1\nline2')
+    })
+
+    test('a read that fails hands out nothing to edit with', async () => {
+      const filePath = writeAt('big.txt', 'x'.repeat(50000))
+
+      const read = await run({ action: 'read_file', path: 'big.txt' })
+      expect(read.success).toBe(false)
+      expect(read.lastModified).toBeUndefined()
+
+      const result = await run({ action: 'write_file', path: 'big.txt', content: 'new', lastModified: fs.statSync(filePath).mtimeMs })
+      expect(result.success).toBe(false)
+      expect(fs.readFileSync(filePath, 'utf-8')).toHaveLength(50000)
+    })
+
+    test('write_file still creates a missing file when given a lastModified', async () => {
+      const result = await run({ action: 'write_file', path: 'missing.txt', content: 'created', lastModified: 1234567890 })
+
+      expect(result.success).toBe(true)
+      expect(fs.readFileSync(path.join(tempDir, 'missing.txt'), 'utf-8')).toBe('created')
+
+      const edit = await run({ action: 'edit_file', path: 'missing.txt', start: 1, end: 1, content: 'edited', lastModified: result.lastModified })
+      expect(edit.success).toBe(true)
+    })
+
+    test('edit_file still reports a missing file when given a lastModified', async () => {
+      const result = await run({ action: 'edit_file', path: 'missing.txt', start: 1, end: 1, content: 'new', lastModified: 1234567890 })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('not found')
+    })
+
+    test('works without lastModified as before', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new' })
+      expect(edit.success).toBe(true)
+
+      const write = await run({ action: 'write_file', path: 'test.txt', content: 'all new' })
+      expect(write.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('all new')
+    })
+
+    test('refuses values that are not a timestamp with a readable error', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      await run({ action: 'read_file', path: 'test.txt' })
+
+      for (const lastModified of [NaN, Infinity, -1, 0, 8.64e15 + 1, 'yesterday', '', null, {}]) {
+        for (const action of ['edit_file', 'write_file']) {
+          const result = await run({ action, path: 'test.txt', start: 1, end: 1, content: 'new', lastModified })
+          expect(result.success, `${action} ${lastModified}`).toBe(false)
+          expect(result.error, `${action} ${lastModified}`).toContain('modified since last read')
+        }
+      }
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('line1\nline2')
+    })
+
+    test('accepts the value as a numeric string', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      const edit = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: String(read.lastModified) })
+      expect(edit.success).toBe(true)
+
+      const write = await run({ action: 'write_file', path: 'test.txt', content: 'all new', lastModified: String(edit.lastModified) })
+      expect(write.success).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe('all new')
+    })
+
+    test('a deleted file takes its lastModified with it', async () => {
+      const filePath = writeAt('test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'test.txt' })
+
+      expect((await run({ action: 'delete_file', path: 'test.txt' })).success).toBe(true)
+
+      // something else puts an identical file back
+      writeAt('test.txt', 'line1\nline2')
+      expect(fs.statSync(filePath).mtimeMs).toBe(read.lastModified)
+
+      const result = await run({ action: 'edit_file', path: 'test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('modified')
+    })
+
+    test('a deleted directory takes the lastModified of its files with it', async () => {
+      const filePath = writeAt('dir/sub/test.txt', 'line1\nline2')
+      const other = writeAt('dir-other/test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'dir/sub/test.txt' })
+      const readOther = await run({ action: 'read_file', path: 'dir-other/test.txt' })
+
+      expect((await run({ action: 'delete_file', path: 'dir' })).success).toBe(true)
+      writeAt('dir/sub/test.txt', 'line1\nline2')
+      expect(fs.statSync(filePath).mtimeMs).toBe(read.lastModified)
+
+      const result = await run({ action: 'edit_file', path: 'dir/sub/test.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(result.success).toBe(false)
+
+      // a directory that only shares the name prefix is not concerned
+      const edit = await run({ action: 'edit_file', path: 'dir-other/test.txt', start: 1, end: 1, content: 'new', lastModified: readOther.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(other, 'utf-8')).toBe('new\nline2')
+    })
+
+    test('a moved file keeps its lastModified at the new path only', async () => {
+      writeAt('old.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'old.txt' })
+
+      expect((await run({ action: 'move_file', path: 'old.txt', newPath: 'sub/new.txt' })).success).toBe(true)
+
+      // something else puts an identical file back at the old path
+      writeAt('old.txt', 'line1\nline2')
+      const stale = await run({ action: 'edit_file', path: 'old.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(stale.success).toBe(false)
+      expect(stale.error).toContain('modified')
+
+      const edit = await run({ action: 'edit_file', path: 'sub/new.txt', start: 1, end: 1, content: 'new', lastModified: read.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(path.join(tempDir, 'sub', 'new.txt'), 'utf-8')).toBe('new\nline2')
+    })
+
+    test('the files of a moved directory keep their lastModified', async () => {
+      writeAt('dir/sub/test.txt', 'line1\nline2')
+      const read = await run({ action: 'read_file', path: 'dir/sub/test.txt' })
+
+      expect((await run({ action: 'move_file', path: 'dir', newPath: 'renamed' })).success).toBe(true)
+
+      const edit = await run({ action: 'edit_file', path: 'renamed/sub/test.txt', start: 2, end: 2, content: 'new', lastModified: read.lastModified })
+      expect(edit.success).toBe(true)
+      expect(fs.readFileSync(path.join(tempDir, 'renamed', 'sub', 'test.txt'), 'utf-8')).toBe('line1\nnew')
+    })
+
+    test('remembers a bounded number of files and forgets the oldest first', async () => {
+      const count = MAX_FILE_SNAPSHOTS + 5
+      const tokens: number[] = []
+      for (let i = 0; i < count; i++) {
+        writeAt(`file${i}.txt`, `content ${i}`)
+        const read = await run({ action: 'read_file', path: `file${i}.txt` })
+        tokens.push(read.lastModified!)
+        expect(fileSnapshotCount()).toBeLessThanOrEqual(MAX_FILE_SNAPSHOTS)
+      }
+      expect(fileSnapshotCount()).toBe(MAX_FILE_SNAPSHOTS)
+
+      // reading a file again does not add an entry
+      await run({ action: 'read_file', path: `file${count - 1}.txt` })
+      expect(fileSnapshotCount()).toBe(MAX_FILE_SNAPSHOTS)
+
+      // the first files were dropped: their value is refused until they are read again
+      const dropped = await run({ action: 'edit_file', path: 'file0.txt', start: 1, end: 1, content: 'new', lastModified: tokens[0] })
+      expect(dropped.success).toBe(false)
+      expect(dropped.error).toContain('Read the file again')
+      const reread = await run({ action: 'read_file', path: 'file0.txt' })
+      const retried = await run({ action: 'edit_file', path: 'file0.txt', start: 1, end: 1, content: 'new', lastModified: reread.lastModified })
+      expect(retried.success).toBe(true)
+
+      const kept = await run({ action: 'edit_file', path: `file${count - 1}.txt`, start: 1, end: 1, content: 'new', lastModified: tokens[count - 1] })
+      expect(kept.success).toBe(true)
+      expect(fileSnapshotCount()).toBe(MAX_FILE_SNAPSHOTS)
     })
   })
 
