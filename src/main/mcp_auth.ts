@@ -12,6 +12,26 @@ import { useI18n } from './i18n'
 
 export type OnTokensUpdatedCallback = (tokens: OAuthTokens, scope: string) => void
 
+// the callback pages are served from the same loopback origin as the local HTTP API
+const kHtmlHeaders = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'X-Content-Type-Options': 'nosniff',
+}
+
+// the error page has no script of its own: none may run in it
+const kErrorPageCsp = "default-src 'none'; style-src 'unsafe-inline'; img-src https://witsy.bonamy.fr"
+
+const kMaxErrorLength = 256
+
+const escapeHtml = (value: string): string => {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export class McpOAuthClientProvider implements OAuthClientProvider {
   private _codeVerifier?: string
   private _redirectUrl: string | URL
@@ -125,7 +145,7 @@ export default class McpOAuthManager {
     
     if (code && pendingCallback) {
       console.log(`[oauth] Authorization code received for MCP flow ${state}: ${code.substring(0, 10)}...`)
-      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.writeHead(200, kHtmlHeaders)
       res.end(`
         <!DOCTYPE html>
         <html lang="en">
@@ -156,7 +176,7 @@ export default class McpOAuthManager {
 
     } else if (error) {
       console.log(`[oauth] Authorization error for MCP flow ${state}: ${error}`)
-      res.writeHead(400, { 'Content-Type': 'text/html' })
+      res.writeHead(400, { ...kHtmlHeaders, 'Content-Security-Policy': kErrorPageCsp })
       res.end(`
         <!DOCTYPE html>
         <html lang="en">
@@ -174,7 +194,7 @@ export default class McpOAuthManager {
           <body>
             <img src="https://witsy.bonamy.fr/img/logo.png" alt="Witsy" class="logo">
             <h1>Authorization Failed</h1>
-            <p>Error: ${error}</p>
+            <p>Error: ${escapeHtml(error.slice(0, kMaxErrorLength))}</p>
           </body>
         </html>
       `)

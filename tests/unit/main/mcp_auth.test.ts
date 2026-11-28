@@ -436,7 +436,10 @@ describe('McpOAuthManager - Callback Functionality', () => {
     ;(manager as any).handleCallback(mockReq, mockRes, mockParsedUrl)
     
     // Verify response
-    expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'text/html' })
+    expect(mockRes.writeHead).toHaveBeenCalledWith(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+    })
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('mcp.oauth.success.title'))
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('mcp.oauth.success.message'))
     
@@ -472,7 +475,11 @@ describe('McpOAuthManager - Callback Functionality', () => {
     ;(manager as any).handleCallback(mockReq, mockRes, mockParsedUrl)
     
     // Verify response
-    expect(mockRes.writeHead).toHaveBeenCalledWith(400, { 'Content-Type': 'text/html' })
+    expect(mockRes.writeHead).toHaveBeenCalledWith(400, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': expect.stringContaining("default-src 'none'"),
+    })
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('Authorization Failed'))
     
     // Verify callback was rejected
@@ -575,5 +582,64 @@ describe('McpOAuthManager - Callback Functionality', () => {
     // Verify second callback resolved
     expect(mockResolve2).toHaveBeenCalledWith('auth-code-2')
     expect((manager as any).pendingCallbacks.has(flowId2)).toBe(false)
+  })
+})
+
+describe('McpOAuthManager - Callback page escaping', () => {
+  let manager: McpOAuthManager
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    manager = new McpOAuthManager(app)
+  })
+
+  // answers the callback of a flow that is waiting for it, the way the browser would
+  const errorPage = (error: string): { status: number, headers: Record<string, string>, body: string } => {
+    const state = 'pending-flow'
+    const timeout = setTimeout(() => {}, 1000)
+    ;(manager as any).pendingCallbacks.set(state, { resolve: vi.fn(), reject: vi.fn(), timeout })
+    const res = { writeHead: vi.fn(), end: vi.fn() }
+    const url = new URL(`http://localhost:8090/mcp/callback?state=${state}&error=${encodeURIComponent(error)}`)
+    ;(manager as any).handleCallback({}, res, url)
+    clearTimeout(timeout)
+    return { status: res.writeHead.mock.calls[0][0], headers: res.writeHead.mock.calls[0][1], body: res.end.mock.calls[0][0] }
+  }
+
+  test.each([
+    ['<script>alert(document.domain)</script>', '&lt;script&gt;alert(document.domain)&lt;/script&gt;'],
+    ['<img src=x onerror=alert(1)>', '&lt;img src=x onerror=alert(1)&gt;'],
+    ['</p><iframe src="https://evil.example.com"></iframe>', '&lt;/p&gt;&lt;iframe src=&quot;https://evil.example.com&quot;&gt;&lt;/iframe&gt;'],
+    ['"><svg onload=alert(1)>', '&quot;&gt;&lt;svg onload=alert(1)&gt;'],
+    ['\' onmouseover=\'alert(1)', '&#39; onmouseover=&#39;alert(1)'],
+    ['&lt;script&gt;alert(1)&lt;/script&gt;', '&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;'],
+  ])('error page escapes %s', (payload, escaped) => {
+    const { status, body } = errorPage(payload)
+    expect(status).toBe(400)
+    expect(body).not.toContain(payload)
+    expect(body).toContain(`<p>Error: ${escaped}</p>`)
+    // the payload only exists as text: no element comes from it (the page has a logo and no script)
+    expect(body.match(/<img/g)).toHaveLength(1)
+    expect(body).not.toMatch(/<script|<iframe|<svg/i)
+    const markup = body.replace(`<p>Error: ${escaped}</p>`, '')
+    expect(markup).not.toMatch(/alert\(|onerror=|onload=|onmouseover=/i)
+  })
+
+  test('error page shows a plain error code as is', () => {
+    const { body } = errorPage('access_denied')
+    expect(body).toContain('<p>Error: access_denied</p>')
+  })
+
+  test('error page truncates an oversized error', () => {
+    const { body } = errorPage('a'.repeat(5000) + '<script>alert(1)</script>')
+    expect(body).toContain(`<p>Error: ${'a'.repeat(256)}</p>`)
+    expect(body).not.toContain('alert(1)')
+  })
+
+  test('error page is served as html that cannot be sniffed or run scripts', () => {
+    const { headers } = errorPage('<script>alert(1)</script>')
+    expect(headers['Content-Type']).toBe('text/html; charset=utf-8')
+    expect(headers['X-Content-Type-Options']).toBe('nosniff')
+    expect(headers['Content-Security-Policy']).toContain("default-src 'none'")
+    expect(headers['Content-Security-Policy']).not.toContain('script-src')
   })
 })
