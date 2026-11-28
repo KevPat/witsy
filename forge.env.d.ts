@@ -7,6 +7,10 @@ declare global {
   const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
   const MAIN_WINDOW_VITE_NAME: string;
 
+  // GitHub repository (owner/name) whose releases feed the auto-updater, injected by vite.main.config.ts.
+  // Not defined when the code does not go through that build (unit tests).
+  const __WITSY_UPDATE_REPOSITORY__: string | undefined;
+
   namespace NodeJS {
     interface Process {
       // Used for hot reload after preload scripts.

@@ -47,6 +47,9 @@ type ToolsCacheEntry = {
 export default class Mcp {
 
   private readonly CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+  private readonly FAILURE_RETRY_MS = 30 * 1000 // a failed tools/list is asked again after 30 seconds
+  private activeReload: Promise<void> = Promise.resolve()
+  private pendingReload: Promise<void>|null = null
 
   app: App
   monitor: Monitor|null
@@ -71,11 +74,13 @@ export default class Mcp {
     const uuid = client.server.uuid
     const cached = this.toolsCache.get(uuid)
 
+    // a failure is not cached for ever: the server is asked again after a short while
+    // (not at every call: a server that hangs would then delay every prompt)
     if (cached && cached.tools === null) {
-      return { tools: [] }
-    }
-    
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      if (Date.now() - cached.timestamp < this.FAILURE_RETRY_MS) {
+        return { tools: [] }
+      }
+    } else if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
       return cached.tools
     }
 
@@ -87,16 +92,26 @@ export default class Mcp {
         tools,
         timestamp: Date.now()
       })
-      
+
+      // a connected server that could not list its tools until now has no tool names yet:
+      // without them its tools cannot be called
+      if (cached && cached.tools === null) {
+        const connected = this.clients.find(c => c.server.uuid === uuid && c.client === client.client)
+        if (connected) {
+          connected.tools = this.resolveToolNames(connected.server, tools.tools.map((tool: McpSdkTool) => tool.name))
+          emitIpcEventToAll('mcp-servers-updated')
+        }
+      }
+
       return tools
 
     } catch (e) {
 
       console.error(`[mcp] Failed to get tools from MCP server ${client.server.url}:`, e)
-      this.logs[uuid].push(`[mcp] Failed to get tools`)
+      this.logs[uuid]?.push(`[mcp] Failed to get tools`)
       this.toolsCache.set(uuid, {
         tools: null,
-        timestamp: 0
+        timestamp: Date.now()
       })
       return { tools: [] }
     }
@@ -512,17 +527,35 @@ export default class Mcp {
   }  
 
   shutdown = async (): Promise<void> => {
-    for (const client of this.clients) {
-      await client.client.close()
-    }
+    // one client that fails to close must not keep the others open
+    const clients = this.clients
     this.clients = []
+    for (const client of clients) {
+      try {
+        await client.client.close()
+      } catch (e) {
+        console.error(`[mcp] Failed to close MCP server ${client.server.url}:`, e)
+      }
+    }
     this.invalidateToolsCache()
     this.oauthManager.shutdown()
   }
 
-  reload = async (): Promise<void> => {
-    await this.shutdown()
-    await this.connect()
+  // reloads run one after the other (the settings monitor fires them without waiting):
+  // two at the same time would each connect every server.
+  // a reload that has not started yet reads the settings when it starts, so it serves all callers
+  reload = (): Promise<void> => {
+    if (this.pendingReload) {
+      return this.pendingReload
+    }
+    const run = this.activeReload.then(async () => {
+      this.pendingReload = null
+      await this.shutdown()
+      await this.connect()
+    })
+    this.pendingReload = run
+    this.activeReload = run.catch(() => { /* reported to the caller */ })
+    return run
   }
 
   restartServer = async (uuid: string): Promise<boolean> => {
@@ -563,7 +596,6 @@ export default class Mcp {
     }
 
     // save
-    this.currentConfig = JSON.stringify(servers)
     this.startConfigMonitor()
 
     // done
@@ -580,6 +612,13 @@ export default class Mcp {
           this.reload()
         }
       })
+    }
+    // what we compare against is what we have just connected or saved ourselves:
+    // if not, the next unrelated settings change reloads every server
+    try {
+      this.currentConfig = JSON.stringify(this.getServers())
+    } catch (e) {
+      console.error('[mcp] Failed to read the servers configuration', e)
     }
     this.monitor.start(settingsFilePath(this.app))
   }
@@ -632,6 +671,23 @@ export default class Mcp {
     const tools = await this.getCachedTools({ client, server, tools: [] } as McpClient)
     const toolNames = tools.tools.map((tool: McpSdkTool) => tool.name)
 
+    // detect and resolve collisions, build final tool names using mappings
+    const finalToolNames = this.resolveToolNames(server, toolNames)
+
+    // store
+    this.clients.push({
+      client,
+      server,
+      tools: finalToolNames
+    })
+
+    // done
+    return true
+
+  }
+
+  private resolveToolNames = (server: McpServer, toolNames: string[]): string[] => {
+
     // detect and resolve collisions
     const mappings = this.detectAndResolveCollisions(
       server.uuid,
@@ -650,17 +706,7 @@ export default class Mcp {
     }
 
     // build final tool names using mappings
-    const finalToolNames = toolNames.map((name: string) => this.getMappedToolName(server, name))
-
-    // store
-    this.clients.push({
-      client,
-      server,
-      tools: finalToolNames
-    })
-
-    // done
-    return true
+    return toolNames.map((name: string) => this.getMappedToolName(server, name))
 
   }
 
@@ -1000,7 +1046,8 @@ export default class Mcp {
   public originalToolName = (name: string): string => {
     
     // handle legacy for some time
-    if (LEGACY_SUFFIX_PATTERN.test(name)) {
+    // (a current tool can also end like a legacy suffix: "fetch___data" is a real name)
+    if (LEGACY_SUFFIX_PATTERN.test(name) && !this.clients.some(client => client.tools.includes(name))) {
       name = name.replace(LEGACY_SUFFIX_PATTERN, '')
     }
     
@@ -1059,19 +1106,20 @@ export default class Mcp {
       }
 
       if (existingToolNames.has(toolName)) {
-        // Find next available suffix
+        // Find next available suffix: the name that is tested is the one that is stored,
+        // truncated if needed to fit max tool name length
+        const candidate = (suffix: number): string => {
+          const suffixStr = `${COLLISION_SUFFIX_SEPARATOR}${suffix}`
+          const name = `${toolName}${suffixStr}`
+          if (name.length <= MAX_TOOL_NAME_LENGTH) return name
+          return `${toolName.slice(0, MAX_TOOL_NAME_LENGTH - suffixStr.length)}${suffixStr}`
+        }
         let suffix = 1
-        while (existingToolNames.has(`${toolName}${COLLISION_SUFFIX_SEPARATOR}${suffix}`)) {
+        while (existingToolNames.has(candidate(suffix))) {
           suffix++
         }
-        // Truncate if needed to fit max tool name length
-        const suffixStr = `${COLLISION_SUFFIX_SEPARATOR}${suffix}`
-        let mappedName = `${toolName}${suffixStr}`
-        if (mappedName.length > MAX_TOOL_NAME_LENGTH) {
-          const maxBaseLength = MAX_TOOL_NAME_LENGTH - suffixStr.length
-          mappedName = `${toolName.slice(0, maxBaseLength)}${suffixStr}`
-        }
-        mappings[toolName] = mappedName
+        const mappedName = candidate(suffix)
+mappings[toolName] = mappedName
         existingToolNames.add(mappedName)
       }
     }

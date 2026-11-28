@@ -987,6 +987,119 @@ describe('CodeExecutionProgramPlugin', () => {
       expect(result).toEqual({ value: 'unwrapped' })
     })
 
+    const runAndCapture = async (toolResponse: any): Promise<any> => {
+      let capturedArgs: any = null
+      const mockTool1 = new MockPlugin('tool1', () => toolResponse)
+      const mockTool2 = new MockPlugin('tool2', (context: any, params: any) => {
+        capturedArgs = params
+        return { result: 'done' }
+      })
+      mockEngine.plugins = [mockTool1, mockTool2]
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: {
+          program: {
+            steps: [
+              { id: 'step1', tool: 'tool1', args: {} },
+              { id: 'step2', tool: 'tool2', args: { value: '{{step1}}' } }
+            ]
+          }
+        }
+      })
+
+      expect(result).toBe('done')
+      return capturedArgs
+    }
+
+    test.each([
+      { data: 0, expected: '0' },
+      { data: false, expected: 'false' },
+      { data: '', expected: '' },
+      { data: null, expected: 'null' },
+    ])('unwraps falsy data property $data', async ({ data, expected }) => {
+      const args = await runAndCapture({ result: { data } })
+      expect(args).toEqual({ value: expected })
+    })
+
+    test('unwraps falsy data property of a non-wrapped response', async () => {
+      const args = await runAndCapture({ data: 0 })
+      expect(args).toEqual({ value: '0' })
+    })
+
+    test('unwraps only one level of nested data', async () => {
+      const args = await runAndCapture({ result: { data: { data: 0 } } })
+      expect(args).toEqual({ value: '{"data":0}' })
+    })
+
+    test('keeps objects without data property as is', async () => {
+      const args = await runAndCapture({ result: { value: 0, items: [] } })
+      expect(args).toEqual({ value: '{"value":0,"items":[]}' })
+    })
+
+    test('keeps objects with undefined or inherited data property as is', async () => {
+      expect(await runAndCapture({ result: { data: undefined, value: 1 } })).toEqual({ value: '{"value":1}' })
+      expect(await runAndCapture({ result: Object.create({ data: 0 }, { value: { value: 1, enumerable: true } }) })).toEqual({ value: '{"value":1}' })
+    })
+
+    test('still reports an error found in unwrapped data', async () => {
+      const mockTool = new MockPlugin('tool1', () => ({ result: { data: { error: 'inner failure' } } }))
+      mockEngine.plugins = [mockTool]
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: {
+          program: {
+            steps: [
+              { id: 'step1', tool: 'tool1', args: {} }
+            ]
+          }
+        }
+      })
+
+      expect(result).toEqual({ error: 'inner failure', failedStep: 'step1' })
+    })
+
+    test.each([
+      { response: { result: { data: 0 } }, expected: 0 },
+      { response: { result: { data: false } }, expected: false },
+      { response: { result: { data: '' } }, expected: '' },
+      { response: { result: { data: null } }, expected: null },
+      { response: { result: 0 }, expected: 0 },
+      { response: '', expected: '' },
+    ])('keeps falsy final result $expected visible to the engine', async ({ response, expected }) => {
+      const mockTool = new MockPlugin('tool1', () => response)
+      mockEngine.plugins = [mockTool]
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: {
+          program: {
+            steps: [
+              { id: 'step1', tool: 'tool1', args: {} }
+            ]
+          }
+        }
+      })
+
+      // multi-llm-ts turns a falsy result into { error: 'No result from tool' }
+      expect(result).toStrictEqual({ result: expected })
+    })
+
+    test('program without steps still has no result', async () => {
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: { program: { steps: [] } }
+      })
+
+      expect(result).toBeNull()
+    })
+
     test('handles non-wrapped results', async () => {
       const mockTool = new MockPlugin('tool1', () => 'plain string result')
 

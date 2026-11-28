@@ -1,10 +1,12 @@
-import { exec } from 'child_process'
+import { ChildProcess, spawn } from 'child_process'
 import { realpathSync } from 'fs'
 import { sep } from 'path'
-import { promisify } from 'util'
 import PowerShell from 'powershell'
 
-const execAsync = promisify(exec)
+export const DEFAULT_TIMEOUT_MS = 15000
+export const MAX_TIMEOUT_MS = 60000
+const MAX_OUTPUT_LENGTH = 1024 * 1024 // 1MB
+const KILL_GRACE_MS = 2000
 
 export type ShellInfo = {
   shell: string
@@ -145,8 +147,19 @@ export const getShellInfo = (): ShellInfo => {
   }
 }
 
+// Models send the timeout as a number, a numeric string or nothing at all, and Node turns a
+// timer delay above 2^31-1 into 1ms: anything unusable becomes the default, the rest is capped
+export const normalizeTimeout = (timeoutMs: unknown): number => {
+  const value = typeof timeoutMs === 'string' && timeoutMs.trim() !== '' ? Number(timeoutMs) : timeoutMs
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
+    return DEFAULT_TIMEOUT_MS
+  }
+  return Math.min(Math.ceil(value), MAX_TIMEOUT_MS)
+}
+
 export const executeCommand = async (params: ShellExecuteParams): Promise<ShellExecuteResult> => {
-  const { command, restrictToPath, timeoutMs = 15000 } = params
+  const { command, restrictToPath } = params
+  const timeoutMs = normalizeTimeout(params.timeoutMs)
   let { cwd } = params
 
   // Validate working directory if restriction is enabled
@@ -171,36 +184,132 @@ export const executeCommand = async (params: ShellExecuteParams): Promise<ShellE
   }
 }
 
-const executeUnix = async (command: string, cwd: string, timeoutMs: number): Promise<ShellExecuteResult> => {
+// The shell is the leader of its own process group (see `detached` below),
+// so a negative pid reaches the shell and everything it started
+const killProcessGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
+  if (!pid) return
   try {
-    const { stdout, stderr } = await execAsync(command, {
-      cwd,
-      shell: process.env.SHELL || '/bin/bash',
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024, // 1MB
-      killSignal: 'SIGTERM'
+    process.kill(-pid, signal)
+  } catch {
+    try {
+      process.kill(pid, signal)
+    } catch {
+      // already gone
+    }
+  }
+}
+
+const executeUnix = (command: string, cwd: string, timeoutMs: number): Promise<ShellExecuteResult> => {
+  return new Promise((resolve) => {
+
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let overflow: string | null = null
+    let settled = false
+    let timeoutHandle: NodeJS.Timeout | undefined = undefined
+    let killHandle: NodeJS.Timeout | undefined = undefined
+    let giveUpHandle: NodeJS.Timeout | undefined = undefined
+
+    const finish = (result: ShellExecuteResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutHandle)
+      clearTimeout(killHandle)
+      clearTimeout(giveUpHandle)
+      resolve(result)
+    }
+
+    const failure = (code: number | null): ShellExecuteResult => {
+      if (timedOut) {
+        // 124 is standard timeout exit code
+        return { success: false, stdout, stderr, exitCode: 124, error: `Command timed out after ${timeoutMs}ms and was terminated` }
+      }
+      if (overflow) {
+        return { success: false, stdout, stderr, exitCode: 1, error: overflow }
+      }
+      return { success: false, stdout, stderr, exitCode: typeof code === 'number' && code !== 0 ? code : 1, error: `Command failed: ${command}\n${stderr}` }
+    }
+
+    let child: ChildProcess
+    try {
+      child = spawn(process.env.SHELL || '/bin/bash', ['-c', command], {
+        cwd,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch (error: any) {
+      resolve({ success: false, stdout, stderr, exitCode: 1, error: error.message })
+      return
+    }
+
+    // stops the shell and its children, harder if they do not go away,
+    // and stops waiting if something still holds the output open after that
+    const terminate = () => {
+      killProcessGroup(child.pid, 'SIGTERM')
+      killHandle = setTimeout(() => killProcessGroup(child.pid, 'SIGKILL'), KILL_GRACE_MS)
+      giveUpHandle = setTimeout(() => finish(failure(null)), KILL_GRACE_MS * 2)
+    }
+
+    const append = (current: string, chunk: string, name: string): string => {
+      if (overflow) return current
+      if (current.length + chunk.length > MAX_OUTPUT_LENGTH) {
+        overflow = `${name} maxBuffer length exceeded`
+        terminate()
+        return current + chunk.slice(0, MAX_OUTPUT_LENGTH - current.length)
+      }
+      return current + chunk
+    }
+
+    child.stdout?.setEncoding('utf8')
+    child.stderr?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => { stdout = append(stdout, chunk, 'stdout') })
+    child.stderr?.on('data', (chunk: string) => { stderr = append(stderr, chunk, 'stderr') })
+
+    child.on('error', (error: Error) => {
+      finish({ success: false, stdout, stderr, exitCode: 1, error: error.message })
     })
 
-    return {
-      success: true,
-      stdout: stdout || '',
-      stderr: stderr || '',
-      exitCode: 0
-    }
-  } catch (error: any) {
-    // Check if error is due to timeout
-    const isTimeout = error.killed && error.signal === 'SIGTERM'
-    const errorMsg = isTimeout
-      ? `Command timed out after ${timeoutMs}ms and was terminated`
-      : error.message
+    child.on('close', (code: number | null) => {
+      if (timedOut || overflow) {
+        // whatever survived the first signal and let go of the output
+        killProcessGroup(child.pid, 'SIGKILL')
+        finish(failure(code))
+      } else if (code === 0) {
+        finish({ success: true, stdout, stderr, exitCode: 0 })
+      } else {
+        finish(failure(code))
+      }
+    })
 
-    return {
-      success: false,
-      stdout: error.stdout || '',
-      stderr: error.stderr || '',
-      exitCode: error.code || (isTimeout ? 124 : 1), // 124 is standard timeout exit code
-      error: errorMsg
+    timeoutHandle = setTimeout(() => {
+      if (settled || overflow) return
+      timedOut = true
+      terminate()
+    }, timeoutMs)
+
+  })
+}
+
+// taskkill /T ends the process and the processes it started; without it only PowerShell goes away
+const killWindowsProcessTree = (proc: ChildProcess | undefined): void => {
+  if (!proc) return
+  const killShell = () => {
+    try {
+      proc.kill()
+    } catch {
+      // already gone
     }
+  }
+  if (!proc.pid) {
+    killShell()
+    return
+  }
+  try {
+    const killer = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    killer.on('error', killShell)
+  } catch {
+    killShell()
   }
 }
 
@@ -220,7 +329,7 @@ const executeWindows = async (command: string, cwd: string, timeoutMs: number): 
     const timeoutHandle = setTimeout(() => {
       if (!hasEnded) {
         isTimedOut = true
-        ps.dispose() // Kill the PowerShell process
+        killWindowsProcessTree((ps as any).proc) // Kill the PowerShell process and its children
         resolve({
           success: false,
           stdout,
@@ -230,7 +339,6 @@ const executeWindows = async (command: string, cwd: string, timeoutMs: number): 
         })
       }
     }, timeoutMs)
-
     ps.on('output', (data: string) => {
       stdout += data
     })

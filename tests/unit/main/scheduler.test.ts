@@ -41,7 +41,7 @@ describe('Scheduler', () => {
   let mockAgents: Agent[]
   let originalConsoleLog: any
   let originalSetTimeout: any
-  let originalClearInterval: any
+  let originalClearTimeout: any
 
   // Helper function to create a mock agent
   const createMockAgent = (overrides: Partial<Agent> = {}): Agent => {
@@ -65,14 +65,14 @@ describe('Scheduler', () => {
     originalConsoleLog = console.log
     console.log = vi.fn()
 
-    // Mock setTimeout and clearInterval
+    // Mock setTimeout and clearTimeout
     originalSetTimeout = global.setTimeout
-    originalClearInterval = global.clearInterval
+    originalClearTimeout = global.clearTimeout
     global.setTimeout = vi.fn((fn) => {
       if (typeof fn === 'function') fn()
       return 'timeout-id' as any
     }) as any
-    global.clearInterval = vi.fn()
+    global.clearTimeout = vi.fn()
 
     // Create mock app
     mockApp = {
@@ -131,7 +131,7 @@ describe('Scheduler', () => {
     // Restore original functions
     console.log = originalConsoleLog
     global.setTimeout = originalSetTimeout
-    global.clearInterval = originalClearInterval
+    global.clearTimeout = originalClearTimeout
     
     // Stop scheduler to clean up
     scheduler.stop()
@@ -150,7 +150,7 @@ describe('Scheduler', () => {
     scheduler.timeout = 'some-timeout' as any
     scheduler.stop()
     
-    expect(global.clearInterval).toHaveBeenCalledWith('some-timeout')
+    expect(global.clearTimeout).toHaveBeenCalledWith('some-timeout')
     expect(scheduler.timeout).toBe(null)
   })
 

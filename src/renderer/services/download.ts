@@ -1,6 +1,8 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import { store } from './store'
+import { t } from './i18n'
+import Dialog from '@renderer/utils/dialog'
 
 export const getFileContents = (url: string) => {
   return window.api.file.read(url.replace('file://', ''))
@@ -24,6 +26,30 @@ export const saveFileContents = (extension: string, contents: string) => {
   return fileUrl
 }
   
+/**
+ * Downloads a file to a place the user picks, and tells the user when it failed.
+ * The main process answers null for a failure (HTTP error, network, disk) and an
+ * empty string when the user cancelled the save dialog.
+ */
+export const downloadWithPrompt = (url: string, filename: string): string|null => {
+
+  const fileUrl = window.api.file.download({
+    url: url,
+    properties: {
+      prompt: true,
+      directory: 'downloads',
+      filename: filename,
+    }
+  })
+
+  if (fileUrl === null) {
+    Dialog.alert(t('common.downloadError'))
+  }
+
+  return fileUrl
+
+}
+
 export const download = (url: string) => {
 
   // get extension from url

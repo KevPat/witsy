@@ -23,6 +23,8 @@ export function purgeOnnxRuntime(buildPath: string, platform: string, arch: stri
     dirsToRemove.push('linux', 'darwin/x64', 'win32');
   } else if (platform === 'win32' && arch === 'x64') {
     dirsToRemove.push('linux', 'darwin', 'win32/arm64');
+  } else if (platform === 'win32' && arch === 'arm64') {
+    dirsToRemove.push('linux', 'darwin', 'win32/x64');
   }
 
   for (const dir of dirsToRemove) {

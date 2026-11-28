@@ -71,14 +71,19 @@ export class WitsyAPI {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
 
+    // a read can end anywhere, also in the middle of a line or of a multi-byte character:
+    // only complete lines are processed, the rest waits here for the next read
+    let buffer = ''
+
     while (true) {
       const { value, done } = await reader.read()
-      if (done) break
 
-      const text = decoder.decode(value, { stream: true })
-      const lines = text.split('\n')
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = done ? '' : lines.pop()
 
-      for (const line of lines) {
+      for (let line of lines) {
+        if (line.endsWith('\r')) line = line.slice(0, -1)
         if (line.startsWith('data: ')) {
           const data = line.slice(6)
           if (data === '[DONE]') return
@@ -90,6 +95,8 @@ export class WitsyAPI {
           }
         }
       }
+
+      if (done) break
     }
   }
 

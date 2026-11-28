@@ -13,10 +13,18 @@ export const unregisterShortcuts = () => {
   globalShortcut.unregisterAll();
 }
 
-export const registerShortcuts = (app: App, callbacks: ShortcutCallbacks): void => {
+export type RefusedShortcut = { name: string, accelerator: string }
+
+// shortcuts the OS refused at the last registration (already owned by another application)
+let refusedShortcuts: RefusedShortcut[] = []
+
+export const getRefusedShortcuts = (): RefusedShortcut[] => [...refusedShortcuts]
+
+export const registerShortcuts = (app: App, callbacks: ShortcutCallbacks): RefusedShortcut[] => {
 
   // unregister
   unregisterShortcuts();
+  refusedShortcuts = []
 
   // load the config
   const config = loadSettings(app);
@@ -33,6 +41,9 @@ export const registerShortcuts = (app: App, callbacks: ShortcutCallbacks): void 
   registerShortcut('realtime', config.shortcuts.realtime, callbacks.realtime);
   registerShortcut('studio', config.shortcuts.studio, callbacks.studio);
   registerShortcut('forge', config.shortcuts.forge, callbacks.forge);
+
+  // the caller tells the user
+  return getRefusedShortcuts()
 
 }
 
@@ -80,6 +91,7 @@ export const shortcutAccelerator = (shortcut?: Shortcut|null): string => {
 
 const registerShortcut = (name: string, shortcut: Shortcut, callback: () => void): void => {
 
+
   // check
   if (!shortcut || !callback) {
     return
@@ -95,10 +107,16 @@ const registerShortcut = (name: string, shortcut: Shortcut, callback: () => void
   console.debug('[scut] Registering shortcut', name, accelerator)
 
   // do it
+  // (register does not throw when the OS refuses: it returns false)
   try {
-    globalShortcut.register(accelerator, callback)
+    const registered = globalShortcut.register(accelerator, callback)
+    if (registered === false) {
+      console.warn(`[scut] Shortcut ${accelerator} for ${name} was refused: it is probably used by another application`)
+      refusedShortcuts.push({ name, accelerator })
+    }
   } catch (error) {
     console.error(`[scut] Failed to register shortcut for ${name}:`, error)
+    refusedShortcuts.push({ name, accelerator })
   }
 
 };

@@ -42,9 +42,23 @@ export default class extends Plugin {
 
     // if not screenshot run it first
     if (parameters.action !== 'screenshot') {
-      const result = window.api.computer.executeAction(parameters as ComputerAction)
-      if (result === false) {
-        return { content: 'An error occured while executing this action' }
+      let failure: string | null = null
+      try {
+        // success is `true` or a cursor position: anything else is a failure
+        const result = window.api.computer.executeAction(parameters as ComputerAction)
+        if (!result || result.error) {
+          failure = typeof result?.error === 'string' ? `: ${result.error}` : ''
+        }
+      } catch (e) {
+        failure = `: ${e instanceof Error ? e.message : String(e)}`
+      }
+      if (failure !== null) {
+        // this result is spread into an Anthropic tool_result block:
+        // `is_error` is the only way to flag it (no `error` attribute)
+        return {
+          content: `An error occurred while executing the "${parameters.action}" action${failure}. Do not assume it was performed.`,
+          is_error: true
+        }
       }
     }
 

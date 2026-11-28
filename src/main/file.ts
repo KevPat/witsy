@@ -193,11 +193,21 @@ export const pickDirectory = (app: App): string|null => {
 
 }
 
-export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[]): string[] => {
+export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[], visited: Set<string> = new Set()): string[] => {
 
   let fileList: string[] = []
 
   try {
+
+    // a directory is listed once: a symbolic link that leads back to it (a link to a parent) would never end
+    let realPath = path.resolve(directoryPath)
+    try {
+      realPath = fs.realpathSync(directoryPath)
+    } catch { /* not resolvable: listed by its own path */ }
+    if (visited.has(realPath)) {
+      return fileList
+    }
+    visited.add(realPath)
 
     // Read the contents of the directory
     const files = fs.readdirSync(directoryPath)
@@ -215,11 +225,18 @@ export const listFilesRecursively = (directoryPath: string, excludePatterns?: st
       }
 
       const filePath = path.join(directoryPath, file)
-      const stat = fs.statSync(filePath);
+
+      // a broken symbolic link (or a file removed meanwhile) is skipped, not the rest of its directory
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue
+      }
 
       if (stat.isDirectory()) {
         // If it's a directory, recursively call the function
-        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns));
+        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns, visited));
       } else {
         // If it's a file, add it to the list
         fileList.push(filePath);
@@ -394,6 +411,11 @@ export const findProgram = (app: App, program: string) => {
 }
 
 export const writeFileContents = (app: App, payload: FileSaveParams): string => {
+  return saveFileContents(app, payload).url
+}
+
+// same as writeFileContents, and tells a save dialog the user cancelled from a failure
+const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null, cancelled: boolean } => {
 
   // defaults
   const defaultPayload = {
@@ -444,21 +466,23 @@ export const writeFileContents = (app: App, payload: FileSaveParams): string => 
     destinationURL = dialog.showSaveDialogSync({
       defaultPath: destinationURL
     });
-    if (!destinationURL) return null;
+    if (!destinationURL) return { url: null, cancelled: true };
   }
 
   // try
   try {
     fs.writeFileSync(destinationURL, Buffer.from(payload.contents, 'base64'));
-    return `file://${destinationURL}`;
+    return { url: `file://${destinationURL}`, cancelled: false };
   } catch (error) {
     console.error('Error while writing file', error);
-    return null
+    return { url: null, cancelled: false }
   }
 
 }
 
-export const downloadFile = async (app: App, payload: FileDownloadParams) => {
+// returns the url of the saved file, null when the download or the save failed,
+// and an empty string when the user cancelled the save dialog (nothing to report)
+export const downloadFile = async (app: App, payload: FileDownloadParams): Promise<string|null> => {
 
   const savePayload: FileSaveParams = {
     contents: '',
@@ -471,8 +495,12 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     // get contents
     if (payload.url.startsWith('file://')) {
 
-      savePayload.contents = fs.readFileSync(payload.url.slice(7)).toString('base64');
-      //savePayload.properties.filename = payload.url.split('?')[0].split(path.sep).pop();
+      const source = payload.url.slice(7);
+      savePayload.contents = fs.readFileSync(source).toString('base64');
+      // the url is reset below: without a file name, the copy is named after its source
+      if (!payload.properties?.filename) {
+        savePayload.properties = { ...payload.properties, filename: path.basename(source) }
+      }
       savePayload.url = null
 
     } else {
@@ -483,6 +511,11 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
       // }
 
       const response = await fetch(payload.url);
+      if (!response.ok) {
+        // the body of an error answer is an error page, not the file
+        console.error(`Error while downloading file: HTTP ${response.status}`);
+        return null
+      }
       const contents = await response.arrayBuffer();
       savePayload.contents = Buffer.from(contents).toString('base64');
 
@@ -492,7 +525,8 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     }
 
     // now just save
-    return writeFileContents(app, savePayload);
+    const saved = saveFileContents(app, savePayload);
+    return saved.cancelled ? '' : saved.url;
 
   } catch (error) {
     console.error('Error while downloading file', error);
@@ -556,11 +590,14 @@ const SKIP_DIRECTORIES = new Set([
 /**
  * Find files recursively with glob filtering
  */
-const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): string[] => {
+const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): { files: string[], capped: boolean } => {
   const files: string[] = []
   const stack: string[] = [dir]
 
-  while (stack.length > 0 && files.length < maxFiles) {
+  // set when a file had to be left out because of maxFiles
+  let capped = false
+
+  while (stack.length > 0 && !capped) {
     const currentDir = stack.pop()!
 
     let entries: fs.Dirent[]
@@ -571,8 +608,6 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
     }
 
     for (const entry of entries) {
-      if (files.length >= maxFiles) break
-
       // Skip hidden files and common non-code directories
       if (entry.name.startsWith('.') || SKIP_DIRECTORIES.has(entry.name)) {
         continue
@@ -589,12 +624,16 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
             continue
           }
         }
+        if (files.length >= maxFiles) {
+          capped = true
+          break
+        }
         files.push(fullPath)
       }
     }
   }
 
-  return files
+  return { files, capped }
 }
 
 /**
@@ -617,10 +656,17 @@ export const searchContent = (
 
   const matches: SearchMatch[] = []
   let truncated = false
+  let incomplete = false
 
   // Handle file vs directory
   const stats = fs.statSync(basePath)
-  const files = stats.isFile() ? [basePath] : findFilesForSearch(basePath, glob)
+  const { files, capped } = stats.isFile() ? { files: [basePath], capped: false } : findFilesForSearch(basePath, glob)
+
+  // the result is also incomplete when not every file could be searched
+  if (capped) {
+    truncated = true
+    incomplete = true
+  }
 
   for (const file of files) {
     if (matches.length >= maxResults) {
@@ -632,6 +678,8 @@ export const searchContent = (
     try {
       content = fs.readFileSync(file, 'utf-8')
     } catch {
+      // a file that cannot be read was not searched
+      incomplete = true
       continue
     }
 
@@ -677,6 +725,7 @@ export const searchContent = (
   return {
     matches,
     filesSearched: files.length,
-    truncated
+    truncated,
+    ...(incomplete ? { incomplete: true } : {}),
   }
 }

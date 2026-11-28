@@ -3,6 +3,7 @@ import { Application } from 'types/automation';
 import { clipboard } from 'electron';
 import { removeMarkdown } from '@excalidraw/markdown-to-text';
 import Automator from './automator'
+import { ClipboardSnapshot, restoreClipboard, saveClipboard } from './clipboard_snapshot'
 import * as window from '../window'
 import { wait } from '../utils'
 
@@ -50,6 +51,9 @@ export default class Automation {
 
   static automate = async (text: string, sourceApp: Application|null, action: AutomationAction): Promise<boolean> => {
 
+    // what the user had on the clipboard (text, image...) is put back whatever happens
+    let snapshot: ClipboardSnapshot|null = null;
+
     try {
 
       const result = removeMarkdown(text, {
@@ -58,7 +62,7 @@ export default class Automation {
       });
 
       // copy to clipboard
-      const clipboardText = clipboard.readText();
+      snapshot = saveClipboard();
       const copied = await Automation.writeTextToClipboard(result);
       if (!copied) {
         return false;
@@ -80,14 +84,16 @@ export default class Automation {
         await automator.pasteClipboard()
       }
 
-      // restore clipboard
-      await Automation.writeTextToClipboard(clipboardText);
-
       // done
       return true;
 
     } catch (error) {
       console.error('Error while testing', error);
+    } finally {
+      // restore clipboard
+      if (snapshot) {
+        restoreClipboard(snapshot);
+      }
     }
 
     // too bad

@@ -62,6 +62,9 @@ import { AGENT_API_BASE_PATH } from './agent_webhook';
 import { HttpServer } from './http_server';
 import { importOpenAI } from './import_oai';
 import { importMarkdown } from './import_md';
+import { safeIpcMain } from './ipc_safe';
+
+const electronIpcMain = ipcMain;
 
 export const installIpc = (
   store: Store,
@@ -73,6 +76,9 @@ export const installIpc = (
   registerShortcuts: () => void,
   quitApp: () => void,
 ): void => {
+
+  // a listener that throws or rejects still replies: the renderer is blocked while sendSync waits
+  const ipcMain = safeIpcMain(electronIpcMain);
 
   ipcMain.on(IPC.MAIN_WINDOW.UPDATE_MODE, (event, mode) => {
     window.setMainWindowMode(mode);
@@ -208,6 +214,10 @@ export const installIpc = (
 
   ipcMain.on(IPC.CONFIG.LOAD, (event) => {
     event.returnValue = JSON.stringify(config.loadSettings(app));
+  });
+
+  ipcMain.on(IPC.CONFIG.GET_KEY_STORAGE_STATUS, (event) => {
+    event.returnValue = config.getApiKeyStorageStatus();
   });
 
   ipcMain.on(IPC.CONFIG.SAVE, (event, payload) => {

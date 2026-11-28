@@ -4,7 +4,7 @@
       <label>
         {{ t('common.notes') }}
         <div class="tag info">{{ noteCount() }}</div>
-        <div class="subtitle">Add notes to be indexed and searchable</div>
+        <div class="subtitle">{{ t('docRepo.note.subtitle') }}</div>
       </label>
       <div class="icon"><ChevronDownIcon /></div>
     </div>
@@ -16,8 +16,8 @@
             <div class="text">{{ note.title }}</div>
           </div>
           <div class="actions">
-            <div class="tag info" v-if="processingItems.includes(note.uuid)">Indexing</div>
-            <div class="tag success" v-else>Ready</div>
+            <div class="tag info" v-if="processingItems.includes(note.uuid)">{{ t('docRepo.status.wip') }}</div>
+            <div class="tag success" v-else>{{ t('docRepo.status.done') }}</div>
             <PencilIcon
               class="icon edit"
               v-tooltip="{ text: t('common.edit'), position: 'left' }"

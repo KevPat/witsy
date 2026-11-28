@@ -50,11 +50,13 @@ vi.mock('@main/windows', () => ({
 class MockWriteStream extends EventEmitter {
   write = vi.fn()
   close = vi.fn()
+  destroy = vi.fn(() => { this.emit('close') })
 }
 
 // Mock request with end method
 class MockRequest extends EventEmitter {
   end = vi.fn()
+  abort = vi.fn()
 }
 
 beforeEach(() => {
@@ -93,6 +95,49 @@ test('startDownload should initiate download for macOS', () => {
   expect(typeof downloadId).toBe('string')
 })
 
+test('startDownload should download the install script on Linux', () => {
+  Object.defineProperty(process, 'platform', {
+    value: 'linux',
+    writable: true
+  })
+
+  const mockRequest = new MockRequest()
+  vi.mocked(net.request).mockReturnValue(mockRequest as any)
+
+  startDownload('/test')
+
+  expect(net.request).toHaveBeenCalledWith('https://ollama.com/install.sh')
+  expect(path.join).toHaveBeenCalledWith('/test', 'ollama-install.sh')
+})
+
+test('startDownload should report an HTTP error instead of saving the error page', () => {
+  const mockRequest = new MockRequest()
+  const mockResponse = new EventEmitter() as any
+
+  vi.mocked(net.request).mockReturnValue(mockRequest as any)
+  vi.mocked(path.join).mockReturnValue('/test/Ollama.dmg')
+
+  startDownload('/test')
+
+  mockResponse.statusCode = 404
+  mockResponse.headers = { 'content-length': '9' }
+  mockRequest.emit('response', mockResponse)
+  mockResponse.emit('data', Buffer.from('Not Found'))
+  mockResponse.emit('end')
+
+  expect(fs.createWriteStream).not.toHaveBeenCalled()
+  expect(mockRequest.abort).toHaveBeenCalled()
+  expect(emitIpcEvent).toHaveBeenCalledWith(
+    mainWindow,
+    'ollama-download-error',
+    expect.objectContaining({
+      error: 'HTTP 404'
+    })
+  )
+  expect(emitIpcEvent).not.toHaveBeenCalledWith(mainWindow, 'ollama-download-complete', expect.anything())
+  expect(getDownloadStatus()).toBeNull()
+})
+
 test('startDownload should throw error if download already in progress', () => {
   const mockRequest = new MockRequest()
   vi.mocked(net.request).mockReturnValue(mockRequest as any)
@@ -116,6 +161,7 @@ test('startDownload should handle download progress', () => {
   startDownload('/test')
   
   // Simulate response
+  mockResponse.statusCode = 200
   mockResponse.headers = { 'content-length': '1000' }
   mockRequest.emit('response', mockResponse)
   
@@ -147,6 +193,7 @@ test('startDownload should handle download completion', () => {
   startDownload('/test')
   
   // Simulate response with headers and completion
+  mockResponse.statusCode = 200
   mockResponse.headers = { 'content-length': '1000' }
   mockRequest.emit('response', mockResponse)
   mockResponse.emit('end')
@@ -174,6 +221,7 @@ test('startDownload should handle download error', () => {
   startDownload('/test')
   
   // Simulate response with headers and error
+  mockResponse.statusCode = 200
   mockResponse.headers = { 'content-length': '1000' }
   mockRequest.emit('response', mockResponse)
   mockResponse.emit('error', error)
@@ -190,18 +238,47 @@ test('startDownload should handle download error', () => {
 
 test('cancelDownload should cancel ongoing download', () => {
   const mockRequest = new MockRequest()
+  const mockResponse = new EventEmitter() as any
+  const mockWriteStream = new MockWriteStream()
+
   vi.mocked(net.request).mockReturnValue(mockRequest as any)
+  vi.mocked(fs.createWriteStream).mockReturnValue(mockWriteStream as any)
   vi.mocked(path.join).mockReturnValue('/test/Ollama.dmg')
-  vi.mocked(fs.existsSync).mockReturnValue(true)
   
   // Start download
   startDownload('/test')
+  mockResponse.statusCode = 200
+  mockResponse.headers = { 'content-length': '1000' }
+  mockRequest.emit('response', mockResponse)
+  mockResponse.emit('data', Buffer.from('test data'))
   
   // Cancel download
   const result = cancelDownload()
   
   expect(result).toBe(true)
+  expect(mockRequest.abort).toHaveBeenCalled()
+  expect(mockWriteStream.destroy).toHaveBeenCalled()
   expect(fs.unlinkSync).toHaveBeenCalledWith('/test/Ollama.dmg')
+  expect(getDownloadStatus()).toBeNull()
+
+  // the end of the aborted transfer is not a completed download
+  mockResponse.emit('end')
+  expect(emitIpcEvent).not.toHaveBeenCalledWith(mainWindow, 'ollama-download-complete', expect.anything())
+})
+
+test('cancelDownload should not delete a file the download never created', () => {
+  const mockRequest = new MockRequest()
+  vi.mocked(net.request).mockReturnValue(mockRequest as any)
+  vi.mocked(path.join).mockReturnValue('/test/Ollama.dmg')
+  vi.mocked(fs.existsSync).mockReturnValue(true)
+
+  // no response yet: whatever is at that path is not ours
+  startDownload('/test')
+  const result = cancelDownload()
+
+  expect(result).toBe(true)
+  expect(mockRequest.abort).toHaveBeenCalled()
+  expect(fs.unlinkSync).not.toHaveBeenCalled()
 })
 
 test('cancelDownload should return false if no download in progress', () => {

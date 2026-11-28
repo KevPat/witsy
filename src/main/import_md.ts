@@ -27,7 +27,8 @@ const buildRoleTranslationMap = (app: App): Map<string, 'system' | 'user' | 'ass
 }
 
 export const parseMarkdownChat = (app: App, markdown: string): Chat => {
-  const lines = markdown.split('\n')
+  // a UTF-8 byte order mark would hide the "# " of the title line
+  const lines = markdown.replace(/^\uFEFF/, '').split('\n')
   const roleMap = buildRoleTranslationMap(app)
 
   let title = ''

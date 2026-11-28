@@ -8,46 +8,28 @@ type PrintPdfOptions = {
   landscape?: boolean
 }
 
-const waitForReadyState = async (window: BrowserWindow): Promise<void> => {
-  await window.webContents.executeJavaScript(`
-    new Promise((resolve) => {
-      if (document.readyState === 'complete') {
-        resolve(true);
-        return;
-      }
-      window.addEventListener('load', () => resolve(true), { once: true });
-    });
-  `)
-
-  await window.webContents.executeJavaScript(`
-    (async () => {
-      if (document.fonts?.ready) {
-        await document.fonts.ready;
-      }
-      return true;
-    })();
-  `)
-}
-
 export const printPdfFromHtml = async (options: PrintPdfOptions): Promise<Buffer> => {
   const tmpFilePath = path.join(os.tmpdir(), `witsy-pdf-${Date.now()}-${Math.random().toString(36).slice(2)}.html`)
   const printWindow = new BrowserWindow({
     show: false,
     width: 1200,
     height: 1600,
+    // the document is a static snapshot built by the renderer (images are inlined, canvases
+    // are converted): it comes from chat content, so nothing in it may run or read other origins
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false,
+      webSecurity: true,
+      javascript: false,
       defaultEncoding: 'UTF-8',
     }
   })
 
   try {
     await fs.writeFile(tmpFilePath, options.html, 'utf8')
+    // resolves once the page and its resources (images, style sheets, fonts in use) are loaded
     await printWindow.loadFile(tmpFilePath)
-    await waitForReadyState(printWindow)
 
     return await printWindow.webContents.printToPDF({
       landscape: options.landscape ?? false,

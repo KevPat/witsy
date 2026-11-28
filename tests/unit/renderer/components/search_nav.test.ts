@@ -1,12 +1,12 @@
 
-import { vi, beforeAll, beforeEach, afterAll, afterEach, expect, test } from 'vitest'
+import { vi, beforeAll, beforeEach, afterAll, afterEach, describe, expect, test } from 'vitest'
 import { mount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
 import { SearchState } from '@/renderer/screens/Chat.vue'
 import { useWindowMock } from '@tests/mocks/window'
 import { store } from '@services/store'
 import SearchNav from '@components/SearchNav.vue'
 import Chat from '@models/chat'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 enableAutoUnmount(afterAll)
 
@@ -264,4 +264,93 @@ test('Local search Escape closes search', async () => {
   await wrapper.find('.search-input').trigger('keydown', { key: 'Escape' })
   expect(searchState.localSearch.value).toBe(false)
   expect(searchState.filter.value).toBeNull()
+})
+
+describe('Cleanup on unmount', () => {
+
+  // own state and scroller so that the shared wrapper does not interfere
+  let localState: SearchState
+  let localScroller: HTMLDivElement
+  let scan: ReturnType<typeof vi.spyOn>
+
+  const mountLocalNav = (chat?: Chat) => {
+    return mount(SearchNav, {
+      props: { chat: chat ?? new Chat('SearchNav cleanup'), scroller: localScroller },
+      global: { provide: { searchState: localState } },
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localState = { filter: ref<string | null>(null), navigate: ref(0), localSearch: ref(false) }
+    localScroller = document.createElement('div')
+    localScroller.innerHTML = '<mark>test</mark> some text <mark>test</mark>'
+    scan = vi.spyOn(localScroller, 'querySelectorAll')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('Scans marks after the delay when still mounted', async () => {
+    const w = mountLocalNav()
+    localState.filter.value = 'test'
+    await nextTick()
+    await nextTick()
+    expect(vi.getTimerCount()).toBe(1)
+    expect(scan).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(200)
+    expect(scan).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(localScroller.querySelectorAll('mark')[0].classList.contains('active')).toBe(true)
+    w.unmount()
+  })
+
+  test('Pending scan is cancelled on unmount', async () => {
+    const w = mountLocalNav()
+    localState.filter.value = 'test'
+    await nextTick()
+    await nextTick()
+    expect(vi.getTimerCount()).toBe(1)
+
+    w.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(1000)
+    expect(scan).not.toHaveBeenCalled()
+    expect(localScroller.querySelector('mark.active')).toBeNull()
+  })
+
+  test('Scan is not scheduled when unmounted before the next tick', async () => {
+    const w = mountLocalNav()
+    localState.filter.value = 'test'
+
+    // the watcher has run but its deferred part has not
+    await nextTick()
+    expect(vi.getTimerCount()).toBe(0)
+    w.unmount()
+
+    await nextTick()
+    await nextTick()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(1000)
+    expect(scan).not.toHaveBeenCalled()
+  })
+
+  test('Overlapping scans leave a single timer that unmount cancels', async () => {
+    const w = mountLocalNav()
+
+    // filter and chat change in the same tick: two scans are requested
+    localState.filter.value = 'test'
+    await w.setProps({ chat: new Chat('SearchNav cleanup 2') })
+    await nextTick()
+    await nextTick()
+    expect(vi.getTimerCount()).toBe(1)
+
+    w.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(1000)
+    expect(scan).not.toHaveBeenCalled()
+  })
+
 })

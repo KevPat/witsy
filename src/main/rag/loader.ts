@@ -71,6 +71,9 @@ export default class {
 
   async loadUrl(url: string): Promise<string> {
     const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`Failed to load ${url}: ${await this.httpError(response)}`)
+    }
     const html = await response.text()
     return convert(html, {
       wordwrap: false,
@@ -83,6 +86,9 @@ export default class {
     try {
       // Fetch the sitemap
       const response = await fetch(sitemapUrl)
+      if (!response.ok) {
+        throw new Error(await this.httpError(response))
+      }
       const xml = await response.text()
 
       // Parse the XML
@@ -105,6 +111,12 @@ export default class {
       console.error('Error loading sitemap:', error)
       throw new Error(`Failed to load sitemap: ${error.message}`)
     }
+  }
+
+  // an HTTP error page is not the content that was asked for: its body is dropped
+  private async httpError(response: Response): Promise<string> {
+    await response.body?.cancel().catch(() => {})
+    return `HTTP ${response.status} ${response.statusText}`.trim()
   }
 
   async loadFile(filepath: string): Promise<string> {

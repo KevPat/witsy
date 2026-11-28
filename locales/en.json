@@ -51,6 +51,7 @@
     "done": "Done",
     "download": "Download",
     "downloadCsv": "CSV",
+    "downloadError": "The download failed. The file could not be retrieved or saved.",
     "downloadXlsx": "Excel",
     "edit": "Edit",
     "enabled": "Enabled",
@@ -437,6 +438,10 @@
     "grabError": "An error occurred while trying to grab the text. Please check Privacy & Security settings.",
     "readAloud": {
       "emptyText": "Please highlight the text you want to read aloud."
+    },
+    "shortcutRefused": {
+      "text": "{shortcuts} could not be registered. Another application is probably using it. You can pick another shortcut in Settings.",
+      "title": "Shortcut not available"
     }
   },
   "autoupdate": {
@@ -446,21 +451,32 @@
     "uptodate": "You are already using the latest version of @:{'common.appName'}."
   },
   "backup": {
+    "export": {
+      "done": {
+        "detail": "API keys, tokens and passwords are never written to a backup. On another computer, you will have to enter them again in Settings.",
+        "message": "Your data and settings have been saved to {file}.",
+        "title": "Backup Created"
+      }
+    },
     "restore": {
       "confirm": {
         "detail": "This will overwrite your current settings, history, experts, and commands. This action cannot be undone.",
+        "keys": "API keys, tokens and passwords are not part of a backup and are never restored. The API keys stored on this computer are kept. Only restore a backup that you made yourself or that you trust.",
         "message": "Are you sure you want to restore your data and settings from a backup?",
         "restore": "Restore",
         "title": "Restore Backup"
       },
       "error": {
+        "damaged": "The backup is damaged: {file} cannot be read. Nothing was restored.",
         "detail": "Error: {error}",
         "message": "Failed to restore settings from backup.",
+        "notBackup": "This file is not a Witsy backup. Nothing was restored.",
         "title": "Restore Failed"
       },
       "files": "Backup files",
       "restart": {
         "detail": "The application will now restart to apply all changes.",
+        "keys": "API keys, tokens and passwords are not part of a backup. The API keys that were on this computer have been kept. On a new computer, enter your keys again in Settings.",
         "message": "Data and settings have been successfully restored from backup.",
         "title": "Restore Complete"
       }
@@ -949,7 +965,8 @@
       "edit": {
         "title": "Edit Note"
       },
-      "noNotes": "You don't have any notes yet. Click on the button below to add your first note."
+      "noNotes": "You don't have any notes yet. Click on the button below to add your first note.",
+      "subtitle": "Add notes to be indexed and searchable"
     },
     "scan": {
       "filesOnly": "Files only",
@@ -1949,6 +1966,10 @@
         "title": "Error during import",
         "unknown": "Please select a valid ChatGPT conversations.json data file."
       },
+      "partial": {
+        "message": "{imported} conversation(s) were imported. {conversations} conversation(s) and {attachments} image(s) or file(s) could not be imported and were skipped.",
+        "title": "Import completed with skipped items"
+      },
       "success": {
         "message": "You can find your ChatGPT conversations in the folder view of chats.",
         "title": "Import successful!"
@@ -2002,6 +2023,14 @@
       "titling": "You are an assistant whose task is to find the best title for the conversation below. The title should be just a few words.",
       "titlingUser": "Provide a title for the conversation above. Do not return anything other than the title. Do not wrap responses in quotes."
     }
+  },
+  "linkEditor": {
+    "edit": "Edit Link",
+    "insert": "Insert Link",
+    "placeholder": "Link text",
+    "remove": "Remove Link",
+    "text": "Text",
+    "update": "Update"
   },
   "main": {
     "chat": {
@@ -2217,6 +2246,10 @@
     },
     "content": {
       "empty": "Empty content"
+    },
+    "mermaid": {
+      "copied": "Copied!",
+      "copyCode": "Copy Code"
     },
     "reasoning": {
       "active": "Thinking",
@@ -2715,6 +2748,8 @@
       },
       "resetToDefault": "Reset to default value",
       "safeKeys": "Store API keys in system secure storage",
+      "safeKeysUndecryptable": "Some API keys could not be read from the system secure storage and are left untouched: {keys}. They will be read again once the system keychain or keyring is unlocked, or you can type them again.",
+      "safeKeysWeak": "No system keyring (GNOME Keyring, KWallet) is available: API keys are only obfuscated, not encrypted. Install and unlock a keyring to protect them.",
       "systemInstructions": "System instructions"
     },
     "chat": {
@@ -3216,6 +3251,7 @@
         "copyToClipboard": "Automatically copy dictated text to clipboard",
         "linuxPermissionWarning": "On Linux, native shortcuts require access to input devices. Run <code>sudo usermod -a -G input $USER</code> then log out and back in.",
         "nativeShortcutsHint": "In addition to regular shortcuts, you can use the following \"key-less\" shortcuts:<ul><li>{combos}</li><li>{single}</li></ul>",
+        "nativeShortcutsUnsupported": "Key-less shortcuts (a single modifier key), double tap and push-to-talk are not available on this platform. Use a regular shortcut such as Ctrl+Shift+D.",
         "shortcutKey": "Shortcut Key"
       },
       "selectModel": "Select a model",
@@ -3374,6 +3410,12 @@
     "noApps": "No web apps configured",
     "preserveColors": "Preserve webapp icon colors",
     "title": "Web Apps",
+    "toolbar": {
+      "back": "Go back",
+      "forward": "Go forward",
+      "home": "Go to home page",
+      "reload": "Reload"
+    },
     "url": "URL",
     "validation": {
       "requiredFields": "Name and URL are required"

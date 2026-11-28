@@ -1,5 +1,5 @@
 
-import { BrowserWindow, Menu } from 'electron'
+import { BrowserWindow, Menu, screen } from 'electron'
 import { beforeAll, beforeEach, expect, Mock, test, vi } from 'vitest'
 import * as window from '@main/window'
 import { store } from '@services/store'
@@ -267,6 +267,22 @@ test('Update prompt anywhere window', async () => {
   expectCreateWebPreferences(callParams)
   window.openPromptAnywhere({ promptId: 'id' })
   expect(BrowserWindow.prototype.webContents.send).toHaveBeenLastCalledWith('show', { promptId: 'id'})
+})
+
+test.each([
+  ['right of the primary display', { x: 1920, y: 0, width: 2560, height: 1440 }, { x: 1920, y: 25 }, { x: 1920, y: 24, width: 2560, height: 1416 }],
+  ['left of and above the primary display', { x: -1280, y: -720, width: 1280, height: 720 }, { x: -1280, y: -720 }, { x: -1280, y: -721, width: 1280, height: 721 }],
+])('Prompt anywhere window covers a display %s', async (_name, bounds, workArea, expected) => {
+  const defaultDisplay = vi.mocked(screen.getDisplayNearestPoint).getMockImplementation()
+  vi.mocked(screen.getDisplayNearestPoint).mockImplementation(() => ({
+    id: 2, bounds, workArea, workAreaSize: { width: bounds.width, height: bounds.height }
+  } as Electron.Display))
+  try {
+    window.openPromptAnywhere({ promptId: 'id' })
+    expect(BrowserWindow.prototype.setBounds).toHaveBeenLastCalledWith(expected)
+  } finally {
+    vi.mocked(screen.getDisplayNearestPoint).mockImplementation(defaultDisplay)
+  }
 })
 
 test('Resize prompt anywhere window', async () => {

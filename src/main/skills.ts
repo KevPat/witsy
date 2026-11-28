@@ -105,12 +105,13 @@ const resolveSkillLocations = (app: App, workspaceId: string, config: Configurat
     ? config.skills.locations
     : []
 
+  // an empty entry would resolve to the working directory: drop it before it is resolved
   const locations = [
     ...defaultSkillLocations(app, workspaceId),
     ...customLocations,
   ]
+    .filter(location => typeof location === 'string' && location.trim().length > 0)
     .map(location => normalizePath(expandHome(app, location)))
-    .filter(Boolean)
 
   return [...new Set(locations)]
 }
@@ -402,13 +403,20 @@ export const uninstallSkill = (app: App, workspaceId: string, skillId: string): 
   }
 }
 
+// device names that Windows reserves, with or without an extension
+const kReservedFolderNames = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
+
+// The folder name of a skill comes from the user or from the SKILL.md of a repository.
+// It must be one folder inside the skills folder: "." and ".." are not names, a leading dot
+// hides the folder, and Windows refuses a trailing dot and its reserved device names.
 const sanitizeFolderName = (name: string): string => {
-  return name
+  const folderName = String(name ?? '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/^[-.]+|[-.]+$/g, '')
     || 'skill'
+  return kReservedFolderNames.test(folderName) ? `skill-${folderName}` : folderName
 }
 
 const serializeSkillMd = (payload: { name: string, description?: string, instructions: string }): string => {
@@ -620,7 +628,17 @@ const discoverSkillFoldersFromExtractedRepo = (extractRoot: string, repoSubPath?
 }
 
 export const installSkillFromUrl = async (app: App, url: string, installPath: string): Promise<SkillInstallResult> => {
-  const parsedInput = extractRepoAndSkillFromInstallInput(url)
+
+  // an empty path would resolve to the working directory
+  if (typeof installPath !== 'string' || !installPath.trim()) {
+    return {
+      success: false,
+      installed: [],
+      error: 'Install path is required',
+    }
+  }
+
+const parsedInput = extractRepoAndSkillFromInstallInput(url)
   if (!parsedInput) {
     return {
       success: false,
