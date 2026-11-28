@@ -9,7 +9,8 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import plist from 'plist';
 import process from 'process';
-import { FileContents, FileDownloadParams, FilePickParams, FileProperties, FileSaveParams, FileStats, SearchMatch, SearchOptions, SearchResult } from 'types/file';
+import { resolveInside, safeBasename } from './path_containment';
+import { AppDirectory, FileContents, FileDownloadParams, FilePickParams, FileProperties, FileSaveParams, FileStats, SearchMatch, SearchOptions, SearchResult } from 'types/file';
 import { DirectoryItem } from 'types/filesystem';
 import { ExternalApp } from 'types/index';
 
@@ -405,6 +406,8 @@ export const findProgram = (app: App, program: string): string|null => {
   return null;
 }
 
+const SAVE_DIRECTORIES: AppDirectory[] = ['home', 'appData', 'userData', 'sessionData', 'temp', 'documents', 'downloads']
+
 export const writeFileContents = (app: App, payload: FileSaveParams): string => {
 
   // defaults
@@ -428,29 +431,51 @@ export const writeFileContents = (app: App, payload: FileSaveParams): string => 
 
   // parse properties
   const properties = payload.properties;
+  if (!SAVE_DIRECTORIES.includes(properties.directory)) {
+    console.error('Refusing to save file in unknown directory', properties.directory);
+    return null;
+  }
+
+  // the file name is a single segment: directory parts of the requested name are dropped
+  const requestedName = properties.filename || (typeof payload.url === 'string' ? payload.url.split('?')[0] : null);
+  const filename = requestedName ? safeBasename(requestedName) : null;
+  if (!filename) {
+    console.error('Refusing to save file without a valid name', requestedName);
+    return null;
+  }
+
+  // workspace and subdir come from the caller: they select a folder below the base directory, never one outside of it
   let defaultPath = app.getPath(properties.directory);
-  
-  // handle workspace-specific paths
   if (properties.workspace && properties.directory === 'userData') {
-    const workspaceFolder = path.join(defaultPath, 'workspaces', properties.workspace);
-    if (!fs.existsSync(workspaceFolder)) {
-      fs.mkdirSync(workspaceFolder, { recursive: true });
+    const workspace = safeBasename(properties.workspace);
+    const workspaceFolder = workspace === properties.workspace
+      ? resolveInside(path.join(defaultPath, 'workspaces'), workspace, { excludeBase: true })
+      : null;
+    if (!workspaceFolder) {
+      console.error('Refusing to save file in invalid workspace', properties.workspace);
+      return null;
     }
     defaultPath = workspaceFolder;
   }
-  
-  const defaultFileName = properties.filename ? properties.filename : payload.url.split('?')[0].split(path.sep).pop();
   if (properties.subdir) {
-    defaultPath = path.join(defaultPath, properties.subdir);
-    if (!fs.existsSync(defaultPath)) {
-      fs.mkdirSync(defaultPath, { recursive: true })
+    const subdirPath = resolveInside(defaultPath, properties.subdir);
+    if (!subdirPath) {
+      console.error('Refusing to save file in sub-directory outside of target directory', properties.subdir);
+      return null;
     }
+    defaultPath = subdirPath;
   }
 
-  // destination
-  let destinationURL = path.join(defaultPath, defaultFileName);
-  if (payload.url?.startsWith('file://')) {
-    destinationURL = payload.url.slice(7);
+  // without a prompt the file lands in that folder; with one it is only the suggestion and the user picks the destination
+  let destinationURL = properties.prompt
+    ? path.join(defaultPath, filename)
+    : resolveInside(defaultPath, filename, { excludeBase: true });
+  if (!destinationURL) {
+    console.error('Refusing to save file outside of target directory', filename);
+    return null;
+  }
+  if (!fs.existsSync(defaultPath)) {
+    fs.mkdirSync(defaultPath, { recursive: true });
   }
   if (properties.prompt) {
     destinationURL = dialog.showSaveDialogSync({

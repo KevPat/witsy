@@ -1,5 +1,5 @@
 
-import { vi, expect, test } from 'vitest'
+import { vi, expect, test, describe, beforeEach, afterEach } from 'vitest'
 import * as file from '@main/file'
 import { app, dialog } from 'electron'
 import * as childProcess from 'child_process'
@@ -24,9 +24,10 @@ vi.mock('child_process', async (importOriginal) => {
 vi.mock('electron', async() => {
   return {
     app: {
-      getPath: () => os.tmpdir()
+      getPath: vi.fn(() => os.tmpdir())
     },
     dialog: {
+      showSaveDialogSync: vi.fn(),
       showOpenDialogSync: vi.fn((opts) => {
         if (opts.filters?.includes('error')) {
           throw new Error('Error')
@@ -604,4 +605,262 @@ test('Write file contents with subdir', async () => {
 
 test('List directory throws on error', async () => {
   expect(() => file.listDirectory(app, '/nonexistent/path')).toThrow()
+})
+
+describe('Save and download containment', () => {
+
+  const isPosix = process.platform !== 'win32'
+  const base64 = (text: string) => Buffer.from(text).toString('base64')
+
+  let root: string
+
+  const filesUnder = (dir: string): string[] => {
+    const result: string[] = []
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) result.push(...filesUnder(full))
+      else result.push(path.relative(root, full))
+    }
+    return result.sort()
+  }
+
+  beforeEach(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'file-containment-')))
+    for (const dir of ['downloads', 'userData', 'documents', 'temp', 'outside']) fs.mkdirSync(path.join(root, dir))
+    vi.mocked(app.getPath).mockImplementation(((name: string) => path.join(root, name)) as any)
+    vi.mocked(dialog.showSaveDialogSync).mockReset()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.mocked(console.error).mockRestore()
+    vi.mocked(app.getPath).mockImplementation(() => os.tmpdir())
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  test('saves in the default, requested, sub and workspace directories', () => {
+    expect(file.writeFileContents(app, { contents: base64('1'), properties: { filename: 'a.txt' } }))
+      .toBe(`file://${path.join(root, 'downloads', 'a.txt')}`)
+    expect(file.writeFileContents(app, { contents: base64('2'), properties: { filename: 'b.txt', directory: 'temp' } }))
+      .toBe(`file://${path.join(root, 'temp', 'b.txt')}`)
+    expect(file.writeFileContents(app, { contents: base64('3'), properties: { filename: 'c.png', directory: 'userData', subdir: 'images' } }))
+      .toBe(`file://${path.join(root, 'userData', 'images', 'c.png')}`)
+    expect(file.writeFileContents(app, { contents: base64('4'), properties: { filename: 'd.png', directory: 'userData', subdir: path.join('images', '2026') } }))
+      .toBe(`file://${path.join(root, 'userData', 'images', '2026', 'd.png')}`)
+    expect(file.writeFileContents(app, { contents: base64('5'), properties: { filename: 'e.png', directory: 'userData', subdir: 'images', workspace: '123e4567-e89b-12d3-a456-426614174000' } }))
+      .toBe(`file://${path.join(root, 'userData', 'workspaces', '123e4567-e89b-12d3-a456-426614174000', 'images', 'e.png')}`)
+    expect(file.writeFileContents(app, { contents: base64('6'), url: 'https://example.com/media/f.png?size=large', properties: { directory: 'documents' } }))
+      .toBe(`file://${path.join(root, 'documents', 'f.png')}`)
+    expect(filesUnder(root)).toStrictEqual([
+      path.join('documents', 'f.png'),
+      path.join('downloads', 'a.txt'),
+      path.join('temp', 'b.txt'),
+      path.join('userData', 'images', '2026', 'd.png'),
+      path.join('userData', 'images', 'c.png'),
+      path.join('userData', 'workspaces', '123e4567-e89b-12d3-a456-426614174000', 'images', 'e.png'),
+    ])
+    expect(fs.readFileSync(path.join(root, 'userData', 'images', '2026', 'd.png'), 'utf8')).toBe('4')
+  })
+
+  test.each([
+    ['../../outside.txt', 'outside.txt'],
+    ['../outside/evil.txt', 'evil.txt'],
+    ['..\\..\\outside.txt', 'outside.txt'],
+    ['..\\outside\\evil.txt', 'evil.txt'],
+    ['sub/dir/nested.txt', 'nested.txt'],
+    ['/etc/witsy-evil.txt', 'witsy-evil.txt'],
+    ['C:\\Windows\\evil.txt', 'evil.txt'],
+    ['ABSOLUTE', 'evil.txt'],
+  ])('a file name of %s is reduced to its last segment', (filename, expected) => {
+    if (filename === 'ABSOLUTE') filename = path.join(root, 'outside', 'evil.txt')
+    const url = file.writeFileContents(app, { contents: base64('x'), properties: { filename } })
+    expect(url).toBe(`file://${path.join(root, 'downloads', expected)}`)
+    expect(filesUnder(root)).toStrictEqual([path.join('downloads', expected)])
+  })
+
+  test.each([
+    ['..'], ['.'], ['../..'], ['dir/'], ['dir/..'], ['..\\..'], ['a\0b.txt'], [42], [{ name: 'a.txt' }], [['a.txt']],
+  ])('a file name of %j is refused', (filename) => {
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: filename as any } })).toBeNull()
+    expect(filesUnder(root)).toStrictEqual([])
+  })
+
+  test('a save without any file name is refused', () => {
+    expect(file.writeFileContents(app, { contents: base64('x') })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), url: 'https://example.com/media/' })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), url: 42 as any })).toBeNull()
+    expect(filesUnder(root)).toStrictEqual([])
+  })
+
+  test.each([
+    ['../..'],
+    ['..'],
+    ['../outside'],
+    ['../documents'],
+    ['images/../../outside'],
+    ['ABSOLUTE'],
+    [true],
+    [{ dir: 'images' }],
+  ])('a sub-directory of %j is refused and nothing is created', (subdir) => {
+    if (subdir === 'ABSOLUTE') subdir = path.join(root, 'outside')
+    for (const directory of ['downloads', 'userData'] as const) {
+      for (const workspace of [undefined, 'ws1']) {
+        expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory, subdir: subdir as any, workspace } })).toBeNull()
+      }
+    }
+    expect(filesUnder(root)).toStrictEqual([])
+    expect(fs.readdirSync(path.join(root, 'userData'))).toStrictEqual([])
+    expect(fs.readdirSync(path.join(root, 'downloads'))).toStrictEqual([])
+  })
+
+  test.runIf(isPosix)('a sub-directory name with backslashes stays inside the target directory', () => {
+    const url = file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'x.txt', subdir: '..\\..\\outside' } })
+    expect(url).toBe(`file://${path.join(root, 'downloads', '..\\..\\outside', 'x.txt')}`)
+    expect(filesUnder(root)).toStrictEqual([path.join('downloads', '..\\..\\outside', 'x.txt')])
+  })
+
+  test.each([
+    ['../../documents'],
+    ['..'],
+    ['../outside'],
+    ['a/b'],
+    ['a\\b'],
+    ['ABSOLUTE'],
+    [42],
+    [{ id: 'ws1' }],
+  ])('a workspace of %j is refused and nothing is created', (workspace) => {
+    if (workspace === 'ABSOLUTE') workspace = path.join(root, 'outside')
+    for (const subdir of [undefined, 'images']) {
+      expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', subdir, workspace: workspace as any } })).toBeNull()
+    }
+    expect(filesUnder(root)).toStrictEqual([])
+    expect(fs.readdirSync(path.join(root, 'userData'))).toStrictEqual([])
+  })
+
+  test.runIf(isPosix)('a symlinked sub-directory or workspace pointing outside is not followed', () => {
+    const outside = path.join(root, 'outside')
+    fs.symlinkSync(outside, path.join(root, 'userData', 'images'))
+    fs.mkdirSync(path.join(root, 'userData', 'workspaces'))
+    fs.symlinkSync(outside, path.join(root, 'userData', 'workspaces', 'ws-link'))
+    fs.mkdirSync(path.join(root, 'userData', 'workspaces', 'ws1'))
+    fs.symlinkSync(outside, path.join(root, 'userData', 'workspaces', 'ws1', 'images'))
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', subdir: 'images' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', subdir: 'images/deeper' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', workspace: 'ws-link' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', workspace: 'ws-link', subdir: 'images' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'evil.txt', directory: 'userData', workspace: 'ws1', subdir: 'images' } })).toBeNull()
+    expect(fs.readdirSync(outside)).toStrictEqual([])
+    expect(filesUnder(root)).toStrictEqual([
+      path.join('userData', 'images'),
+      path.join('userData', 'workspaces', 'ws-link'),
+      path.join('userData', 'workspaces', 'ws1', 'images'),
+    ])
+  })
+
+  test.runIf(isPosix)('a destination that is a symlink to a file outside is not written through', () => {
+    const victim = path.join(root, 'outside', 'victim.txt')
+    fs.writeFileSync(victim, 'original')
+    fs.symlinkSync(victim, path.join(root, 'downloads', 'report.txt'))
+    fs.symlinkSync(path.join(root, 'outside', 'created.txt'), path.join(root, 'downloads', 'dangling.txt'))
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'report.txt' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'dangling.txt' } })).toBeNull()
+    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
+    expect(fs.readdirSync(path.join(root, 'outside'))).toStrictEqual(['victim.txt'])
+  })
+
+  test.runIf(isPosix)('a symlinked sub-directory that stays inside the target directory still works', () => {
+    fs.mkdirSync(path.join(root, 'userData', 'media'))
+    fs.symlinkSync(path.join(root, 'userData', 'media'), path.join(root, 'userData', 'images'))
+    const url = file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'a.png', directory: 'userData', subdir: 'images' } })
+    expect(url).toBe(`file://${path.join(root, 'userData', 'images', 'a.png')}`)
+    expect(fs.readFileSync(path.join(root, 'userData', 'media', 'a.png'), 'utf8')).toBe('x')
+  })
+
+  test('an unknown directory is refused', () => {
+    vi.mocked(app.getPath).mockClear()
+    for (const directory of ['exe', 'desktop', '../outside', '', null, 42, { name: 'downloads' }]) {
+      expect(file.writeFileContents(app, { contents: base64('x'), properties: { filename: 'a.txt', directory: directory as any } })).toBeNull()
+    }
+    expect(app.getPath).not.toHaveBeenCalled()
+    expect(filesUnder(root)).toStrictEqual([])
+  })
+
+  test('a file url only gives the default name and is never the destination', () => {
+    const victim = path.join(root, 'outside', 'victim.txt')
+    fs.writeFileSync(victim, 'original')
+    expect(file.writeFileContents(app, { contents: base64('x'), url: `file://${victim}` }))
+      .toBe(`file://${path.join(root, 'downloads', 'victim.txt')}`)
+    expect(file.writeFileContents(app, { contents: base64('x'), url: `file://${victim}`, properties: { filename: 'named.txt' } }))
+      .toBe(`file://${path.join(root, 'downloads', 'named.txt')}`)
+    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
+    expect(filesUnder(root)).toStrictEqual([
+      path.join('downloads', 'named.txt'),
+      path.join('downloads', 'victim.txt'),
+      path.join('outside', 'victim.txt'),
+    ])
+  })
+
+  test('a prompted save suggests a sanitised name and writes where the user picked', () => {
+    const picked = path.join(root, 'outside', 'picked by user.md')
+    vi.mocked(dialog.showSaveDialogSync).mockReturnValue(picked)
+    const url = file.writeFileContents(app, { contents: base64('export'), url: '../../My chat.md', properties: { directory: 'documents', prompt: true } })
+    expect(dialog.showSaveDialogSync).toHaveBeenLastCalledWith({ defaultPath: path.join(root, 'documents', 'My chat.md') })
+    expect(url).toBe(`file://${picked}`)
+    expect(fs.readFileSync(picked, 'utf8')).toBe('export')
+    expect(filesUnder(root)).toStrictEqual([path.join('outside', 'picked by user.md')])
+  })
+
+  test('a prompted save never suggests a path outside the target directory', () => {
+    const victim = path.join(root, 'outside', 'victim.txt')
+    fs.writeFileSync(victim, 'original')
+    vi.mocked(dialog.showSaveDialogSync).mockReturnValue(undefined)
+    expect(file.writeFileContents(app, { contents: base64('x'), url: `file://${victim}`, properties: { prompt: true } })).toBeNull()
+    expect(dialog.showSaveDialogSync).toHaveBeenLastCalledWith({ defaultPath: path.join(root, 'downloads', 'victim.txt') })
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { prompt: true, filename: '../../outside/agent.json' } })).toBeNull()
+    expect(dialog.showSaveDialogSync).toHaveBeenLastCalledWith({ defaultPath: path.join(root, 'downloads', 'agent.json') })
+    expect(dialog.showSaveDialogSync).toHaveBeenCalledTimes(2)
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { prompt: true, filename: 'a.txt', subdir: '../outside' } })).toBeNull()
+    expect(file.writeFileContents(app, { contents: base64('x'), properties: { prompt: true, filename: '..' } })).toBeNull()
+    expect(dialog.showSaveDialogSync).toHaveBeenCalledTimes(2)
+    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
+    expect(filesUnder(root)).toStrictEqual([path.join('outside', 'victim.txt')])
+  })
+
+  test('a local file download is confined to the target directory', async () => {
+    const source = path.join(root, 'documents', 'source.png')
+    fs.writeFileSync(source, 'image-bytes')
+    const victim = path.join(root, 'outside', 'victim.txt')
+    fs.writeFileSync(victim, 'original')
+
+    expect(await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'copy.png', directory: 'userData', subdir: 'images', workspace: 'ws1' } }))
+      .toBe(`file://${path.join(root, 'userData', 'workspaces', 'ws1', 'images', 'copy.png')}`)
+    expect(await file.downloadFile(app, { url: `file://${source}`, properties: { filename: '../../outside/victim.txt' } }))
+      .toBe(`file://${path.join(root, 'downloads', 'victim.txt')}`)
+    expect(await file.downloadFile(app, { url: `file://${source}`, properties: { filename: victim } }))
+      .toBe(`file://${path.join(root, 'downloads', 'victim.txt')}`)
+    expect(await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'victim.txt', subdir: '../outside' } })).toBeNull()
+    expect(await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'victim.txt', directory: 'userData', workspace: '../../outside' } })).toBeNull()
+
+    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
+    expect(fs.readFileSync(source, 'utf8')).toBe('image-bytes')
+    expect(filesUnder(root)).toStrictEqual([
+      path.join('documents', 'source.png'),
+      path.join('downloads', 'victim.txt'),
+      path.join('outside', 'victim.txt'),
+      path.join('userData', 'workspaces', 'ws1', 'images', 'copy.png'),
+    ])
+  })
+
+  test('a remote file download is confined to the target directory', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('image-bytes', { status: 200 })))
+    expect(await file.downloadFile(app, { url: 'https://example.com/a/cat.png?x=1', properties: { filename: '../../outside/cat.png' } }))
+      .toBe(`file://${path.join(root, 'downloads', 'cat.png')}`)
+    expect(await file.downloadFile(app, { url: 'https://example.com/a/dog.png?x=1' }))
+      .toBe(`file://${path.join(root, 'downloads', 'dog.png')}`)
+    expect(await file.downloadFile(app, { url: 'https://example.com/a/cat.png', properties: { filename: 'cat.png', subdir: '../outside' } })).toBeNull()
+    expect(await file.downloadFile(app, { url: 'https://example.com/a/..', properties: { subdir: 'images' } })).toBeNull()
+    expect(filesUnder(root)).toStrictEqual([path.join('downloads', 'cat.png'), path.join('downloads', 'dog.png')])
+  })
+
 })

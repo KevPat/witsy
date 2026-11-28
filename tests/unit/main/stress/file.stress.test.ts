@@ -63,7 +63,7 @@ describe('writeFileContents', () => {
     expect(fs.readdirSync(path.join(root, 'documents'))).toHaveLength(300)
   })
 
-  bug.each([
+  test.each([
     ['filename', { filename: path.join('..', 'outside.txt'), directory: 'downloads' }],
     ['subdir', { filename: 'outside.txt', directory: 'downloads', subdir: path.join('..', 'documents') }],
     ['workspace', { filename: 'outside.txt', directory: 'userData', workspace: path.join('..', '..', 'documents') }],
@@ -75,11 +75,11 @@ describe('writeFileContents', () => {
     expect(written === null || written.startsWith(target + path.sep)).toBe(true)
   })
 
-  bug('a missing url and filename is reported as a failure instead of throwing', () => {
+  test('a missing url and filename is reported as a failure instead of throwing', () => {
     expect(() => file.writeFileContents(app, { contents: base64('x'), properties: { directory: 'downloads' } })).not.toThrow()
   })
 
-  bug('the default file name of an http url is its last path segment on every platform', () => {
+  test('the default file name of an http url is its last path segment on every platform', () => {
     // the url is split on path.sep, which is a backslash on Windows
     const sep = path.sep
     let url: string
