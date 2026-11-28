@@ -679,7 +679,8 @@ const parsedInput = extractRepoAndSkillFromInstallInput(url)
 
     await downloadToFile(archiveUrl, zipPath)
     fs.mkdirSync(extractPath, { recursive: true })
-    await extractZip(zipPath, { dir: extractPath })
+    // no link is ever created from a skill archive (patches/extract-zip+2.0.1.patch)
+    await extractZip(zipPath, { dir: extractPath, skipSymlinks: true } as extractZip.Options)
 
     let skillFolders = discoverSkillFoldersFromExtractedRepo(extractPath, parsedInput.repoSubPath)
     if (parsedInput.skillName) {

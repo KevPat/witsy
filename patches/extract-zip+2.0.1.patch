@@ -1,14 +1,16 @@
 diff --git a/node_modules/extract-zip/index.js b/node_modules/extract-zip/index.js
-index 23384ea..6452391 100644
+index 23384ea..4dbdf77 100644
 --- a/node_modules/extract-zip/index.js
 +++ b/node_modules/extract-zip/index.js
-@@ -108,6 +108,19 @@ class Extractor {
+@@ -108,6 +108,21 @@ class Extractor {
  
      debug('extracting entry', { filename: entry.fileName, isDir: isDir, isSymlink: symlink })
  
-+    // witsy: never create symlinks from an archive (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3).
-+    // A link entry followed by an entry written through it would land outside opts.dir.
-+    if (symlink) {
++    // witsy: links from an archive (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3). With opts.skipSymlinks
++    // (the backups and skill archives of the app) none is created. Otherwise only links whose target
++    // stays inside opts.dir are (the Electron zips electron-packager extracts on macOS need them);
++    // a link to anywhere else is refused, so no later entry can be written through it.
++    if (symlink && this.opts.skipSymlinks) {
 +      debug('skipping symlink entry', entry.fileName)
 +      return
 +    }
@@ -22,3 +24,15 @@ index 23384ea..6452391 100644
      const procMode = this.getExtractedMode(mode, isDir) & 0o777
  
      // always ensure folders are created
+@@ -126,6 +141,11 @@ class Extractor {
+ 
+     if (symlink) {
+       const link = await getStream(readStream)
++      const target = path.resolve(path.dirname(dest), link)
++      const inside = path.relative(this.opts.dir, target)
++      if (path.isAbsolute(link) || inside === '' || inside.split(path.sep).includes('..') || path.isAbsolute(inside)) {
++        throw new Error(`Refusing symbolic link "${entry.fileName}" -> "${link}" pointing outside the target folder`)
++      }
+       debug('creating symlink', link, dest)
+       await fs.symlink(link, dest)
+     } else {

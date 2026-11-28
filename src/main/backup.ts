@@ -245,7 +245,8 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
 
     try {
       // Extract the ZIP file
-      await extractZip(backupFile as string, { dir: tempDir })
+      // no link is ever created from a backup (patches/extract-zip+2.0.1.patch)
+      await extractZip(backupFile as string, { dir: tempDir, skipSymlinks: true } as extractZip.Options)
 
       // any zip can be picked: check that this one is a backup, and a readable one,
       // before a single file of the user is replaced

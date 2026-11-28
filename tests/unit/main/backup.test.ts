@@ -258,7 +258,8 @@ describe('Backup functionality', () => {
 
       expect(result).toBe(true)
       expect(extractZip).toHaveBeenCalledWith('/mock/backup.zip', {
-        dir: expect.stringContaining('witsy-restore-')
+        dir: expect.stringContaining('witsy-restore-'),
+        skipSymlinks: true,
       })
     })
 
