@@ -136,7 +136,8 @@ const baseConfig = (servers: McpServer[] = [], mcpServers: Record<string, any> =
 const tagTransports = () => {
   vi.mocked(StdioClientTransport).mockImplementation(function(this: any, params: any) {
     this.params = params
-    this.serverKey = params.args?.[0]
+    // on Windows a stdio server is started through cmd /C "<command> <url>"
+    this.serverKey = params.command === 'cmd' ? String(params.args?.[1] ?? '').split(' ').pop() : params.args?.[0]
   } as any)
 }
 
@@ -324,7 +325,7 @@ describe('tool name collisions', () => {
     }
   })
 
-  bug('three servers exposing the same 64 character tool name get three distinct names', async () => {
+  test('three servers exposing the same 64 character tool name get three distinct names', async () => {
     // the suffix search tests the untruncated candidate, the stored name is truncated
     const long = 'a'.repeat(64)
     const mcp = await connectWith({ one: [long], two: [long], three: [long] })
@@ -333,7 +334,7 @@ describe('tool name collisions', () => {
     expect(new Set(all).size).toBe(3)
   })
 
-  bug('a tool whose name ends with three underscores and four characters keeps its name', async () => {
+  test('a tool whose name ends with three underscores and four characters keeps its name', async () => {
     // LEGACY_SUFFIX_PATTERN strips "___xxxx" from any name, legacy or not
     const mcp = await connectWith({ one: ['fetch___data'] })
     expect(mcp.originalToolName('fetch___data')).toBe('fetch___data')
@@ -356,7 +357,7 @@ describe('lifecycle', () => {
     expect(openClients).toBe(3)
   })
 
-  bug('concurrent reloads do not create duplicate clients', async () => {
+  test('concurrent reloads do not create duplicate clients', async () => {
     // reload() is fired without await from the settings file monitor and has no mutex
     config = baseConfig([stdioServer('a', 'a'), stdioServer('b', 'b'), stdioServer('c', 'c')])
     const mcp = new Mcp(app)
@@ -379,17 +380,26 @@ describe('lifecycle', () => {
     expect(openClients).toBe(1)
   })
 
-  bug('a server whose first tools/list call failed is asked again later', async () => {
+  test('a server whose first tools/list call failed is asked again later', async () => {
     // the failure is cached as { tools: null, timestamp: 0 } and the null check runs before the expiry check
     config = baseConfig([stdioServer('a', 'a')])
     vi.mocked(Client.prototype.listTools).mockRejectedValueOnce(new Error('temporarily unavailable'))
     const mcp = new Mcp(app)
     await mcp.connect()
+    // not at once (a server that hangs must not slow every prompt down), but after a short while
     expect(await mcp.getLlmTools()).toHaveLength(0)
-    expect((await mcp.getLlmTools()).map(t => t.name)).toEqual(['tool1'])
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 31000)
+    try {
+      expect((await mcp.getLlmTools()).map(t => t.name)).toEqual(['tool1'])
+      // and its tools can be called from then on
+      expect(mcp.clients[0].tools).toEqual(['tool1'])
+    } finally {
+      clock.mockRestore()
+    }
   })
 
-  bug('editing one server does not make the next unrelated settings change reload every server', async () => {
+  test('editing one server does not make the next unrelated settings change reload every server', async () => {
     // editServer saves the settings but leaves currentConfig stale
     config = baseConfig([stdioServer('a', 'a'), stdioServer('b', 'b')])
     const mcp = new Mcp(app)
@@ -413,7 +423,7 @@ describe('lifecycle', () => {
     mcp.monitor?.stop()
   })
 
-  bug('shutdown closes the remaining clients when one of them fails to close', async () => {
+  test('shutdown closes the remaining clients when one of them fails to close', async () => {
     config = baseConfig([stdioServer('a', 'a'), stdioServer('b', 'b')])
     const mcp = new Mcp(app)
     await mcp.connect()
