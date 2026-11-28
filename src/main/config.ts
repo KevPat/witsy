@@ -8,6 +8,7 @@ import { anyDict } from 'types/index'
 import defaultSettings from '@root/defaults/settings.json'
 import { favoriteMockEngine } from '../renderer/services/llms/llm'
 import Monitor from './monitor'
+import { hasUnprotectedMcpSecrets, protectMcpSecrets, revealMcpSecrets } from './mcp_secrets'
 
 type ApiKeyEntry = {
   name: string
@@ -116,6 +117,10 @@ export const loadSettings = (app: App): Configuration => {
     jsonConfig = {}
 
   }
+
+  // mcp secrets are encrypted in place: a file that has them in clear text is saved again
+  if (hasUnprotectedMcpSecrets(jsonConfig)) save = true
+  revealMcpSecrets(jsonConfig)
 
   // safe keys handling (default is true even when we have no config...)
   if (!('general' in jsonConfig) || !('safeKeys' in jsonConfig.general) || jsonConfig.general.safeKeys !== false) {
@@ -239,6 +244,9 @@ export const saveSettings = (app: App, config: Configuration, always: boolean = 
       delete clone.engines[engine].voices
 
     }
+
+    // mcp secrets are encrypted in place, once the api keys have left the clone
+    if (config.general.safeKeys) protectMcpSecrets(clone)
 
     // save
     const settingsFile = settingsFilePath(app)
