@@ -3226,6 +3226,7 @@
         "copyToClipboard": "Automatically copy dictated text to clipboard",
         "linuxPermissionWarning": "On Linux, native shortcuts require access to input devices. Run <code>sudo usermod -a -G input $USER</code> then log out and back in.",
         "nativeShortcutsHint": "In addition to regular shortcuts, you can use the following \"key-less\" shortcuts:<ul><li>{combos}</li><li>{single}</li></ul>",
+        "nativeShortcutsUnsupported": "Key-less shortcuts (a single modifier key), double tap and push-to-talk are not available on this platform. Use a regular shortcut such as Ctrl+Shift+D.",
         "shortcutKey": "Shortcut Key"
       },
       "selectModel": "Select a model",
