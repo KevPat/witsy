@@ -204,6 +204,8 @@ const escapeMermaidFences = (md: MarkdownIt) => {
 // through the window-open handler (target=_blank) and never replace the page, and only
 // the urls that handler gives to the system are links at all: anything else (file:,
 // smb:, custom schemes, relative urls) keeps its markdown source as text.
+// The fragments the app's own messages use as actions (handled in Chat.vue) stay links.
+const kActionLink = /^#(settings(_[A-Za-z0-9]+)*|retry_without_(plugins|params))$/
 const restrictLinks = (md: MarkdownIt) => {
   const toText = (token: Token, content: string) => {
     token.type = 'text'
@@ -218,7 +220,10 @@ const restrictLinks = (md: MarkdownIt) => {
       let refused: Token | null = null
       for (const token of block.children) {
         if (token.type === 'link_open') {
-          if (isSafeExternalUrl(token.attrGet('href'))) {
+          const href = token.attrGet('href')
+          if (href && kActionLink.test(href)) {
+            continue
+          } else if (isSafeExternalUrl(href)) {
             token.attrSet('target', '_blank')
             token.attrSet('rel', 'noopener noreferrer')
           } else {

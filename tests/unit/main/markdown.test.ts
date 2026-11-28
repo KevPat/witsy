@@ -132,6 +132,14 @@ test('keeps a refused link next to a rendered one as text', () => {
   expect(root.textContent).toBe('[a](file:///etc/passwd) b <smb://evil.example/share> https://example.com/c\n')
 })
 
+test('keeps the links the app uses as actions in its own messages', () => {
+  const root = parseHtml('Enter your key in [Settings](#settings_models) or [try again](#retry_without_plugins).')
+  const links = Array.from(root.querySelectorAll('a'))
+  expect(links.map((a) => a.getAttribute('href'))).toEqual(['#settings_models', '#retry_without_plugins'])
+  expect(links.map((a) => a.getAttribute('target'))).toEqual([null, null])
+  expect(root.textContent).toBe('Enter your key in Settings or try again.\n')
+})
+
 test('still renders local images', () => {
   const root = parseHtml('[![logo](file:///data/My Images/logo.png)](https://example.com/)')
   expect(root.querySelector('a').getAttribute('href')).toBe('https://example.com/')
