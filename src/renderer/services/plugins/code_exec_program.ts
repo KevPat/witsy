@@ -286,7 +286,7 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
     }
 
     // Auto-unwrap .data for easier access
-    if (result.data) {
+    if (typeof result === 'object' && result !== null && Object.hasOwn(result, 'data') && result.data !== undefined) {
       result = result.data
     }
 
