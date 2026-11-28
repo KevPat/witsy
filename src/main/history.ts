@@ -198,14 +198,28 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
   // regexes[0] matches content that is exactly a file:// url
   // regexes[1] matches content that is a file:// embedded in markdown ("(file://....)"
   // regexes[2] matches content that is a file:// url in an img or video tag
-  let imagesPathUrl = encodeURI(`file://${imagesPath}`)
-  imagesPathUrl = imagesPathUrl.replace(/%20/g, '(?:%20|\\s)')
-  const imagesPathUri = imagesPath.replace(/ /g, '(?:%20|\\s)')
+  //
+  // The folder is a path of this machine: on Windows it holds backslashes, and the urls of the
+  // history are written either with them (file://C:\Users\...), url encoded (%5C) or as real
+  // file urls (file:///C:/Users/...). Everything is compared with forward slashes, and the path
+  // is escaped: it is data, not a pattern (C:\Users\name would otherwise read as \U, \n...).
+  const toSlashes = (text: string): string => text.replace(/%5C/gi, '/').replace(/\\/g, '/').replace(/file:\/\/\/(?=[A-Za-z]:)/g, 'file://')
+  const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const imagesFolder = toSlashes(imagesPath).replace(/\/+$/, '')
+  const imagesPathUrl = escapeRegExp(encodeURI(`file://${imagesFolder}`)).replace(/%20/g, '(?:%20|\\s)')
+  const imagesPathUri = escapeRegExp(imagesFolder).replace(/ /g, '(?:%20|\\s)')
+  const flags = process.platform === 'win32' ? 'gi' : 'g'
   const regexes = [
-    new RegExp(`^file://${imagesPathUri}/([^()\\/]+)$`, 'g'),
-    new RegExp(`\\(${imagesPathUrl}/([^()\\/]+)\\)`, 'g'),
-    new RegExp(`<(?:img|video)[^>]*?src="${imagesPathUrl}/([^"]+)"`, 'g')
+    new RegExp(`^file://${imagesPathUri}/([^()\\/]+)$`, flags),
+    new RegExp(`\\(${imagesPathUrl}/([^()\\/]+)\\)`, flags),
+    new RegExp(`<(?:img|video)[^>]*?src="${imagesPathUrl}/([^"]+)"`, flags)
   ]
+  const attachmentPrefix = `file://${imagesFolder}`
+  const hasPrefix = (url: string): boolean => {
+    return process.platform === 'win32'
+      ? url.toLowerCase().startsWith(attachmentPrefix.toLowerCase())
+      : url.startsWith(attachmentPrefix)
+  }
 
   // now extract all the attachments in the chat
   const attachments = []
@@ -214,7 +228,8 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
       
       // extract all attachments from message.content
       for (const regex of regexes) {
-        const matches = message.content?.matchAll(regex)
+        const content = typeof message.content === 'string' ? toSlashes(message.content) : null
+        const matches = content?.matchAll(regex)
         for (const match of matches || []) {
           const filename = match[1]
           attachments.push(filename)
@@ -223,9 +238,10 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
 
       // now check if the message has an attachment
       for (const attachment of message.attachments ?? []) {
-        const url = attachment.url
-        if (url.startsWith(`file://${imagesPath}`)) {
-          let filename = path.basename(url)
+        if (typeof attachment.url !== 'string') continue
+        const url = toSlashes(attachment.url)
+        if (hasPrefix(url)) {
+          let filename = path.posix.basename(url)
           // Remove possible ending parenthesis
           filename = filename.replace(/\)$/, '')
           attachments.push(filename)

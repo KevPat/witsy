@@ -269,3 +269,40 @@ describe('Version handling', () => {
     expect(history.version).toBe(kHistoryVersion)
   })
 })
+
+test('Extract attachments - Windows paths', async () => {
+
+  // the images folder of a Windows install: backslashes, and characters that are regular expression syntax
+  const folder = 'C:' + ['', 'Users', 'name (work)', 'AppData', 'Witsy', 'images'].join(String.fromCharCode(92))
+  const forward = folder.split(String.fromCharCode(92)).join('/')
+
+  // urls written with the path as it is
+  expect(extractAttachmentsFromHistory([
+    { messages: [ { content: `file://${folder}${String.fromCharCode(92)}image1.png` } ] },
+    { messages: [ { content: `<img src="file://${folder}${String.fromCharCode(92)}image2.png">` } ] },
+    { messages: [ { attachments: [ { url: `file://${folder}${String.fromCharCode(92)}image3.png` } ] } ] },
+  ] as Chat[], folder)).toEqual(['image1.png', 'image2.png', 'image3.png'])
+
+  // forward slashes and real file urls
+  expect(extractAttachmentsFromHistory([
+    { messages: [ { content: `file://${forward}/image1.png` } ] },
+    { messages: [ { content: `file:///${forward}/image2.png` } ] },
+    { messages: [ { content: `<video controls src="${encodeURI(`file:///${forward}/video.mp4`)}">` } ] },
+    { messages: [ { attachments: [ { url: `file:///${forward}/image3.png` } ] } ] },
+  ] as Chat[], folder)).toEqual(['image1.png', 'image2.png', 'video.mp4', 'image3.png'])
+
+  // another folder is not ours
+  expect(extractAttachmentsFromHistory([
+    { messages: [ { content: `file://${forward}-other/image1.png` } ] },
+    { messages: [ { content: 'file://C:/Users/nameXwork/AppData/Witsy/images/image2.png' } ] },
+  ] as Chat[], folder)).toEqual([])
+
+})
+
+test('Extract attachments - folder with regular expression characters', async () => {
+  expect(extractAttachmentsFromHistory([
+    { messages: [ { content: 'file://my.images+[1]/image1.png' } ] },
+    { messages: [ { content: 'file://myXimages+[1]/image2.png' } ] },
+    { messages: [ { content: '<img src="file://my.images+%5B1%5D/image3.png">' } ] },
+  ] as Chat[], 'my.images+[1]')).toEqual(['image1.png', 'image3.png'])
+})
