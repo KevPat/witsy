@@ -7,7 +7,6 @@ import path from 'path'
 import { History } from '@/types/index'
 import { kHistoryVersion } from '@/consts'
 import { loadHistory, saveHistory } from '@main/history'
-import { bug } from './bug'
 
 let root: string
 let userData: string
@@ -161,7 +160,7 @@ describe('history.json', () => {
     expect(readHistoryText()).toBe(text)
   })
 
-  bug('chats created after a truncated history failed to load are saved somewhere', async () => {
+  test('chats created after a truncated history failed to load are saved somewhere', async () => {
     // the load returns null, the chat window then keeps an undefined version, and saveHistory silently returns for any version but the current one
     const text = JSON.stringify(history(3), null, 2)
     writeHistoryText(text.slice(0, Math.floor(text.length / 2)))
@@ -172,7 +171,7 @@ describe('history.json', () => {
     expect(isOnDisk(userData, 'Written after the failed load')).toBe(true)
   })
 
-  bug.each([
+  test.each([
     ['without folders', { version: 1, chats: [chat(0)] }],
     ['without folders and version', { chats: [chat(0)] }],
     ['with null folders', { version: 1, folders: null, chats: [chat(0)], quickPrompts: [] }],
@@ -182,7 +181,7 @@ describe('history.json', () => {
     expect(await loadHistory(app, workspaceId)).toMatchObject({ chats: [{ uuid: 'chat-0' }] })
   })
 
-  bug('an interrupted save leaves the previous history readable', async () => {
+  test('an interrupted save leaves the previous history readable', async () => {
     // history.json is rewritten in place; a crash or a full disk mid-write leaves a truncated file, and the previous chats are gone
     saveHistory(app, workspaceId, history(5))
     const realWrite = fs.writeFileSync

@@ -15,6 +15,12 @@ vi.mock('electron', async() => {
   }
 })
   
+// the history is written through the atomic helper: route it to the mocked fs so that fixtures are never modified
+vi.mock('@main/atomic', async () => {
+  const fs = (await import('fs')).default
+  return { writeFileAtomicSync: (file: string, data: string) => fs.writeFileSync(file, data) }
+})
+
 vi.mock('fs', async (importOriginal) => {
   const mod: any = await importOriginal()
   const realReadFileSync = mod.readFileSync

@@ -329,7 +329,13 @@ const loadHistory = (): void => {
     store.history = { version: undefined, folders: [], chats: [], quickPrompts: [], /*padPrompts: []*/ }
 
     // load and check version
+    // (null when the file could not be read: the version stays undefined, which tells the
+    // main process to keep what this window saves apart from the file it could not read)
     const history = window.api.history.load(store.config.workspaceId)
+    if (!history) {
+      console.log('History could not be loaded')
+      return
+    }
     if (history.version > kHistoryVersion) {
       store.history.version = history.version
       return

@@ -4,6 +4,7 @@ import fs from 'fs'
 import { LlmModelOpts } from 'multi-llm-ts'
 import path from 'path'
 import { Chat, History } from 'types/index'
+import { writeFileAtomicSync } from './atomic'
 import Monitor from './monitor'
 import { emitIpcEventToAll } from './windows'
 import { workspaceFolderPath } from './workspace'
@@ -19,6 +20,12 @@ const monitor: Monitor = new Monitor(() => {
 export const historyFilePath = (app: App, workspaceId: string): string => {
   const workspacePath = workspaceFolderPath(app, workspaceId)
   return path.join(workspacePath, 'history.json')
+}
+
+// where the chats of a window that could not load the history are kept (see saveHistory)
+export const unsavedHistoryFilePath = (app: App, workspaceId: string): string => {
+  const workspacePath = workspaceFolderPath(app, workspaceId)
+  return path.join(workspacePath, 'history.unsaved.json')
 }
 
 export const attachmentsFilePath = (app: App, workspaceId: string): string => {
@@ -56,6 +63,15 @@ export const loadHistory = async (app: App, workspaceId: string): Promise<Histor
     if (Array.isArray(history)) {
       console.log('Upgrading history data')
       history = { version: kHistoryVersion, folders: [], chats: history, quickPrompts: []}
+    }
+
+    // a history is its chats: without them this is not a history file.
+    // folders came later: a file without them still holds chats that must load
+    if (!Array.isArray(history.chats)) {
+      throw new Error('History file has no chats')
+    }
+    if (history.folders === undefined || history.folders === null) {
+      history.folders = []
     }
 
     // backwards compatibility for folder defaults
@@ -117,12 +133,20 @@ export const saveHistory = (app: App, workspaceId: string, history: History) => 
 
     // check version
     if (history.version !== kHistoryVersion) {
+
+      // no version at all: the window could not load the history (unreadable file).
+      // what it holds must not replace that file, and must not be lost either
+      if ((history.version === undefined || history.version === null) && history.chats?.length) {
+        writeFileAtomicSync(unsavedHistoryFilePath(app, workspaceId), JSON.stringify({ ...history, version: kHistoryVersion }, null, 2))
+      }
+
       return
     }
 
-    // local
-    const filepath = historyFilePath(app, workspaceId) 
-    fs.writeFileSync(filepath, JSON.stringify(history, null, 2))
+    // local: written to a temporary file that then replaces the history, so that a crash
+    // or a full disk during the save leaves the previous history readable
+    const filepath = historyFilePath(app, workspaceId)
+    writeFileAtomicSync(filepath, JSON.stringify(history, null, 2))
 
   } catch (error) {
     console.log('Error saving history data', error)
