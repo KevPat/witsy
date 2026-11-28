@@ -550,3 +550,60 @@ describe('keepLocalSettingsSecrets', () => {
   })
 
 })
+
+describe('credentials in shapes the app does not use today', () => {
+
+  // a later version, an import or an edit by hand can write credentials another way:
+  // what the name says is a credential goes, whatever its shape
+
+  test.each([
+    ['a list under a name of credentials', () => ({ passwords: [canary('list-1'), canary('list-2')] }), { passwords: ['', ''] }],
+    ['an object under a name of credentials', () => ({ secretValues: { a: canary('object-1'), nested: { b: canary('object-2'), count: 2 } } }), { secretValues: { a: '', nested: { b: '', count: 2 } } }],
+    ['headers written as a list of names and values', () => ({ headers: [{ name: 'Authorization', value: `Bearer ${canary('header-list')}` }] }), { headers: [{ name: '', value: '' }] }],
+    ['variables written as a list of names and values', () => ({ env: [{ key: 'GITHUB_TOKEN', value: canary('env-list') }] }), { env: [{ key: '', value: '' }] }],
+    ['variables written as a list of assignments', () => ({ env: [`GITHUB_TOKEN=${canary('env-assignments')}`, 'DEBUG=1'] }), { env: ['', ''] }],
+    ['a text called auth', () => ({ auth: `me:${canary('auth-text')}` }), { auth: '' }],
+    ['a text called pass, pwd or jwt', () => ({ pass: canary('pass'), pwd: canary('pwd'), jwt: canary('jwt') }), { pass: '', pwd: '', jwt: '' }],
+    ['a bearer token under a name that says nothing', () => ({ note: `Bearer ${canary('bearer-text')}` }), { note: '' }],
+  ])('%s', (_, build, expected) => {
+    const result = stripSecrets(build())
+    expectNoCanary(result)
+    expect(result).toEqual(expected)
+  })
+
+  test('an object called auth describes how to authenticate: only its credentials go', () => {
+    expect(stripSecrets({ auth: { type: 'basic', username: 'me', password: canary('auth-object') } })).toEqual({ auth: { type: 'basic', username: 'me', password: '' } })
+  })
+
+  test('a server, an engine or a plugin that is merely named like a credential keeps its definition', () => {
+    const settings = {
+      engines: { 'token-gateway': { label: 'Gateway', baseURL: 'https://gateway.example.com/v1', apiKey: canary('named-engine') } },
+      plugins: { passwords: { enabled: true, vault: 'personal' } },
+      mcpServers: { 'secret-keeper': { command: 'npx', args: ['-y', 'keeper'] } },
+      mcp: { mcpServersExtra: { 'secret-keeper': { state: 'enabled' } } },
+    }
+    const result = stripSecrets(settings)
+    expectNoCanary(result)
+    expect(result).toEqual({ ...settings, engines: { 'token-gateway': { label: 'Gateway', baseURL: 'https://gateway.example.com/v1', apiKey: '' } } })
+  })
+
+  test.each([
+    ['Bearer', 'a word that is not a token'],
+    ['Bearer of good news', 'a sentence'],
+    ['Basic plan', 'a label'],
+    ['bearer short', 'a short word'],
+  ])('%j is %s, not a bearer token', (text) => {
+    expect(stripSecrets({ note: text })).toEqual({ note: text })
+  })
+
+  test('what cannot be recognized stays: a name that says nothing, the path of a url', () => {
+    // documented in backup_secrets.ts: the app stores none of its own credentials this way
+    const unknown = { search: { key: 'not-recognized' }, baseURL: 'https://api.example.com/bot-not-recognized/x' }
+    expect(stripSecrets(unknown)).toEqual(unknown)
+  })
+
+  test('the default settings still have nothing to remove', () => {
+    expect(stripSecrets(defaultSettings)).toEqual(defaultSettings)
+  })
+
+})

@@ -11,18 +11,22 @@
 //
 // What is recognized
 // - properties whose name says they hold a credential (apiKey, clientSecret, webhookToken,
-//   password...): a text is emptied, OAuth tokens and other objects of credentials are removed
+//   password...): a text is emptied, OAuth tokens and other objects of credentials are removed,
+//   and in any other list or object under such a name every text is emptied
 // - `env` and `headers` maps (MCP servers): every value is emptied, the names are kept so that
-//   the user sees what has to be entered again
+//   the user sees what has to be entered again. Written as a list, every text of the list goes
 // - command lines of MCP servers (`command`, `args`, and `url` which holds the arguments of a
 //   stdio server): the value that follows --key, --api-key, --token..., NAME=value assignments
 //   with such a name, and the value of --header
 // - any text that is a URL: the user info (user:password@) and the query or fragment parameters
 //   that carry a key or a token
-// - any text that is a key in a well-known format, whatever the name of the property
+// - any text that is a key in a well-known format or a bearer token, whatever the name of the property
 //
 // What is not looked at: the text of conversations, agent runs, scratchpads, experts and
 // commands. A key the user typed in a chat is part of that chat.
+//
+// What cannot be recognized: a credential in an unknown format under a name that says nothing
+// (`key`, `note`), or inside the path of a URL. The app stores none of its own that way.
 
 import { anyDict } from 'types/index'
 
@@ -37,6 +41,10 @@ const SECRET_NAME = /api[-_. ]?key|secret|token|passw|passphrase|credential|auth
 // names that match the pattern above and hold no credential: sizes, counts and kinds of tokens,
 // and the address tokens are asked from (a url, which is searched as any url is)
 const PUBLIC_NAME = /tokens?[-_. ]?(limit|count|budget|usage|type|size|window|length|endpoint|url|uri)s?$|^(max|min|num|top|budget|context|reasoning|thinking|input|output|prompt|completion|cached|total)[\w.-]*tokens?$|tokeniz/i
+
+// short names that are a credential when they hold a text (auth: "user:password"). As an object
+// they describe how to authenticate, and are searched as any object is
+const SECRET_TEXT_NAME = /^(auth|pass|pwd|jwt)$/i
 
 // properties that hold credentials as an object or a list (OAuth tokens): removed as a whole
 const SECRET_CONTAINER = /^(oauth[-_. ]?)?(tokens?|credentials?|secrets?)$|^(access|refresh|id|auth|bearer|session)[-_. ]?tokens?$|^api[-_. ]?keys?$/i
@@ -71,6 +79,9 @@ const SECRET_VARIABLE = /(^|_)key$/i
 
 // keys in a well-known format: a credential whatever the property is called
 const WELL_KNOWN_KEY = /^(sk-[\w-]{16,}|[sr]k_(live|test)_\w{16,}|gsk_\w{20,}|xai-\w{20,}|AIza[\w-]{30,}|gh[pousr]_\w{30,}|github_pat_\w{20,}|glpat-[\w-]{16,}|xox[abeprs]-[\w-]{10,}|hf_\w{20,}|r8_\w{20,}|pplx-\w{20,}|tvly-[\w-]{16,}|nvapi-[\w-]{20,}|AKIA[0-9A-Z]{16}|ya29\.[\w.-]{20,}|eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*)$/
+
+// the value of an Authorization header, under any name
+const BEARER_TOKEN = /^bearer\s+[\w.~+/=-]{16,}$/i
 
 const SINGLE_URL = /^[a-z][a-z0-9+.-]*:\/\/\S+$/i
 const COMMAND_TOKEN = /"[^"]*"|'[^']*'|\S+/g
@@ -149,7 +160,7 @@ export const redactUrl = (url: string): string => {
 
 // a text that is not a credential by its name: emptied when its content says it is one
 const redactValue = (text: string): string => {
-  if (WELL_KNOWN_KEY.test(text.trim())) return ''
+  if (WELL_KNOWN_KEY.test(text.trim()) || BEARER_TOKEN.test(text.trim())) return ''
   return redactUrl(text)
 }
 
@@ -261,11 +272,16 @@ const stripValue = (value: unknown, key: string | null, parent: Parent, blank: b
       if (typeof value === 'string') return NULL_WHEN_STRIPPED.includes(key) ? null : ''
       const namedEntry = parent.name !== null && NAMED_ENTRIES.test(parent.name)
       if (typeof value === 'object' && value !== null && SECRET_CONTAINER.test(key) && !namedEntry) return REMOVED
+      // credentials under another name (passwords: [...], secretValues: {...}): every text in it goes
+      if (typeof value === 'object' && value !== null && !namedEntry) return stripValue(value, key, parent, true)
+    }
+    if (SECRET_TEXT_NAME.test(key) && typeof value === 'string') {
+      return ''
     }
 
-    // maps of credentials
-    if (SECRET_MAP_NAME.test(key) && isPlainObject(value)) {
-      return stripObject(value, key, true)
+    // maps of credentials, also when they are written as a list of names and values
+    if (SECRET_MAP_NAME.test(key) && typeof value === 'object' && value !== null) {
+      return stripValue(value, key, parent, true)
     }
 
     // proxies
