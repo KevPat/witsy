@@ -137,6 +137,9 @@ export function startDownload(targetDirectory: string): string {
     }
 
     const stream = writeStream = fs.createWriteStream(filePath);
+    stream.on('error', (error) => {
+      fail(error.message);
+    });
     
     response.on('data', (chunk) => {
 

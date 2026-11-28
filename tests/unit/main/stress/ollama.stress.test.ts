@@ -331,12 +331,32 @@ describe('ollama download', () => {
     expect(getDownloadStatus()).toBeNull()
   })
 
-  bug('a disk error while writing is reported instead of crashing the process', () => {
-    // the write stream has no error listener; an unhandled stream error is an uncaught exception
-    startDownload(dir)
-    requests[0].emit('response', new FakeResponse(200, { 'content-length': '10' }))
+  test('a disk error while writing is reported instead of crashing the process', () => {
+    const downloadId = startDownload(dir)
+    const response = new FakeResponse(200, { 'content-length': '10' })
+    requests[0].emit('response', response)
     expect(() => files[0].emit('error', Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }))).not.toThrow()
-    expect(events('ollama-download-error')).toHaveLength(1)
+    expect(events('ollama-download-error')).toEqual([{ downloadId, error: 'ENOSPC: no space left on device' }])
+    expect(requests[0].abort).toHaveBeenCalledTimes(1)
+    expect(getDownloadStatus()).toBeNull()
+
+    // what is still in flight is dropped
+    response.emit('data', Buffer.from('01234'))
+    response.emit('end')
+    expect(files[0].write).not.toHaveBeenCalled()
+    expect(events('ollama-download-complete')).toHaveLength(0)
+  })
+
+  test('a folder that cannot be written to is reported as a download error', async () => {
+    const actual = await vi.importActual<typeof import('fs')>('fs')
+    vi.mocked(fs.createWriteStream).mockImplementation(actual.createWriteStream as any)
+    startDownload(path.join(dir, 'missing'))
+    requests[0].emit('response', new FakeResponse(200, { 'content-length': '10' }))
+    await vi.waitFor(() => expect(events('ollama-download-error')).toHaveLength(1))
+    expect(events('ollama-download-error')[0].error).toContain('ENOENT')
+    expect(getDownloadStatus()).toBeNull()
+    expect(fs.readdirSync(dir)).toEqual([])
+    expect(console.error).not.toHaveBeenCalled()
   })
 
 })
