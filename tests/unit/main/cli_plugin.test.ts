@@ -334,6 +334,28 @@ describe('CliPlugin', () => {
   })
 
   describe('search', () => {
+    test('reports a result that was cut short', async () => {
+      fs.writeFileSync(path.join(tempDir, 'a.txt'), 'needle\nneedle\nneedle')
+
+      const cut = await plugin.execute({ model: 'test' }, {
+        action: 'search',
+        path: '.',
+        pattern: 'needle',
+        maxResults: 2
+      })
+      expect(cut.success).toBe(true)
+      expect(cut.matchCount).toBe(2)
+      expect(cut.truncated).toBe(true)
+
+      const complete = await plugin.execute({ model: 'test' }, {
+        action: 'search',
+        path: '.',
+        pattern: 'needle'
+      })
+      expect(complete.matchCount).toBe(3)
+      expect(complete.truncated).toBeUndefined()
+    })
+
     test('finds pattern in files', async () => {
       fs.writeFileSync(path.join(tempDir, 'file1.txt'), 'hello world\nfoo bar')
       fs.writeFileSync(path.join(tempDir, 'file2.txt'), 'goodbye world')

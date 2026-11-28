@@ -475,7 +475,8 @@ export default class CliPlugin extends Plugin {
             success: true,
             content,
             matchCount: result.matches.filter(m => m.isMatch).length,
-            fileCount: result.filesSearched
+            fileCount: result.filesSearched,
+            ...(result.truncated ? { truncated: true } : {}),
           }
         }
 
