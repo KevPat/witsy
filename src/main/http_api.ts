@@ -8,7 +8,7 @@ import { WorkDirAccess } from './cli_plugin'
 import * as config from './config'
 import { loadHistory, saveHistory } from './history'
 import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendError, sendJson } from './http_utils'
+import { createApiToken, hasValidApiToken, kApiTokenFile, isHttpEndpointsEnabled, parseParams, sendError, sendHandlerError, sendJson } from './http_utils'
 import { LlmContext } from './llm_utils'
 import Mcp from './mcp'
 import DocumentRepository from './rag/docrepo'
@@ -18,6 +18,9 @@ import DocumentRepository from './rag/docrepo'
  * These endpoints provide CLI access to Witsy functionality
  */
 export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, docRepo: DocumentRepository): void {
+
+  // a new token for each session: local clients read it from the user data folder
+  createApiToken(app)
 
   // GET /api/cli/config - Get current CLI configuration
   httpServer.register('/api/cli/config', async (_req, res) => {
@@ -146,6 +149,11 @@ export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, 
       if (params.workDir && typeof params.workDir === 'object') {
         const wd = params.workDir as { path?: string | null; access?: WorkDirAccess }
         if (wd.path && wd.access && wd.access !== 'none') {
+          // a work directory gives the assistant filesystem and shell tools: only for callers that can read the token file
+          if (!hasValidApiToken(req)) {
+            sendError(res, `workDir requires the API token: send "Authorization: Bearer <token>" with the content of the ${kApiTokenFile} file of the Witsy user data folder`, 403)
+            return
+          }
           workDir = { path: wd.path, access: wd.access }
         }
       }
@@ -214,7 +222,7 @@ export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, 
       }
     } catch (error) {
       console.error('[http] Error in /api/complete:', error)
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -265,7 +273,7 @@ export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, 
       sendJson(res, { chatId: chat.uuid })
     } catch (error) {
       console.error('[http] Error in /api/conversations:', error)
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 

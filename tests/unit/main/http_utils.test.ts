@@ -1,6 +1,6 @@
 import { vi, expect, test, beforeEach, Mock } from 'vitest'
 import { IncomingMessage, ServerResponse } from 'node:http'
-import { sendJson, sendError, parseParams } from '@main/http_utils'
+import { sendJson, sendError, sendHandlerError, parseParams, HttpError } from '@main/http_utils'
 
 let mockRes: Partial<ServerResponse>
 let mockReq: Partial<IncomingMessage>
@@ -80,27 +80,78 @@ test('parseParams extracts POST JSON body', async () => {
   expect(params).toEqual({ name: 'Jane', age: '25' })
 })
 
-test('parseParams extracts POST form-encoded body', async () => {
+const postWithBody = (contentType: string | undefined, chunks: (string | Buffer)[]) => {
   mockReq.method = 'POST'
-  mockReq.headers = { 'content-type': 'application/x-www-form-urlencoded' }
-
-  const formBody = 'name=Bob&age=40'
-
-  const listeners: Record<string, (...args: any[]) => void> = {}
+  mockReq.headers = contentType === undefined ? {} : { 'content-type': contentType }
   mockReq.on = vi.fn((event: string, callback: (...args: any[]) => void) => {
-    listeners[event] = callback
+    if (event === 'data') chunks.forEach((chunk) => callback(chunk))
+    if (event === 'end') callback()
     return mockReq as IncomingMessage
   }) as Mock
+  return parseParams(mockReq as IncomingMessage, new URL('http://localhost:8090/api/test?name=Test'))
+}
 
-  const parsedUrl = new URL('http://localhost:8090/api/test')
-  const promise = parseParams(mockReq as IncomingMessage, parsedUrl)
+test.each([
+  'application/json',
+  'application/json; charset=utf-8',
+  'application/json;charset=UTF-8',
+  'Application/JSON',
+  ' application/json ; charset=utf-8',
+])('parseParams accepts a JSON body sent as "%s"', async (contentType) => {
+  const params = await postWithBody(contentType, [JSON.stringify({ city: 'NYC' })])
+  expect(params).toEqual({ name: 'Test', city: 'NYC' })
+})
 
-  listeners['data'](formBody)
-  listeners['end']()
+test.each([
+  ['text/plain;application/json'],
+  ['text/plain; charset=application/json'],
+  ['text/plain; x=application/json'],
+  ['text/plain'],
+  ['application/x-www-form-urlencoded'],
+  ['multipart/form-data; boundary=x'],
+  ['application/jsonp'],
+  ['application/json-seq'],
+  ['x-application/json'],
+  [''],
+  [undefined],
+])('parseParams answers 415 to a body sent as "%s"', async (contentType) => {
+  const promise = postWithBody(contentType, [JSON.stringify({ city: 'NYC' })])
+  await expect(promise).rejects.toBeInstanceOf(HttpError)
+  await expect(promise).rejects.toMatchObject({ statusCode: 415 })
+})
 
-  const params = await promise
+test('parseParams accepts a POST without body whatever its content type', async () => {
+  const params = await postWithBody('text/plain', [])
+  expect(params).toEqual({ name: 'Test' })
+})
 
-  expect(params).toEqual({ name: 'Bob', age: '40' })
+test('parseParams reassembles a multi-byte character split across chunks', async () => {
+  const body = Buffer.from(JSON.stringify({ city: 'Zürich' }))
+  const split = body.indexOf(0xc3) + 1
+  const params = await postWithBody('application/json', [body.subarray(0, split), body.subarray(split)])
+  expect(params).toEqual({ name: 'Test', city: 'Zürich' })
+})
+
+test('parseParams answers 413 to a body over the size limit and stops buffering it', async () => {
+  const megabyte = Buffer.alloc(1024 * 1024, 0x20)
+  const concat = vi.spyOn(Buffer, 'concat')
+  const promise = postWithBody('application/json', Array(40).fill(megabyte))
+  await expect(promise).rejects.toMatchObject({ statusCode: 413 })
+  expect(concat.mock.calls.every(([chunks]) => chunks.length === 0)).toBe(true)
+  concat.mockRestore()
+})
+
+test('sendHandlerError answers with the status of an HttpError and 500 otherwise', () => {
+  sendHandlerError(mockRes as ServerResponse, new HttpError(415, 'Unsupported'))
+  expect(mockRes.writeHead).toHaveBeenLastCalledWith(415, { 'Content-Type': 'application/json' })
+  expect(mockRes.end).toHaveBeenLastCalledWith(JSON.stringify({ success: false, error: 'Unsupported' }))
+
+  sendHandlerError(mockRes as ServerResponse, new Error('Boom'))
+  expect(mockRes.writeHead).toHaveBeenLastCalledWith(500, { 'Content-Type': 'application/json' })
+  expect(mockRes.end).toHaveBeenLastCalledWith(JSON.stringify({ success: false, error: 'Boom' }))
+
+  sendHandlerError(mockRes as ServerResponse, 'not an error')
+  expect(mockRes.end).toHaveBeenLastCalledWith(JSON.stringify({ success: false, error: 'Internal server error' }))
 })
 
 test('parseParams combines GET and POST parameters', async () => {

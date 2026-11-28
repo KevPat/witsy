@@ -182,6 +182,15 @@ Witsy provides a local HTTP API that allows external applications to trigger var
 **Security Note:**
 The HTTP server runs on localhost only by default. If you need external access, consider using a reverse proxy with proper authentication.
 
+The API is meant for local scripts and tools, not for web pages. Every request is checked before it reaches an endpoint:
+- the `Host` header must be `localhost`, `127.0.0.1` or `[::1]` (any port), otherwise the request is refused with `403`;
+- requests sent by a web page are refused with `403`: any request with an `Origin` header (CORS preflights included) or flagged `cross-site`/`same-site` by the browser;
+- a `POST` body is only read when sent with `Content-Type: application/json` (`415` otherwise).
+
+Agent webhooks are authenticated by the token of their URL and are exempt from the `Host` and `Origin` checks, so they can be reached through a tunnel.
+
+Each time Witsy starts, it writes a new API token to the `http-api-token` file of its user data folder, readable by your user only. `/api/complete` accepts a `workDir` parameter (`{ "path": "...", "access": "ro" | "rw" }`, which gives the model file and command tools in that folder) only with an `Authorization: Bearer <token>` header and answers `403` without it. The Witsy CLI does this for you; requests without `workDir` need no token.
+
 ### Finding the Server Port
 
 The current HTTP server port is displayed in the tray menu below the Settings option:
@@ -190,7 +199,7 @@ The current HTTP server port is displayed in the tray menu below the Settings op
 
 ### Available Endpoints
 
-All endpoints support both `GET` (with query parameters) and `POST` (with JSON or form-encoded body) requests.
+All endpoints support both `GET` (with query parameters) and `POST` (with query parameters or a JSON body) requests.
 
 | Endpoint | Description | Optional Parameters |
 |----------|-------------|---------------------|

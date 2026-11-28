@@ -2,8 +2,8 @@ import { App } from 'electron'
 import { v7 as uuidv7 } from 'uuid'
 import { AgentExecutor, findAgentByWebhookToken } from './agent_utils'
 import { getAgentRun } from './agents'
-import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendError, sendJson } from './http_utils'
+import { HttpServer, RouteOptions } from './http_server'
+import { isHttpEndpointsEnabled, parseParams, sendError, sendHandlerError, sendJson } from './http_utils'
 import Mcp from './mcp'
 import DocumentRepository from './rag/docrepo'
 
@@ -11,6 +11,9 @@ import DocumentRepository from './rag/docrepo'
  * Base path for agent API endpoints
  */
 export const AGENT_API_BASE_PATH = '/api/agent'
+
+// the token in the url authenticates the caller, which may be a remote service behind a tunnel
+const kWebhookRouteOptions: RouteOptions = { allowAnyHost: true, allowOrigin: true, allowCrossSite: true }
 
 /**
  * Install agent webhook endpoints on the HTTP server
@@ -56,9 +59,9 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
 
     } catch (error) {
       console.error('[http] Error in agent webhook:', error)
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
-  })
+  }, kWebhookRouteOptions)
 
   // Status endpoint: GET /api/agent/status/:token/:runId
   httpServer.register(`${AGENT_API_BASE_PATH}/status/*`, async (req, res, parsedUrl) => {
@@ -113,7 +116,7 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
       console.error('[http] Error in agent status:', error)
       sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
     }
-  })
+  }, kWebhookRouteOptions)
 
   console.log('[http] Agent webhook installed')
 }

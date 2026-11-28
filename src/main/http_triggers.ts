@@ -5,7 +5,7 @@ import Commander from './automations/commander'
 import ReadAloud from './automations/readaloud'
 import Dictation from './automations/dictation'
 import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendError, sendJson } from './http_utils'
+import { isHttpEndpointsEnabled, parseParams, sendHandlerError, sendJson } from './http_utils'
 import { putCachedText } from './utils'
 import * as window from './window'
 
@@ -33,7 +33,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openMainWindow({ queryParams: { view: 'chat', ...(params.text ? { text: params.text } : {}) } })
       sendJson(res, { success: true, action: 'chat' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -44,7 +44,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openMainWindow({ queryParams: { view: 'scratchpad' } })
       sendJson(res, { success: true, action: 'scratchpad' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -55,7 +55,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openSettingsWindow()
       sendJson(res, { success: true, action: 'settings' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -66,7 +66,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openDesignStudioWindow()
       sendJson(res, { success: true, action: 'studio' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -77,7 +77,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openAgentForgeWindow()
       sendJson(res, { success: true, action: 'forge' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -88,7 +88,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       window.openRealtimeChatWindow()
       sendJson(res, { success: true, action: 'realtime' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -105,7 +105,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       }
       sendJson(res, { success: true, action: 'prompt' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -123,7 +123,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       }
       sendJson(res, { success: true, action: 'command' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -134,7 +134,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       await Dictation.initDictation()
       sendJson(res, { success: true, action: 'transcribe' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 
@@ -145,7 +145,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
       await ReadAloud.read(app)
       sendJson(res, { success: true, action: 'readaloud' })
     } catch (error) {
-      sendError(res, error instanceof Error ? error.message : 'Internal server error', 500)
+      sendHandlerError(res, error)
     }
   })
 

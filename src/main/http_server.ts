@@ -6,13 +6,59 @@ import * as fs from 'node:fs'
 export type RequestHandler = (req: IncomingMessage, res: ServerResponse, parsedUrl: URL) => Promise<void> | void
 
 /**
+ * Checks a route opts out of. By default a request is refused when its Host is not a
+ * loopback authority (DNS rebinding), when it carries an Origin header or when the browser
+ * flags it as cross-site or same-site: no legitimate client of this server is a web page.
+ */
+export type RouteOptions = {
+  // routes authenticated by other means and reached through a tunnel
+  allowAnyHost?: boolean
+  allowOrigin?: boolean
+  // routes reached by a cross-site navigation, such as an OAuth redirect
+  allowCrossSite?: boolean
+}
+
+type Route = { handler: RequestHandler, options: RouteOptions }
+
+const kLoopbackAuthority = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i
+
+// the OAuth provider redirects the browser to this route
+const kRouteOptions: Record<string, RouteOptions> = {
+  '/mcp/callback': { allowCrossSite: true },
+}
+
+const getRejection = (req: IncomingMessage, options: RouteOptions): string | null => {
+
+  // nothing is ever allowed cross-origin, so no preflight can succeed
+  if (req.method === 'OPTIONS') {
+    return 'Preflight requests are not allowed'
+  }
+
+  const host = req.headers.host
+  if (!options.allowAnyHost && (typeof host !== 'string' || !kLoopbackAuthority.test(host.trim()))) {
+    return 'Host not allowed'
+  }
+
+  if (!options.allowOrigin && req.headers.origin !== undefined) {
+    return 'Requests from web pages are not allowed'
+  }
+
+  const site = req.headers['sec-fetch-site']
+  if (!options.allowCrossSite && typeof site === 'string' && ['cross-site', 'same-site'].includes(site.trim().toLowerCase())) {
+    return 'Cross-site requests are not allowed'
+  }
+
+  return null
+}
+
+/**
  * Unified HTTP server for all callback/webhook needs in the application
  */
 export class HttpServer {
   private static instance: HttpServer | null = null
   private server: any = null
   private port: number | null = null
-  private routes: Map<string, RequestHandler> = new Map()
+  private routes: Map<string, Route> = new Map()
   private createServer: typeof defaultCreateServer
 
   private constructor(createServer: typeof defaultCreateServer = defaultCreateServer) {
@@ -51,13 +97,14 @@ export class HttpServer {
    * @param path The path to handle (e.g., '/oauth/callback')
    *             Use '*' suffix for prefix matching (e.g., '/agent/run/*')
    * @param handler The request handler function
+   * @param options The request checks this route opts out of (none by default)
    * @throws Error if path already exists
    */
-  register(path: string, handler: RequestHandler): void {
+  register(path: string, handler: RequestHandler, options?: RouteOptions): void {
     if (this.routes.has(path)) {
       throw new Error(`Path conflict: Route '${path}' already registered`)
     }
-    this.routes.set(path, handler)
+    this.routes.set(path, { handler, options: { ...kRouteOptions[path], ...options } })
     console.log(`[http] Registered route: ${path}`)
   }
 
@@ -109,25 +156,35 @@ export class HttpServer {
         const parsedUrl = new URL(req.url || '/', `http://localhost:${this.port}`)
         const path = parsedUrl.pathname
 
-        // Find matching route handler
-        let handler: RequestHandler | undefined
+        // Find matching route
+        let route: Route | undefined
 
         // First try exact match
-        handler = this.routes.get(path)
+        route = this.routes.get(path)
 
         // If no exact match, try wildcard matches
-        if (!handler) {
-          for (const [route, routeHandler] of this.routes) {
-            if (route.endsWith('*')) {
-              const prefix = route.slice(0, -1) // Remove the *
+        if (!route) {
+          for (const [routePath, candidate] of this.routes) {
+            if (routePath.endsWith('*')) {
+              const prefix = routePath.slice(0, -1) // Remove the *
               if (path.startsWith(prefix)) {
-                handler = routeHandler
+                route = candidate
                 break
               }
             }
           }
         }
 
+        // unknown paths are checked too so that a web page cannot probe the routes
+        const rejection = getRejection(req, route?.options ?? {})
+        if (rejection) {
+          console.warn(`[http] Request refused: ${rejection}`)
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, error: rejection }))
+          return
+        }
+
+        const handler = route?.handler
         if (handler) {
           // Execute the handler
           const result = handler(req, res, parsedUrl)

@@ -52,7 +52,8 @@ beforeEach(() => {
 test('installAgentWebhook registers /api/agent/run/* endpoint', () => {
   installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
 
-  expect(mockRegister).toHaveBeenCalledWith('/api/agent/run/*', expect.any(Function))
+  // the token authenticates the caller: the route opts out of the checks made for local clients
+  expect(mockRegister).toHaveBeenCalledWith('/api/agent/run/*', expect.any(Function), { allowAnyHost: true, allowOrigin: true, allowCrossSite: true })
   expect(console.log).toHaveBeenCalledWith('[http] Agent webhook installed')
 })
 
@@ -302,7 +303,7 @@ test('webhook endpoint combines GET and POST parameters', async () => {
 test('installAgentWebhook registers status endpoint', () => {
   installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
 
-  expect(mockRegister).toHaveBeenCalledWith('/api/agent/status/*', expect.any(Function))
+  expect(mockRegister).toHaveBeenCalledWith('/api/agent/status/*', expect.any(Function), { allowAnyHost: true, allowOrigin: true, allowCrossSite: true })
 })
 
 test('status endpoint returns 404 for invalid token', async () => {

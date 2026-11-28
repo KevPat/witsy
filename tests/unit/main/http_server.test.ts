@@ -1,4 +1,4 @@
-import { vi, expect, test, beforeEach, afterEach } from 'vitest'
+import { vi, expect, test, describe, beforeEach, afterEach } from 'vitest'
 import { IncomingMessage, ServerResponse } from 'node:http'
 import { HttpServer } from '@main/http_server'
 
@@ -56,6 +56,7 @@ test('routes with exact match take precedence', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/test'
   } as IncomingMessage
 
@@ -78,6 +79,7 @@ test('wildcard routes match prefixes', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/agent/run/abc12345'
   } as IncomingMessage
 
@@ -104,7 +106,7 @@ test('wildcard routes match any suffix', () => {
   ]
 
   for (const url of paths) {
-    const mockReq = { method: 'GET', url } as IncomingMessage
+    const mockReq = { method: 'GET', headers: { host: 'localhost:8090' }, url } as IncomingMessage
     const mockRes = {
       writeHead: vi.fn(),
       end: vi.fn(),
@@ -122,6 +124,7 @@ test('returns 404 for unmatched routes', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/notfound'
   } as IncomingMessage
 
@@ -146,6 +149,7 @@ test('multiple wildcard routes - first match wins', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/users/123'
   } as IncomingMessage
 
@@ -169,6 +173,7 @@ test('wildcard at root matches all paths', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/anything/here/works'
   } as IncomingMessage
 
@@ -192,6 +197,7 @@ test('exact match preferred even when wildcard exists', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/specific'
   } as IncomingMessage
 
@@ -214,6 +220,7 @@ test('wildcard does not match if prefix does not match', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/products/123'
   } as IncomingMessage
 
@@ -242,6 +249,7 @@ test('handler receives correct parsedUrl for wildcard routes', () => {
 
   const mockReq = {
     method: 'GET',
+    headers: { host: 'localhost:8090' },
     url: 'http://localhost:8090/api/agent/run/abc12345?param=value'
   } as IncomingMessage
 
@@ -274,4 +282,184 @@ test('server binds to localhost only for security', () => {
     '127.0.0.1',
     expect.any(Function)
   )
+})
+
+describe('request guard', () => {
+
+  const send = (url: string, headers: Record<string, string>, method = 'GET') => {
+    const res: any = { headersSent: false, statusCode: 0, headers: {}, body: '' }
+    res.writeHead = vi.fn((status: number, headers?: Record<string, string>) => {
+      res.statusCode = status
+      res.headers = headers ?? {}
+      res.headersSent = true
+    })
+    res.end = vi.fn((chunk?: any) => { if (chunk) res.body += String(chunk) })
+    requestListener({ method, url, headers } as any as IncomingMessage, res as ServerResponse)
+    return res
+  }
+
+  const expectRefused = (res: any) => {
+    expect(res.statusCode).toBe(403)
+    expect(res.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(res.body)).toEqual({ success: false, error: expect.any(String) })
+    expect(res.end).toHaveBeenCalledTimes(1)
+  }
+
+  let handler: ReturnType<typeof vi.fn>
+  let warn: ReturnType<typeof vi.spyOn>
+  let log: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    // not vi.restoreAllMocks(): it would also reset the portfinder mock
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    handler = vi.fn((req: IncomingMessage, res: ServerResponse) => { res.writeHead(200); res.end('ok') })
+    httpServer.register('/api/test', handler)
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+    log.mockRestore()
+  })
+
+  test.each([
+    'localhost',
+    'localhost:8090',
+    'LocalHost:8090',
+    '127.0.0.1',
+    '127.0.0.1:8090',
+    '[::1]',
+    '[::1]:8090',
+  ])('accepts the loopback Host %s', (host) => {
+    const res = send('/api/test', { host })
+    expect(res.statusCode).toBe(200)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([
+    'evil.example',
+    'evil.example:8090',
+    'localhost.evil.example',
+    '127.0.0.1.evil.example:8090',
+    'evil.example#localhost',
+    'localhost:8090@evil.example',
+    'localhost:8090, evil.example',
+    'localhost.',
+    '127.0.0.2',
+    '0.0.0.0:8090',
+    '192.168.1.10:8090',
+    '::1',
+    '',
+  ])('refuses the Host %s (dns rebinding)', (host) => {
+    expectRefused(send('/api/test', { host }))
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test('refuses a request without Host', () => {
+    expectRefused(send('/api/test', {}))
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    'https://evil.example',
+    'http://localhost:8090',
+    'http://localhost:3000',
+    'null',
+    '',
+  ])('refuses a request with the Origin "%s"', (origin) => {
+    expectRefused(send('/api/test', { host: 'localhost:8090', origin }, 'POST'))
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test.each(['cross-site', 'same-site', 'Cross-Site'])('refuses a request with Sec-Fetch-Site: %s', (site) => {
+    expectRefused(send('/api/test', { host: 'localhost:8090', 'sec-fetch-site': site }))
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test.each(['same-origin', 'none'])('accepts a request with Sec-Fetch-Site: %s', (site) => {
+    const res = send('/api/test', { host: 'localhost:8090', 'sec-fetch-site': site })
+    expect(res.statusCode).toBe(200)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  test('accepts what a local script sends (node fetch, curl)', () => {
+    const res = send('/api/test', { host: 'localhost:8090', accept: '*/*', 'sec-fetch-mode': 'cors', 'user-agent': 'node' }, 'POST')
+    expect(res.statusCode).toBe(200)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  test('refuses a CORS preflight and never sends CORS headers', () => {
+    const preflight = {
+      host: 'localhost:8090',
+      origin: 'https://evil.example',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type,authorization',
+      'sec-fetch-site': 'cross-site',
+    }
+    const res = send('/api/test', preflight, 'OPTIONS')
+    expectRefused(res)
+    expect(Object.keys(res.headers).filter((name) => name.toLowerCase().startsWith('access-control'))).toEqual([])
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test('refuses OPTIONS even on a route that opted out of every check', () => {
+    const open = vi.fn()
+    httpServer.register('/open/*', open, { allowAnyHost: true, allowOrigin: true, allowCrossSite: true })
+    expectRefused(send('/open/x', { host: 'tunnel.example', origin: 'https://evil.example' }, 'OPTIONS'))
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  test('refuses a web page before telling whether the path exists', () => {
+    expectRefused(send('/api/unknown', { host: 'localhost:8090', origin: 'https://evil.example' }))
+    expect(send('/api/unknown', { host: 'localhost:8090' }).statusCode).toBe(404)
+  })
+
+  test('a route can opt out of each check separately', () => {
+    const anyHost = vi.fn()
+    const anyOrigin = vi.fn()
+    const crossSite = vi.fn()
+    httpServer.register('/any-host', anyHost, { allowAnyHost: true })
+    httpServer.register('/any-origin', anyOrigin, { allowOrigin: true })
+    httpServer.register('/cross-site', crossSite, { allowCrossSite: true })
+
+    send('/any-host', { host: 'tunnel.example' })
+    send('/any-host', {})
+    expect(anyHost).toHaveBeenCalledTimes(2)
+    expectRefused(send('/any-host', { host: 'tunnel.example', origin: 'https://evil.example' }))
+    expectRefused(send('/any-host', { host: 'tunnel.example', 'sec-fetch-site': 'cross-site' }))
+    expect(anyHost).toHaveBeenCalledTimes(2)
+
+    send('/any-origin', { host: 'localhost:8090', origin: 'https://app.example' })
+    expect(anyOrigin).toHaveBeenCalledTimes(1)
+    expectRefused(send('/any-origin', { host: 'evil.example', origin: 'https://app.example' }))
+    expectRefused(send('/any-origin', { host: 'localhost:8090', origin: 'https://app.example', 'sec-fetch-site': 'cross-site' }))
+    expect(anyOrigin).toHaveBeenCalledTimes(1)
+
+    send('/cross-site', { host: 'localhost:8090', 'sec-fetch-site': 'cross-site' })
+    expect(crossSite).toHaveBeenCalledTimes(1)
+    expectRefused(send('/cross-site', { host: 'evil.example', 'sec-fetch-site': 'cross-site' }))
+    expectRefused(send('/cross-site', { host: 'localhost:8090', origin: 'https://evil.example' }))
+    expect(crossSite).toHaveBeenCalledTimes(1)
+  })
+
+  test('the OAuth callback is reachable by the cross-site redirect of the provider, and by nothing else cross-origin', () => {
+    const callback = vi.fn()
+    httpServer.register('/mcp/callback', callback)
+
+    const redirect = { host: 'localhost:8090', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }
+    send('/mcp/callback?code=abc&state=xyz', redirect)
+    expect(callback).toHaveBeenCalledTimes(1)
+
+    expectRefused(send('/mcp/callback?code=abc&state=xyz', { ...redirect, host: 'evil.example' }))
+    expectRefused(send('/mcp/callback?code=abc&state=xyz', { ...redirect, origin: 'https://evil.example' }, 'POST'))
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  test('a refused request is logged without its url', () => {
+    send('/api/test?text=private', { host: 'evil.example' })
+    const logged = [...warn.mock.calls, ...log.mock.calls].map((args) => args.join(' ')).filter((line) => line.includes('refused'))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).not.toContain('private')
+  })
+
 })
