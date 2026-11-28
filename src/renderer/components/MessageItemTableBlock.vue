@@ -51,7 +51,7 @@ const onDownloadFormat = async (action: string) => {
       break
 
     case 'xlsx':
-      fileContent = arrayToXLSX(data)
+      fileContent = await arrayToXLSX(data)
       filename = 'table.xlsx'
       break
 

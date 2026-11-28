@@ -1,6 +1,6 @@
 
 import MarkdownIt from 'markdown-it';
-import MarkdownItKatex from '@iktakahiro/markdown-it-katex'
+import { katex } from '@mdit/plugin-katex'
 import MarkdownItMark from 'markdown-it-mark'
 import MarkdownItDiagram from 'markdown-it-diagram'
 import hljs from 'highlight.js'
@@ -114,7 +114,7 @@ export const renderMarkdown = (markdown: string): string => {
     md.validateLink = (url) =>  url.startsWith('file://') ? true : validateLink(url)
 
     // plugins
-    md.use(MarkdownItKatex)
+    md.use(katex)
     md.use(MarkdownItMark)
     md.use(MarkdownItDiagram)
     // addSourceOffsets(md)

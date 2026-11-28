@@ -5,7 +5,7 @@ import { app } from 'electron';
 import { loadSettings } from '../config';
 import { runVbs } from '@el3um4s/run-vbs'
 import PowerShell from 'powershell'
-import autolib from 'autolib';
+import autolib from '../native_automation';
 import NutAutomator from './nut';
 
 const pscript = `

@@ -1,5 +1,5 @@
 
-import autolib from 'autolib'
+import autolib from './native_automation'
 import { App } from 'electron'
 import { NativeShortcutCallbacks } from 'types/automation'
 import { ShortcutsConfig } from 'types/config'

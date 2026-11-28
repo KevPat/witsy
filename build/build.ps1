@@ -25,6 +25,8 @@ Write-Host "Build number: $build_number"
 $packageJsonContent = Get-Content -Raw -Path "package.json"
 $version = ($packageJsonContent | ConvertFrom-Json).version
 Write-Host "Version: $version"
+. "$PSScriptRoot\windows_artifacts.ps1"
+$artifacts = Get-WitsyWindowsArtifactNames -Version $version -Architecture $architecture
 
 # Make sure prebuilds are used
 $env:PREBUILDS_ONLY = "1"
@@ -33,11 +35,11 @@ $env:PREBUILDS_ONLY = "1"
 npx electron-forge make -p win32 -a $architecture
 
 # Rename the installer file
-Rename-Item -Path "out\make\squirrel.windows\$architecture\Witsy-$version Setup.exe" -NewName "Witsy-$version-win32-$architecture.Setup.exe"
-Rename-Item -Path "out\make\squirrel.windows\$architecture\witsy-$version-full.nupkg" -NewName "witsy-$version-win32-$architecture-full.nupkg"
+Rename-Item -Path "out\make\squirrel.windows\$architecture\Witsy-$version Setup.exe" -NewName $artifacts.Installer
+Rename-Item -Path "out\make\squirrel.windows\$architecture\witsy-$version-full.nupkg" -NewName $artifacts.Nupkg
 
 # Replace name in RELEASES too
 (Get-Content "out\make\squirrel.windows\$architecture\RELEASES").Replace("$version", "$version-win32-$architecture") | Set-Content "out\make\squirrel.windows\$architecture\RELEASES"
 
 # Rename the zip file
-Rename-Item -Path "out\make\zip\win32\$architecture\Witsy-win32-$architecture-$version.zip" -NewName "Witsy-$version-win32-$architecture.zip"
+Rename-Item -Path "out\make\zip\win32\$architecture\Witsy-win32-$architecture-$version.zip" -NewName $artifacts.Zip
