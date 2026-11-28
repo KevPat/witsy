@@ -16,18 +16,20 @@ vi.mock('electron', async () => {
   }
 })
 
+let ragSettings: Record<string, number> | undefined
+
 vi.mock('@main/config', async () => {
   return {
-    loadSettings: vi.fn(() => ({ plugins: { memory: { engine: 'openai', model: 'text-embedding-3-small' } } })),
+    loadSettings: vi.fn(() => ({ plugins: { memory: { engine: 'openai', model: 'text-embedding-3-small' } }, rag: ragSettings })),
   }
 })
 
-// embedder double: no network, one fixed vector per text
+// embedder double: no network, one fixed vector per text ("close" is a near match, "unrelated" is orthogonal)
 vi.mock('@main/rag/embedder', async () => {
   class Embedder {
     static async init() { return new Embedder() }
     async embed(texts: string[]): Promise<number[][]> {
-      return texts.map(() => [0.5, 0.5, 0.5, 0.5])
+      return texts.map((text) => text.includes('unrelated') ? [0.5, -0.5, 0.5, -0.5] : text.includes('close') ? [0.5, 0.5, 0.5, 0.4] : [0.5, 0.5, 0.5, 0.5])
     }
   }
   return { default: Embedder }
@@ -43,6 +45,7 @@ const deferred = () => {
 const persistedFacts = async () => (await new MemoryManager(app).list()).map(fact => fact.content).sort()
 
 beforeEach(() => {
+  ragSettings = undefined
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'rag-memory-stress-'))
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -98,6 +101,34 @@ describe('MemoryManager', () => {
     expect(await first).toBe(true)
     expect(await second).toBe(true)
     expect(await persistedFacts()).toEqual(['first fact', 'second fact', 'seed'])
+  })
+
+  test('retrieval returns as many facts as the search result count of the RAG settings', async () => {
+    // it used to stop at 10 candidates and at the default count, whatever the settings
+    const memory = new MemoryManager(app)
+    await memory.store(Array.from({ length: 20 }, (_, i) => `fact ${i}`))
+    expect(await memory.query('fact')).toHaveLength(5)
+    ragSettings = { searchResultCount: 14, relevanceCutOff: 0.2 }
+    expect(await memory.query('fact')).toHaveLength(14)
+    ragSettings = { searchResultCount: 2, relevanceCutOff: 0.2 }
+    expect(await memory.query('fact')).toHaveLength(2)
+  })
+
+  test('retrieval applies the relevance cut-off of the RAG settings', async () => {
+    const memory = new MemoryManager(app)
+    await memory.store(['exact fact', 'close fact', 'unrelated fact'])
+    expect((await memory.query('query')).sort()).toEqual(['close fact', 'exact fact'])
+    ragSettings = { searchResultCount: 5, relevanceCutOff: 0.999 }
+    expect(await memory.query('query')).toEqual(['exact fact'])
+    ragSettings = { searchResultCount: 5, relevanceCutOff: -0.5 }
+    expect((await memory.query('query')).sort()).toEqual(['close fact', 'exact fact', 'unrelated fact'])
+  })
+
+  test('retrieval falls back to the default settings when the RAG section has no value', async () => {
+    const memory = new MemoryManager(app)
+    await memory.store(Array.from({ length: 8 }, (_, i) => `fact ${i}`).concat('unrelated fact'))
+    ragSettings = {}
+    expect(await memory.query('fact')).toHaveLength(5)
   })
 
 })

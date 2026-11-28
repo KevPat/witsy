@@ -99,8 +99,10 @@ export default class MemoryManager {
   async query(query: string): Promise<string[]> {
 
     // needed
-    const searchResultCount = defaultSettings.rag.searchResultCount
-    const relevanceCutOff = defaultSettings.rag.relevanceCutOff
+    // (the same settings as the document repository)
+    const settings = config.loadSettings(this.app)
+    const searchResultCount = settings.rag?.searchResultCount ?? defaultSettings.rag.searchResultCount
+    const relevanceCutOff = settings.rag?.relevanceCutOff ?? defaultSettings.rag.relevanceCutOff
 
     // we need a connection
     await this.serialize(() => this.connect())
@@ -112,7 +114,7 @@ export default class MemoryManager {
     // now query
     const results = await this.serialize(async () => {
       await this.connect()
-      return this.db.query(query, embeddings[0], 10)
+      return this.db.query(query, embeddings[0], searchResultCount + 10)
     })
     return results
       .filter((result) => result.score > relevanceCutOff)
