@@ -94,7 +94,7 @@ if (process.platform !== 'darwin' && !process.env.TEST) {
 
 // changes path
 if (process.env.WITSY_HOME) {
-  const originalGetPath = app.getPath;
+  const originalGetPath = app.getPath.bind(app);
   app.getPath = (name: string) => {
     if (name === 'userData') {
       return process.env.WITSY_HOME;
