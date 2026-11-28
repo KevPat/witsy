@@ -239,6 +239,11 @@
     "@mdit/plugin-katex": {
       "katex": "$katex"
     },
+    "archiver": {
+      "readdir-glob": {
+        "minimatch": "$minimatch"
+      }
+    },
     "exceljs": {
       "uuid": "$uuid"
     },
