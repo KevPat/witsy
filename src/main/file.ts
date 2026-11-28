@@ -408,18 +408,37 @@ export const findProgram = (app: App, program: string): string|null => {
 
 const SAVE_DIRECTORIES: AppDirectory[] = ['home', 'appData', 'userData', 'sessionData', 'temp', 'documents', 'downloads']
 
+// without a save dialog nobody sees where the file goes: only the folders where the app keeps its own files are accepted
+// (generated media and attachments in userData, drawings of the design studio in temp).
+// with a save dialog the directory is only where the dialog opens
+const UNPROMPTED_SAVE_DIRECTORIES: AppDirectory[] = ['userData', 'temp']
+
+const DEFAULT_SAVE_PROPERTIES: FileProperties = {
+  directory: 'downloads',
+  prompt: false,
+  subdir: false,
+}
+
+const isSaveDirectoryAccepted = (properties: FileProperties): boolean => {
+  if (!SAVE_DIRECTORIES.includes(properties.directory)) {
+    console.error('Refusing to save file in unknown directory', properties.directory);
+    return false;
+  }
+  if (!properties.prompt && !UNPROMPTED_SAVE_DIRECTORIES.includes(properties.directory)) {
+    console.error('Refusing to save file without a save dialog in directory', properties.directory);
+    return false;
+  }
+  return true;
+}
+
 export const writeFileContents = (app: App, payload: FileSaveParams): string => {
 
   // defaults
   const defaultPayload = {
     contents: '',
-    properties: {
-      directory: 'downloads',
-      prompt: false,
-      subdir: false,
-    } as FileProperties,
+    properties: DEFAULT_SAVE_PROPERTIES,
   };
-  
+
   payload = {
     ...defaultPayload,
     ...payload,
@@ -431,8 +450,7 @@ export const writeFileContents = (app: App, payload: FileSaveParams): string => 
 
   // parse properties
   const properties = payload.properties;
-  if (!SAVE_DIRECTORIES.includes(properties.directory)) {
-    console.error('Refusing to save file in unknown directory', properties.directory);
+  if (!isSaveDirectoryAccepted(properties)) {
     return null;
   }
 
@@ -501,6 +519,11 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     contents: '',
     url: payload.url,
     properties: payload.properties
+  }
+
+  // a save that will be refused is not worth a request, or reading a local file
+  if (!isSaveDirectoryAccepted({ ...DEFAULT_SAVE_PROPERTIES, ...payload.properties })) {
+    return null;
   }
 
   try {

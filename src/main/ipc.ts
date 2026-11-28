@@ -39,6 +39,7 @@ import * as commands from './commands';
 import * as config from './config';
 import * as experts from './experts';
 import * as file from './file';
+import * as fileAccess from './file_access';
 import { resolveAllowedPath } from './path_containment';
 import * as mediaFile from './media_file';
 import * as google from './google';
@@ -436,7 +437,8 @@ export const installIpc = (
   });
 
   ipcMain.on(IPC.FILE.DELETE_FILE, (event, payload) => {
-    event.returnValue = file.deleteFile(payload);
+    // the renderer can only delete the app's own files and the ones in the filesystem plugin folders (see file_access.ts)
+    event.returnValue = fileAccess.deleteFileFromRenderer(app, payload, () => config.loadSettings(app).plugins?.filesystem);
   });
 
   ipcMain.on(IPC.FILE.PICK_FILE, (event, payload) => {
@@ -530,7 +532,8 @@ export const installIpc = (
   });
 
   ipcMain.on(IPC.FILE.WRITE_FILE, (event, filePath, content) => {
-    event.returnValue = file.writeFile(app, filePath, content);
+    // the renderer can only write the app's own files and the ones in the filesystem plugin folders (see file_access.ts)
+    event.returnValue = fileAccess.writeFileFromRenderer(app, filePath, content, () => config.loadSettings(app).plugins?.filesystem);
   });
 
   ipcMain.handle(IPC.FILE.FIND_FILES, async (event, basePath, pattern, maxResults) => {

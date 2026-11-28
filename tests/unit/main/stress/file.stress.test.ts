@@ -48,24 +48,24 @@ afterEach(() => {
 describe('writeFileContents', () => {
 
   test('writes into the requested directory and returns a file url', () => {
-    const url = file.writeFileContents(app, { contents: base64('hello'), properties: { filename: 'a.txt', directory: 'documents' } })
-    expect(url).toBe(`file://${path.join(root, 'documents', 'a.txt')}`)
-    expect(fs.readFileSync(path.join(root, 'documents', 'a.txt'), 'utf-8')).toBe('hello')
+    const url = file.writeFileContents(app, { contents: base64('hello'), properties: { filename: 'a.txt', directory: 'userData' } })
+    expect(url).toBe(`file://${path.join(root, 'userData', 'a.txt')}`)
+    expect(fs.readFileSync(path.join(root, 'userData', 'a.txt'), 'utf-8')).toBe('hello')
   })
 
   test('stress: 300 files with awkward names round trip', () => {
     const names = ['spaces in name.txt', 'ünïcödé.txt', 'emoji-✓.txt', 'dots...txt', 'UPPER.TXT', '#hash.txt', '100%.txt', 'semi;colon.txt', `quote'.txt`]
     for (let i = 0; i < 300; i++) {
       const filename = `${i}-${names[i % names.length]}`
-      const url = file.writeFileContents(app, { contents: base64(`content ${i}`), properties: { filename, directory: 'documents' } })
+      const url = file.writeFileContents(app, { contents: base64(`content ${i}`), properties: { filename, directory: 'userData' } })
       expect(fs.readFileSync(url.slice(7), 'utf-8')).toBe(`content ${i}`)
     }
-    expect(fs.readdirSync(path.join(root, 'documents'))).toHaveLength(300)
+    expect(fs.readdirSync(path.join(root, 'userData'))).toHaveLength(300)
   })
 
   test.each([
-    ['filename', { filename: path.join('..', 'outside.txt'), directory: 'downloads' }],
-    ['subdir', { filename: 'outside.txt', directory: 'downloads', subdir: path.join('..', 'documents') }],
+    ['filename', { filename: path.join('..', 'outside.txt'), directory: 'temp' }],
+    ['subdir', { filename: 'outside.txt', directory: 'temp', subdir: path.join('..', 'documents') }],
     ['workspace', { filename: 'outside.txt', directory: 'userData', workspace: path.join('..', '..', 'documents') }],
   ])('a %s with parent segments cannot write outside the target directory', (_, properties) => {
     // these values come from the renderer, which also renders remote and model generated content
@@ -76,7 +76,7 @@ describe('writeFileContents', () => {
   })
 
   test('a missing url and filename is reported as a failure instead of throwing', () => {
-    expect(() => file.writeFileContents(app, { contents: base64('x'), properties: { directory: 'downloads' } })).not.toThrow()
+    expect(() => file.writeFileContents(app, { contents: base64('x'), properties: { directory: 'temp' } })).not.toThrow()
   })
 
   test('the default file name of an http url is its last path segment on every platform', () => {
@@ -86,11 +86,11 @@ describe('writeFileContents', () => {
     try {
       Object.defineProperty(path, 'sep', { value: '\\', configurable: true, writable: true })
       vi.spyOn(console, 'error').mockImplementation(() => {})
-      url = file.writeFileContents(app, { contents: base64('x'), url: 'https://example.com/images/cat.png?size=large', properties: { directory: 'downloads' } })
+      url = file.writeFileContents(app, { contents: base64('x'), url: 'https://example.com/images/cat.png?size=large', properties: { directory: 'temp' } })
     } finally {
       Object.defineProperty(path, 'sep', { value: sep, configurable: true, writable: true })
     }
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'cat.png')}`)
+    expect(url).toBe(`file://${path.join(root, 'temp', 'cat.png')}`)
   })
 
 })
@@ -99,20 +99,20 @@ describe('downloadFile', () => {
 
   test('saves the body of a successful response', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('image-bytes', { status: 200 }))
-    const url = await file.downloadFile(app, { url: 'https://example.com/a/cat.png?x=1', properties: { filename: 'cat.png', directory: 'downloads' } })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'cat.png')}`)
-    expect(fs.readFileSync(path.join(root, 'downloads', 'cat.png'), 'utf-8')).toBe('image-bytes')
+    const url = await file.downloadFile(app, { url: 'https://example.com/a/cat.png?x=1', properties: { filename: 'cat.png', directory: 'temp' } })
+    expect(url).toBe(`file://${path.join(root, 'temp', 'cat.png')}`)
+    expect(fs.readFileSync(path.join(root, 'temp', 'cat.png'), 'utf-8')).toBe('image-bytes')
   })
 
   test('a network error is reported as null and writes nothing', async () => {
-    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'temp' } })
     expect(url).toBeNull()
     expect(filesUnder(root)).toEqual([])
   })
 
   bug.each([403, 404, 500, 503])('an HTTP %i error page is not saved as the downloaded file', async (status) => {
     vi.mocked(fetch).mockResolvedValue(new Response('<html>error</html>', { status }))
-    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'temp' } })
     expect(url).toBeNull()
     expect(filesUnder(root)).toEqual([])
   })
@@ -121,8 +121,8 @@ describe('downloadFile', () => {
     // url is reset to null before the name is derived from it
     const source = path.join(root, 'documents', 'source.png')
     fs.writeFileSync(source, 'image-bytes')
-    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { directory: 'downloads' } })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'source.png')}`)
+    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { directory: 'temp' } })
+    expect(url).toBe(`file://${path.join(root, 'temp', 'source.png')}`)
   })
 
 })
