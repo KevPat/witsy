@@ -61,7 +61,8 @@ const response = () => {
 
 const get = (url: string) => {
   const res = response()
-  listeners[0]({ url, method: 'GET', headers: {} } as IncomingMessage, res)
+  // a local client: the server refuses requests whose Host is not a loopback address
+  listeners[0]({ url, method: 'GET', headers: { host: 'localhost:8090' } } as IncomingMessage, res)
   return res
 }
 
