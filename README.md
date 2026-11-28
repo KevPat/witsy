@@ -314,7 +314,7 @@ The CLI will connect to your running Witsy application and provide an interactiv
 **Requirements**
 - Witsy desktop application must be running
 - HTTP API server enabled (default port: 4321)
-- macOS and Linux: the CLI runs on the Witsy binary itself, used as a Node.js runtime. A build made with `WITSY_CLI_RUNTIME=node` runs it on the Node.js of your computer instead (version 18 or later); the binary of such a build can no longer be turned into a Node.js runtime with `ELECTRON_RUN_AS_NODE`. Windows builds never can.
+- The CLI runs on the Witsy binary itself, used as a Node.js runtime. A build made with `WITSY_CLI_RUNTIME=node` runs it on the Node.js of your computer instead (version 18 or later); the binary of such a build can no longer be turned into a Node.js runtime with `ELECTRON_RUN_AS_NODE`.
 
 ### CLI Chat Completion API
 

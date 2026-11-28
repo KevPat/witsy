@@ -159,8 +159,8 @@ const config: ForgeConfig = {
     new FusesPlugin({
       version: FuseVersion.V1,
       // With this fuse, ELECTRON_RUN_AS_NODE=1 turns the app binary into a Node.js runtime for any local
-      // process. Only the CLI launcher of macOS and Linux (bin/witsy) uses that: the fuse is off for Windows
-      // builds, and for the builds whose CLI runs on the Node.js of the user (see build/cli_runtime.ts).
+      // process. On by default so the CLI can run without Node.js; off when the build is made with
+      // WITSY_CLI_RUNTIME=node (see build/cli_runtime.ts).
       [FuseV1Options.RunAsNode]: runAsNodeFuse(targetPlatform),
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,

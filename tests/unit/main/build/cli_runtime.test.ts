@@ -15,14 +15,7 @@ const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf-8')
 
 describe('the Node.js that runs the CLI', () => {
 
-  test('a Windows build never uses the app binary', () => {
-    expect(cliRuntime('win32', {})).toBe('node')
-    expect(cliRuntime('win32', { WITSY_CLI_RUNTIME: 'electron' })).toBe('node')
-    expect(runAsNodeFuse('win32', {})).toBe(false)
-    expect(runAsNodeFuse('win32', { WITSY_CLI_RUNTIME: 'electron' })).toBe(false)
-  })
-
-  test.each(['darwin', 'mas', 'linux'])('a %s build uses the app binary unless it is built for the Node.js of the user', (platform) => {
+  test.each(['win32', 'darwin', 'mas', 'linux'])('a %s build uses the app binary unless it is built for the Node.js of the user', (platform) => {
     expect(cliRuntime(platform, {})).toBe('electron')
     expect(runAsNodeFuse(platform, {})).toBe(true)
     expect(cliRuntime(platform, { WITSY_CLI_RUNTIME: 'node' })).toBe('node')
@@ -30,6 +23,7 @@ describe('the Node.js that runs the CLI', () => {
   })
 
   test.each(['', 'electron', 'NODE', 'Node', '1', 'true', ' node'])('WITSY_CLI_RUNTIME=%j is not a request for the Node.js of the user', (value) => {
+    expect(cliRuntime('win32', { WITSY_CLI_RUNTIME: value })).toBe('electron')
     expect(cliRuntime('darwin', { WITSY_CLI_RUNTIME: value })).toBe('electron')
     expect(cliRuntime('linux', { WITSY_CLI_RUNTIME: value })).toBe('electron')
   })

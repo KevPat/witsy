@@ -8,9 +8,9 @@ import path from 'path';
 //   permissions the user gave to Witsy).
 // - 'node': the Node.js of the user (18 or later). The fuse is off: the app binary only runs the app.
 //
-// Windows builds are 'node': witsy.cmd and witsy.ps1 never started the app binary as Node.js.
-// macOS and Linux builds are 'electron', as they were, unless they are built with
-// WITSY_CLI_RUNTIME=node: the CLI then requires Node.js on the computer of the user.
+// Every platform is 'electron' by default, so the CLI can run without Node.js on the computer
+// of the user. Built with WITSY_CLI_RUNTIME=node, the CLI requires Node.js 18 or later and the
+// fuse is off.
 //
 // The choice is written next to cli.js (file `runtime`) and read by bin/witsy.
 
@@ -18,10 +18,7 @@ export type CliRuntime = 'electron' | 'node';
 
 export const kCliRuntimeFile = 'runtime';
 
-export function cliRuntime(platform: string, env: Record<string, string | undefined> = process.env): CliRuntime {
-  if (platform === 'win32') {
-    return 'node';
-  }
+export function cliRuntime(_platform: string, env: Record<string, string | undefined> = process.env): CliRuntime {
   return env.WITSY_CLI_RUNTIME === 'node' ? 'node' : 'electron';
 }
 
