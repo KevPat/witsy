@@ -32,6 +32,8 @@
         <input type="checkbox" id="safe-keys" v-model="safeKeys" @change="save" />
         <label for="safe-keys">{{ t('settings.advanced.safeKeys') }}</label>
       </div>
+      <div class="help warning safe-keys-weak" v-if="safeKeys && keyStorage.weak">{{ t('settings.advanced.safeKeysWeak') }}</div>
+      <div class="help warning safe-keys-undecryptable" v-if="keyStorage.undecryptable.length">{{ t('settings.advanced.safeKeysUndecryptable', { keys: keyStorage.undecryptable.join(', ') }) }}</div>
       <div>
         <div class="form-field http-endpoints horizontal">
           <input type="checkbox" id="http-endpoints" v-model="enableHttpEndpoints" @change="save" />
@@ -107,7 +109,7 @@ import { i18nInstructions, t } from '@services/i18n'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { store } from '@services/store'
 import { ProxyMode } from 'types/config'
-import { anyDict } from 'types/index'
+import { anyDict, ApiKeyStorageStatus } from 'types/index'
 
 const isMacOS = window.api.platform === 'darwin'
 
@@ -121,6 +123,7 @@ const isPromptOverridden = ref(false)
 const instructions = ref('instructions.chat.docquery')
 const autoSavePrompt = ref(false)
 const safeKeys = ref(true)
+const keyStorage = ref<ApiKeyStorageStatus>({ encryptionAvailable: true, weak: false, undecryptable: [], notStored: [] })
 const enableHttpEndpoints = ref(true)
 const proxyMode = ref<ProxyMode>('default')
 const customProxy = ref('')
@@ -175,6 +178,7 @@ onBeforeUnmount(() => {
 const load = () => {
   autoSavePrompt.value = store.config.prompt.autosave
   safeKeys.value = store.config.general.safeKeys
+  keyStorage.value = window.api.config.keyStorageStatus()
   enableHttpEndpoints.value = store.config.general.enableHttpEndpoints
   proxyMode.value = store.config.general.proxyMode
   customProxy.value = store.config.general.customProxy

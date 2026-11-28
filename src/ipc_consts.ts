@@ -72,6 +72,7 @@ export const CONFIG = {
   GET_I18N_MESSAGES: 'config-get-i18n-messages',
   LOAD: 'config-load',
   SAVE: 'config-save',
+  GET_KEY_STORAGE_STATUS: 'config-get-key-storage-status',
 } as const;
 
 export const HISTORY = {

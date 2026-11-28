@@ -94,6 +94,7 @@ const useWindowMock = (opts?: WindowMockOpts) => {
     config: {
       localeUI: vi.fn(() => 'en-US'),
       localeLLM: vi.fn(() => 'en-US'),
+      keyStorageStatus: vi.fn(() => ({ encryptionAvailable: true, weak: false, undecryptable: [], notStored: [] })),
       getI18nMessages: vi.fn(() => ({ en: {}, fr: {} })),
       load: vi.fn(() => {
         const config = JSON.parse(JSON.stringify(defaultSettings))

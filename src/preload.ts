@@ -6,7 +6,7 @@ import { LlmChunk, PluginTool } from 'multi-llm-ts';
 import * as IPC from './ipc_consts';
 import { Size } from './main/computer';
 import Agent from './models/agent';
-import { Command, ComputerAction, Expert, ExpertCategory, ExternalApp, LocalSearchResponse, MainWindowMode, NativeShortcut, NetworkRequest, OpenSettingsPayload, anyDict, strDict } from './types';
+import { ApiKeyStorageStatus, Command, ComputerAction, Expert, ExpertCategory, ExternalApp, LocalSearchResponse, MainWindowMode, NativeShortcut, NetworkRequest, OpenSettingsPayload, anyDict, strDict } from './types';
 import { AgentRun, RunningAgentRuns } from './types/agents';
 import { Application, RunCommandParams } from './types/automation';
 import { Configuration } from './types/config';
@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld(
       getI18nMessages(): anyDict { return ipcRenderer.sendSync(IPC.CONFIG.GET_I18N_MESSAGES) },
       load: (): Configuration => { return JSON.parse(ipcRenderer.sendSync(IPC.CONFIG.LOAD)) },
       save: (data: Configuration) => { return ipcRenderer.send(IPC.CONFIG.SAVE, JSON.stringify(data)) },
+      keyStorageStatus: (): ApiKeyStorageStatus => { return ipcRenderer.sendSync(IPC.CONFIG.GET_KEY_STORAGE_STATUS) },
     },
     history: {
       load: (workspaceId: string): History => { return JSON.parse(ipcRenderer.sendSync(IPC.HISTORY.LOAD, workspaceId)) },

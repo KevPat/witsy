@@ -216,6 +216,10 @@ export const installIpc = (
     event.returnValue = JSON.stringify(config.loadSettings(app));
   });
 
+  ipcMain.on(IPC.CONFIG.GET_KEY_STORAGE_STATUS, (event) => {
+    event.returnValue = config.getApiKeyStorageStatus();
+  });
+
   ipcMain.on(IPC.CONFIG.SAVE, (event, payload) => {
     config.saveSettings(app, JSON.parse(payload) as Configuration);
   });

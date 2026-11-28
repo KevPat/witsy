@@ -4,7 +4,7 @@ import Store from 'electron-store'
 import fs from 'fs'
 import path from 'path'
 import { Configuration } from 'types/config'
-import { anyDict } from 'types/index'
+import { anyDict, ApiKeyStorageStatus } from 'types/index'
 import defaultSettings from '@root/defaults/settings.json'
 import { favoriteMockEngine } from '../renderer/services/llms/llm'
 import Monitor from './monitor'
@@ -498,7 +498,7 @@ const warnIfKeyStorageIsWeak = (): void => {
   console.warn('API keys are not protected: no system keyring (gnome-libsecret, kwallet) is available, so they are stored with the basic_text backend, which only obfuscates them. Install and unlock a keyring to have them encrypted.')
 }
 
-export const getApiKeyStorageStatus = (): { encryptionAvailable: boolean, weak: boolean, undecryptable: string[], notStored: string[] } => {
+export const getApiKeyStorageStatus = (): ApiKeyStorageStatus => {
   let encryptionAvailable = false
   try {
     encryptionAvailable = safeStorage.isEncryptionAvailable()

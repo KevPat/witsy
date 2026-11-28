@@ -2739,6 +2739,8 @@
       },
       "resetToDefault": "Reset to default value",
       "safeKeys": "Store API keys in system secure storage",
+      "safeKeysUndecryptable": "Some API keys could not be read from the system secure storage and are left untouched: {keys}. They will be read again once the system keychain or keyring is unlocked, or you can type them again.",
+      "safeKeysWeak": "No system keyring (GNOME Keyring, KWallet) is available: API keys are only obfuscated, not encrypted. Install and unlock a keyring to protect them.",
       "systemInstructions": "System instructions"
     },
     "chat": {
