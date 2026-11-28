@@ -109,7 +109,18 @@ describe('local http server', () => {
     }
   })
 
-  bug('the logo request is answered when the icon file is not in the resources folder', async () => {
+  test('a startup that fails can be tried again', async () => {
+    const portfinder = await import('portfinder')
+    vi.mocked(portfinder.getPortPromise).mockRejectedValueOnce(new Error('no port available'))
+    const server = newServer()
+    await expect(server.ensureServerRunning(8090)).rejects.toThrow('no port available')
+    expect(servers).toHaveLength(0)
+    await server.ensureServerRunning(8090)
+    await server.ensureServerRunning(8090)
+    expect(servers).toHaveLength(1)
+  })
+
+  test('the logo request is answered when the icon file is not in the resources folder', async () => {
     // assets/icon.png is not listed in forge extraResource, so this is every packaged build;
     // readFileSync runs outside the try block: the exception escapes the request listener and the request is never answered
     const server = newServer()
@@ -119,7 +130,25 @@ describe('local http server', () => {
     expect(res.end).toHaveBeenCalled()
   })
 
-  bug('concurrent startup requests create a single server', async () => {
+  test('the logo request is answered with the icon of the resources folder', async () => {
+    fs.writeFileSync(path.join(resources, 'icon.png'), 'png-data')
+    const server = newServer()
+    await server.ensureServerRunning(8090)
+    const res = get('/logo.png')
+    expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'image/png' })
+    expect(res.write).toHaveBeenCalledWith(Buffer.from('png-data'))
+    expect(res.end).toHaveBeenCalled()
+  })
+
+  test('a missing icon is answered with 404', async () => {
+    const server = newServer()
+    await server.ensureServerRunning(8090)
+    const res = get('/logo.png')
+    expect(res.writeHead).toHaveBeenCalledWith(404)
+    expect(res.end).toHaveBeenCalledTimes(1)
+  })
+
+  test('concurrent startup requests create a single server', async () => {
     // the "already running" check happens before an await
     const server = newServer()
     await Promise.all([server.ensureServerRunning(8090), server.ensureServerRunning(8090), server.ensureServerRunning(8090)])

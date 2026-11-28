@@ -12,6 +12,7 @@ export class HttpServer {
   private static instance: HttpServer | null = null
   private server: any = null
   private port: number | null = null
+  private starting: Promise<void> | null = null
   private routes: Map<string, RequestHandler> = new Map()
   private createServer: typeof defaultCreateServer
 
@@ -80,6 +81,18 @@ export class HttpServer {
       return
     }
 
+    // callers that arrive while the port is being looked up share the same startup
+    if (!this.starting) {
+      this.starting = this.startServer(port).finally(() => {
+        this.starting = null
+      })
+    }
+    return this.starting
+
+  }
+
+  private async startServer(port: number): Promise<void> {
+
     // Find an available port
     this.port = await portfinder.getPortPromise({ port })
     console.log(`[http] Starting server on port ${this.port}`)
@@ -95,11 +108,17 @@ export class HttpServer {
 
       // Process logo request
       if (req.url === '/logo.png') {
-        const assetsFolder = process.env.DEBUG ? 'assets' : process.resourcesPath;
-        const fileData = fs.readFileSync(path.join(assetsFolder, 'icon.png'));
-        res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.write(fileData);
-        res.end();
+        try {
+          const assetsFolder = process.env.DEBUG ? 'assets' : process.resourcesPath;
+          const fileData = fs.readFileSync(path.join(assetsFolder, 'icon.png'));
+          res.writeHead(200, { 'Content-Type': 'image/png' });
+          res.write(fileData);
+          res.end();
+        } catch (error) {
+          console.error('[http] Could not read the logo:', error)
+          res.writeHead(404)
+          res.end()
+        }
         return;
       }
 

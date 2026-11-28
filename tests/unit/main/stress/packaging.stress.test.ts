@@ -80,7 +80,7 @@ describe('native prebuilds', () => {
 
 describe('forge configuration', () => {
 
-  bug('the icon served by the local http server is packaged', () => {
+  test('the icon served by the local http server is packaged', () => {
     // http_server.ts reads <resources>/icon.png for /logo.png; only icon.ico is in extraResource
     const usesIconPng = read('src/main/http_server.ts').includes('\'icon.png\'')
     expect(usesIconPng).toBe(true)
