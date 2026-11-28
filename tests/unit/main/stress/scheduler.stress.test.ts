@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import Scheduler from '@main/scheduler'
 import { listAgents } from '@main/agents'
 import { listWorkspaces } from '@main/workspace'
-import { bug } from './bug'
 
 // Scheduler.check() runs an agent when a cron occurrence lies within 30 seconds of "now" on either
 // side, and then re-arms a timer for the next minute boundary. Nothing remembers which occurrence
@@ -129,23 +128,23 @@ describe('scheduler: wake-ups that miss the minute boundary', () => {
     }
   })
 
-  bug('a wake-up 1 ms before the minute runs a daily agent once, not twice', () => {
+  test('a wake-up 1 ms before the minute runs a daily agent once, not twice', () => {
     // fails today: the check at 10:02:59.999 runs it, re-arms for 1 ms later, and that check runs it again
     expect(wakeAt('3 10 * * *', -1)).toHaveLength(1)
   })
 
-  bug('a wake-up 1 ms before the minute runs an every-minute agent once for that minute', () => {
+  test('a wake-up 1 ms before the minute runs an every-minute agent once for that minute', () => {
     // fails today: the 10:03 occurrence is served by both the early check and the one on the boundary
     // (the two simulated minutes end at 10:04:59.999, so 10:03 and 10:04 are the only occurrences)
     expect(runsPerMinute(wakeAt('* * * * *', -1))).toEqual({ '10:03': 1, '10:04': 1 })
   })
 
-  bug('a wake-up 15 s before the minute (resume from sleep) runs the agent once, not twice', () => {
+  test('a wake-up 15 s before the minute (resume from sleep) runs the agent once, not twice', () => {
     // fails today: 15 s early is inside the 30 s tolerance, and so is the re-armed check on the boundary
     expect(wakeAt('3 10 * * *', -15 * 1000)).toHaveLength(1)
   })
 
-  bug('seeded sweep: an early wake-up inside the tolerance window runs the occurrence exactly once', () => {
+  test('seeded sweep: an early wake-up inside the tolerance window runs the occurrence exactly once', () => {
     // fails today: every early offset in the window produces two runs of the same occurrence
     const rand = mulberry32(0x5C4ED)
     const offsets = [1, 2, 999, 1000, 29999, ...Array.from({ length: 60 }, () => 1 + Math.floor(rand() * 29999))]
@@ -157,7 +156,7 @@ describe('scheduler: wake-ups that miss the minute boundary', () => {
 
 describe('scheduler: timer handle and failures', () => {
 
-  bug('stop() cancels the pending wake-up', () => {
+  test('stop() cancels the pending wake-up', () => {
     // fails today: start() never stores the setTimeout handle, so stop() clears nothing
     const scheduler = newScheduler('3 10 * * *')
     vi.setSystemTime(kDue - 10 * 1000)
@@ -167,7 +166,7 @@ describe('scheduler: timer handle and failures', () => {
     expect(runs).toHaveLength(0)
   })
 
-  bug('calling start() twice does not run every occurrence twice', () => {
+  test('calling start() twice does not run every occurrence twice', () => {
     // fails today: same cause, the first timer survives and both chains keep re-arming themselves
     const scheduler = newScheduler('3 10 * * *')
     vi.setSystemTime(kDue - 10 * 1000)
@@ -177,7 +176,7 @@ describe('scheduler: timer handle and failures', () => {
     expect(runs).toHaveLength(1)
   })
 
-  bug('a rejected agent run has a rejection handler attached', () => {
+  test('a rejected agent run has a rejection handler attached', () => {
     // fails today: runAgent is called without await inside try/catch, so the catch can never see the
     // rejection and it surfaces as an unhandled promise rejection in the main process
     const scheduler = newScheduler('3 10 * * *')
@@ -195,6 +194,50 @@ describe('scheduler: timer handle and failures', () => {
     vi.advanceTimersByTime(10 * 1000)
     expect(scheduler.runAgent).toHaveBeenCalledTimes(1)
     expect(run.handled, 'the promise returned by runAgent was dropped without a rejection handler').toBe(true)
+  })
+
+  test('a rejected agent run is logged and does not stop the next occurrences', async () => {
+    const scheduler = newScheduler('* * * * *')
+    vi.mocked(scheduler.runAgent).mockRejectedValueOnce(new Error('agent failed'))
+    vi.setSystemTime(kDue - 10 * 1000)
+    scheduler.start()
+    await vi.advanceTimersByTimeAsync(10 * 1000)
+    expect(console.log).toHaveBeenCalledWith('Error running agent agent', expect.objectContaining({ message: 'agent failed' }))
+    await vi.advanceTimersByTimeAsync(kMinute)
+    expect(scheduler.runAgent).toHaveBeenCalledTimes(2)
+    expect(runs).toEqual([kDue + kMinute])
+  })
+
+  test('the same agent id in two workspaces runs in both', () => {
+    const scheduler = newScheduler('3 10 * * *')
+    vi.mocked(listWorkspaces).mockReturnValue([{ uuid: 'w1' }, { uuid: 'w2' }] as any)
+    vi.setSystemTime(kDue - 10 * 1000)
+    scheduler.start()
+    vi.advanceTimersByTime(30 * 1000)
+    expect(vi.mocked(scheduler.runAgent).mock.calls.map((call) => call[0])).toEqual(['w1', 'w2'])
+  })
+
+  test('the scheduler can be stopped and started again', () => {
+    const scheduler = newScheduler('* * * * *')
+    vi.setSystemTime(kDue - 10 * 1000)
+    scheduler.start()
+    expect(vi.getTimerCount()).toBe(1)
+    scheduler.stop()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(scheduler.timeout).toBeNull()
+    vi.advanceTimersByTime(kMinute)
+    scheduler.start()
+    vi.advanceTimersByTime(kMinute)
+    expect(runs).toEqual([kDue + kMinute])
+  })
+
+  test('occurrences are not remembered for ever', () => {
+    const scheduler = newScheduler('* * * * *')
+    vi.setSystemTime(kDue - 10 * 1000)
+    scheduler.start()
+    vi.advanceTimersByTime(10 * kMinute)
+    // @ts-expect-error private
+    expect(scheduler.served.size).toBe(1)
   })
 
 })
