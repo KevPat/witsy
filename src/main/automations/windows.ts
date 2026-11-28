@@ -126,6 +126,23 @@ public class KeySender
 [KeySender]::SendCtrlKey([KeySender]::@@KEY@@)
 `
 
+const kVbsStringMaxLength = 512
+
+// Builds a VBScript string expression from an untrusted value. cscript reads the script file with
+// the ANSI code page, where the bytes of a non-ASCII character can swallow the quote that follows,
+// so only printable ASCII goes inside quoted literals (quotes doubled) and every other character
+// is emitted as ChrW(code unit). Control characters are dropped: a literal cannot span lines.
+export const vbsString = (value: string): string => {
+  const text = String(value ?? '')
+    .replace(/\p{Cc}/gu, '')
+    .slice(0, kVbsStringMaxLength)
+    .replace(/[\ud800-\udbff]$/, '')
+  const parts = (text.match(/[\x20-\x7e]+|[^\x20-\x7e]/g) ?? []).map((part) =>
+    /^[\x20-\x7e]/.test(part) ? `"${part.replaceAll('"', '""')}"` : `ChrW(${part.charCodeAt(0)})`
+  )
+  return parts.length ? parts.join(' & ') : '""'
+}
+
 export default class extends NutAutomator {
 
   config: Configuration
@@ -260,9 +277,13 @@ export default class extends NutAutomator {
 
   async activateApp(title: string) {
 
+    // an empty title would match any window
+    const target = vbsString(title)
+    if (target === '""') return
+
     const script = `
       Set WshShell = WScript.CreateObject("WScript.Shell")
-      WshShell.AppActivate "${title}"
+      WshShell.AppActivate ${target}
       WScript.Sleep 200
     `
 
