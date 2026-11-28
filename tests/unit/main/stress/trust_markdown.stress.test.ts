@@ -182,7 +182,9 @@ describe('renderMarkdown: content that is neutralized today', () => {
     expect(violations(markdown), markdown).toEqual([])
     expect(root.querySelector('a, img, [onclick], [data-onclick], .copy-code')).toBeNull()
     for (const el of root.querySelectorAll('.katex-error')) {
-      expect(el.getAttributeNames().sort()).toEqual(['class', 'title'])
+      // @mdit/plugin-katex (P-06) adds KaTeX's constant error color, nothing that comes from the input
+      const names = el.getAttributeNames().filter(name => !(name === 'style' && el.getAttribute('style') === 'color:#cc0000'))
+      expect(names.sort()).toEqual(['class', 'title'])
     }
   })
 
