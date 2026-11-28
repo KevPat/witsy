@@ -173,6 +173,97 @@ test('render tool with index', () => {
   expect(html).toContain('<p><tool index="0"></tool></p>')
 })
 
+const parseHtml = (markdown: string): DocumentFragment => {
+  const template = document.createElement('template')
+  template.innerHTML = renderMarkdown(markdown)
+  return template.content
+}
+
+const codeTexts = (markdown: string): string[] => {
+  return Array.from(parseHtml(markdown).querySelectorAll('code')).map((code) => code.textContent.replace(/\n$/, ''))
+}
+
+test('does not restore malformed tool tags with injected attributes', () => {
+  const html = renderMarkdown('<tool id="safe" onmouseover="alert(1)"></tool>')
+  expect(html).toContain('&lt;tool')
+  expect(html).not.toContain('<tool')
+})
+
+test('does not restore tool and think tags inside attributes', () => {
+  const title = '<tool id=" onmouseover=alert(1) style=position:fixed x="><think>'
+  for (const markdown of [
+    `[x](https://example.com/ '${title}')`,
+    `[x][r]\n\n[r]: https://example.com/ '${title}'`,
+    `[![alt ${title}](https://example.com/x.png '${title}')](https://example.com/ '${title}')`,
+  ]) {
+    const root = parseHtml(markdown)
+    expect(root.querySelector('tool, think')).toBeNull()
+    for (const el of root.querySelectorAll('a, img')) {
+      expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title'].includes(name))).toEqual([])
+      expect(el.getAttribute('title')).toBe(title)
+    }
+    expect(root.querySelectorAll('a')).toHaveLength(1)
+  }
+  expect(parseHtml(`![alt ${title}](https://example.com/x.png)`).querySelector('img').getAttribute('alt')).toBe(`alt ${title}`)
+})
+
+test('does not restore tool and think tags inside code and diagrams', () => {
+  const tags = '<think>hidden</think><tool id="1"></tool>'
+  for (const markdown of [`\`${tags}\``, `\`\`\`\n${tags}\n\`\`\``, `    ${tags}`, `\`\`\`mermaid\n${tags}\n\`\`\``, `$\\text{${tags}$`]) {
+    const root = parseHtml(markdown)
+    expect(root.querySelector('tool, think'), markdown).toBeNull()
+    expect(root.textContent, markdown).toContain(tags)
+  }
+})
+
+test('restores tool and think tags in text wherever the text is', () => {
+  const root = parseHtml('# <think>a</think>\n\n- <tool id="call_1"></tool>\n\n> **<tool index="2"></tool>**\n\n| <think>b</think> |\n|---|\n| <tool id="x_y_z"></tool> |')
+  expect(Array.from(root.querySelectorAll('think')).map((el) => el.textContent)).toEqual(['a', 'b'])
+  expect(Array.from(root.querySelectorAll('tool')).map((el) => el.getAttribute('id') ?? el.getAttribute('index'))).toEqual(['call_1', '2', 'x_y_z'])
+})
+
+test('keeps math delimiters in fenced code blocks', () => {
+  const code = `sed -E 's/\\(foo\\)\\[0-9\\]/x/' file\nif [ \\( -f a \\) ]; then echo hi; fi`
+  const indent = (prefix: string) => code.split('\n').map((line) => `${prefix}${line}`).join('\n')
+  for (const markdown of [
+    `\`\`\`\n${code}\n\`\`\``,
+    `\`\`\`bash\n${code}\n\`\`\``,
+    `~~~\n${code}\n~~~`,
+    `\`\`\`\`\n${code}\n\`\`\`\``,
+    `\`\`\`\n${code}`,
+    `\`\`\`\r\n${code.replace('\n', '\r\n')}\r\n\`\`\`\r\n`,
+    `- item\n\n  \`\`\`\n${indent('  ')}\n  \`\`\``,
+    `> \`\`\`\n${indent('> ')}\n> \`\`\``,
+    `text\n\n${indent('    ')}\n\ntext`,
+  ]) {
+    expect(codeTexts(markdown), markdown).toEqual([code])
+  }
+})
+
+test('keeps math delimiters in inline code', () => {
+  expect(codeTexts('Use `grep \'\\[0-9\\]\'` or `call\\(x\\)` here')).toEqual([`grep '\\[0-9\\]'`, 'call\\(x\\)'])
+  expect(codeTexts('Use ``a ` \\(b\\) ` c`` here')).toEqual(['a ` \\(b\\) ` c'])
+  expect(codeTexts('Spans `a\\[0\\]\nb\\(1\\)` lines')).toEqual(['a\\[0\\] b\\(1\\)'])
+  expect(codeTexts('| `x\\[0\\]` |\n|---|\n| `y\\(1\\)` |')).toEqual(['x\\[0\\]', 'y\\(1\\)'])
+})
+
+test('still renders math next to code', () => {
+  const root = parseHtml('Inline `\\(x\\)` then \\(\\alpha^2\\)\n\n```latex\n\\[ \\theta \\]\n```\n\n\\[ \\beta^2 \\]\n\n    \\(indented\\)\n\n\\( \\gamma \\)')
+  expect(Array.from(root.querySelectorAll('code')).map((code) => code.textContent.trim())).toEqual(['\\(x\\)', '\\[ \\theta \\]', '\\(indented\\)'])
+  expect(root.querySelectorAll('.katex-error')).toHaveLength(0)
+  const math = Array.from(root.querySelectorAll('.katex-mathml annotation')).map((el) => el.textContent.trim())
+  expect(math).toEqual(['\\alpha^2', '\\beta^2', '\\gamma'])
+})
+
+test('backticks that do not make a code span do not hide math', () => {
+  const rendered = (markdown: string) => Array.from(parseHtml(markdown).querySelectorAll('.katex-mathml annotation')).map((el) => el.textContent.trim())
+  expect(rendered('a ` b \\(\\alpha\\)')).toEqual(['\\alpha'])
+  expect(rendered('a ` b\n\n\\(\\alpha\\) ` c')).toEqual(['\\alpha'])
+  expect(rendered('a `` b \\(\\alpha\\) ` c')).toEqual(['\\alpha'])
+  expect(rendered('\\`not code \\(\\alpha\\) \\`')).toEqual(['\\alpha'])
+  expect(rendered('`code` \\(\\alpha\\) `code` \\(\\beta\\)')).toEqual(['\\alpha', '\\beta'])
+})
+
 test('close open markdowntags', () => {
 
   // invalid

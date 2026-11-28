@@ -266,7 +266,7 @@ describe('renderMarkdown: mermaid fences', () => {
 
 describe('renderMarkdown: tool tags inside attributes', () => {
 
-  bug.each([
+  test.each([
     ['single quoted link title', `[x](https://example.com/ '<tool id=" onmouseover=alert(1) x=">')`],
     ['double quoted link title', '[x](https://example.com/ "<tool id=\\" onmouseover=alert(1) x=\\">")'],
     ['parenthesized link title', '[x](https://example.com/ (<tool id=" onmouseover=location=name x=">))'],
@@ -276,13 +276,13 @@ describe('renderMarkdown: tool tags inside attributes', () => {
     ['link title with an animation', `[x](https://example.com/ '<tool id=" style=animation-name:fadeIn onanimationstart=alert(1) x=">')`],
     ['image title', '![x](https://example.com/x.png "<tool id=\\" onerror=alert(1) x=\\">")'],
   ])('a tool tag in a %s does not add attributes', (_, markdown) => {
-    // mdPostprocess turns &lt;tool id=&quot;...&quot;&gt; back into markup wherever it is, here inside title="..."
+    // the tool tag used to be turned back into markup wherever it was, here inside title="..."
     expect(eventHandlers(parse(markdown)), markdown).toEqual([])
     const el = parse(markdown).querySelector('a, img')
     expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title'].includes(name))).toEqual([])
   })
 
-  bug('a tool tag in a link title cannot restyle the link', () => {
+  test('a tool tag in a link title cannot restyle the link', () => {
     // same un-escaping: style= lets a link cover the whole window even without a handler
     const root = parse(`[x](https://evil.example/ '<tool id=" style=position:fixed;inset:0 x=">')`)
     expect(root.querySelector('a').hasAttribute('style')).toBe(false)
@@ -378,8 +378,7 @@ describe('renderMarkdown: fuzz', () => {
     }
   })
 
-  bug('200 random documents with tool tags are neutralized', () => {
-    // fails on the first document that puts a tool tag inside a link title (see above)
+  test('200 random documents with tool tags are neutralized', () => {
     const rand = mulberry32(42)
     for (let i = 0; i < 200; i++) {
       const markdown = generate(rand, [...kPayloads, ...Array(10).fill(kToolPayloads).flat()], kSafeLanguages, kSafeUrls)
