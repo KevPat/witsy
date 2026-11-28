@@ -7,6 +7,7 @@ import path from 'node:path'
 import { Configuration } from 'types/config'
 import { Skill, SkillFileManifestItem, SkillFileReadResult, SkillInstallResult, SkillSaveResult, SkillHeader, SkillUninstallResult } from 'types/skills'
 import { loadSettings } from './config'
+import { resolveInside } from './path_containment'
 
 const kMaxSkillFileCount = 300
 const kMaxFileReadChars = 40000
@@ -163,8 +164,9 @@ const findSkillFolders = (skillsRoot: string): string[] => {
 }
 
 const readSkillSummary = (skillRoot: string): SkillHeader | null => {
-  const skillMdPath = path.join(skillRoot, 'SKILL.md')
-  if (!fs.existsSync(skillMdPath)) {
+  // a SKILL.md that is a link to a file outside of the skill folder is not a skill
+  const skillMdPath = resolveInside(skillRoot, 'SKILL.md', { excludeBase: true })
+  if (!skillMdPath || !fs.existsSync(skillMdPath)) {
     return null
   }
 
@@ -315,12 +317,13 @@ export const getSkillFile = (
     return { success: false, error: `Unknown skill: ${skillId}` }
   }
 
-  if (!relativePath || !relativePath.trim()) {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
     return { success: false, error: 'File path is required' }
   }
 
-  const absolutePath = path.resolve(skill.rootPath, relativePath)
-  if (!isPathInside(skill.rootPath, absolutePath)) {
+  // checked after symlink resolution too: a link inside the skill folder can point anywhere
+  const absolutePath = resolveInside(skill.rootPath, relativePath, { excludeBase: true })
+  if (!absolutePath) {
     return { success: false, error: 'Path escapes skill directory' }
   }
 
