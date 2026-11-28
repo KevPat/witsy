@@ -207,6 +207,36 @@ test('addFolder handles callback frequency', async () => {
   cleanup(docbase.uuid)
 })
 
+test.each([
+  [12288, 2],
+  [24576, 1],
+  [24577, 1],
+  [100000, 1],
+])('addDocument embeds batches of %i characters chunks that are never empty', async (chunkSize, maxBatchSize) => {
+
+  ragConfig.chunkSize = chunkSize
+  ragConfig.chunkOverlap = 0
+
+  // enough text for several chunks
+  const Loader = (await import('@main/rag/loader')).default
+  const loadSpy = vi.spyOn(Loader.prototype, 'load')
+    .mockResolvedValueOnce(['a', 'b', 'c'].map(letter => letter.repeat(chunkSize - 1)).join('\n\n'))
+  const Embedder = (await import('@main/rag/embedder')).default
+
+  const docbase = await createDocBase()
+  const source = new DocumentSourceImpl(crypto.randomUUID(), 'text', 'whatever')
+  await docbase.addDocument(source)
+
+  const batchSizes = vi.mocked(Embedder.prototype.embed).mock.calls.map(call => call[0].length)
+  expect(batchSizes.length).toBeGreaterThanOrEqual(2)
+  expect(Math.min(...batchSizes)).toBeGreaterThanOrEqual(1)
+  expect(Math.max(...batchSizes)).toBe(maxBatchSize)
+  expect(await docbase.db.list()).toHaveLength(batchSizes.reduce((total, size) => total + size, 0))
+
+  loadSpy.mockRestore()
+  cleanup(docbase.uuid)
+})
+
 test('addChildDocuments handles empty list', async () => {
   const docbase = await createDocBase()
   const parent = new DocumentSourceImpl(crypto.randomUUID(), 'folder', '/path/to')

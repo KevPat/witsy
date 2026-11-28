@@ -206,7 +206,8 @@ export default class DocumentBaseImpl {
     // loose estimate of the batch size based on:
     // 1 token = 4 bytes
     // max tokens = 8192 (apply a 75% contingency)
-    const batchSize = Math.min(EMBED_BATCH_SIZE, Math.floor(8192.0 * .75 / (splitter.chunkSize / 4.0)))
+    // (never less than one chunk per batch, whatever the configured chunk size)
+    const batchSize = Math.max(1, Math.min(EMBED_BATCH_SIZE, Math.floor(8192.0 * .75 / (splitter.chunkSize / 4.0))))
     const batchCount = Math.ceil(chunks.length / batchSize)
     const logInterval = Math.max(1, Math.floor(batchCount / 10))
     console.log(`[rag] Embedding ${chunks.length} chunks into ${batchCount} batches`)

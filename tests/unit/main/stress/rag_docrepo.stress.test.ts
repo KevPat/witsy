@@ -494,7 +494,7 @@ describe('DocumentRepository index consistency', () => {
     expect(docIdsOnDisk(a)).toEqual([])
   })
 
-  bug('a chunk size above 24576 characters does not ask for empty embedding batches', async () => {
+  test('a chunk size above 24576 characters does not ask for empty embedding batches', async () => {
     // the batch size is floor(6144 / (chunkSize / 4)) = 0, so the loop never consumes a chunk;
     // the embedder double rejects the empty batch, otherwise this loop would spin forever
     ragConfig.chunkSize = 30000
