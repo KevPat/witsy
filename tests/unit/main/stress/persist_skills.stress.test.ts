@@ -151,7 +151,7 @@ describe('creating skills', () => {
     expect(tree(skillsDir())).toEqual(['two', 'two/SKILL.md'])
   })
 
-  bug.each([
+  test.each([
     ['..'],
     [' .. '],
     ['../'],
@@ -165,7 +165,7 @@ describe('creating skills', () => {
     expect(path.dirname(result.rootPath)).toBe(skillsDir())
   })
 
-  bug.each([
+  test.each([
     ['con'],
     ['NUL'],
     ['aux'],
@@ -234,7 +234,7 @@ describe('reading skill files', () => {
     expect(loadSkill(app, workspaceId, skillId).available_files.map(f => f.path)).toEqual(['docs/guide.md', 'SKILL.md'])
   })
 
-  bug('an empty entry in the configured locations does not make the working directory a skill location', () => {
+  test('an empty entry in the configured locations does not make the working directory a skill location', () => {
     // resolveSkillLocations resolves '' to the working directory before its filter(Boolean), which therefore never removes anything
     writeText(path.join(fakeCwd, 'SKILL.md'), skillMd('whatever is in the working directory'))
     vi.mocked(loadSettings).mockReturnValue({ skills: { locations: [customLocation, ''] } } as any)
@@ -316,7 +316,7 @@ describe('installing skills', () => {
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['https://codeload.github.com/owner/repo/zip/refs/heads/dev'])
   })
 
-  bug.each([
+  test.each([
     ['..'],
     ['"../"'],
     ['.'],
@@ -329,7 +329,7 @@ describe('installing skills', () => {
     expect(tree(nested).filter(entry => entry.endsWith('payload.sh'))).toEqual([`installed/skills/${result.installed[0]}/payload.sh`])
   })
 
-  bug('an empty install path is refused', async () => {
+  test('an empty install path is refused', async () => {
     // normalizePath('') is the working directory, never empty: the "Install path is required" check cannot trigger and the skills land in the working directory
     const fetchMock = stubGithub({ 'skills/pdf/SKILL.md': skillMd('pdf') })
     useFakeCwd()

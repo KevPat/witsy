@@ -42,19 +42,30 @@ export const exportBackup = async (app: App): Promise<boolean> => {
       zlib: { level: 9 } // Compression level
     })
 
+    // an error of the archiver or of the file makes the export fail: throwing from these event
+    // handlers would be an uncaught exception, out of reach of the try/catch below
+    let failed = false
+    let reportFailure: () => void = () => {}
+    const fail = (err: Error) => {
+      if (failed) return
+      failed = true
+      console.error('Error creating backup:', err)
+      try { output.destroy() } catch { /* empty */ }
+      reportFailure()
+    }
+
     // Good practice to catch warnings (ie stat failures and other non-blocking errors)
     archive.on('warning', (err) => {
       if (err.code === 'ENOENT') {
         console.warn('Backup warning:', err)
       } else {
-        throw err
+        fail(err)
       }
     })
 
     // Good practice to catch this error explicitly
-    archive.on('error', (err) => {
-      throw err
-    })
+    archive.on('error', fail)
+    output.on('error', fail)
 
     // Pipe archive data to the file
     archive.pipe(output)
@@ -75,18 +86,29 @@ export const exportBackup = async (app: App): Promise<boolean> => {
 
     // Wait for stream to close
     return await new Promise<boolean>((resolve) => {
+
+      reportFailure = () => resolve(false)
+      if (failed) {
+        return resolve(false)
+      }
+
       output.on('close', () => {
+        if (failed) {
+          // do not leave half a backup behind
+          try { fs.rmSync(backupPath, { force: true }) } catch { /* empty */ }
+          return
+        }
         console.log(`Backup created: ${backupPath} (${archive.pointer()} bytes)`)
         resolve(true)
       })
 
-      output.on('error', (err) => {
-        console.error('Error creating backup:', err)
-        resolve(false)
-      })
-
       // Finalize the archive
-      archive.finalize()
+      try {
+        const finalizing: any = archive.finalize()
+        finalizing?.catch?.(fail)
+      } catch (err) {
+        fail(err as Error)
+      }
     })
 
   } catch (error) {
@@ -134,6 +156,10 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
     try {
       // Extract the ZIP file
       await extractZip(backupFile as string, { dir: tempDir })
+
+      // any zip can be picked: check that this one is a backup, and a readable one,
+      // before a single file of the user is replaced
+      validateBackup(app, tempDir, t)
 
       // Get target file paths
       const targetFiles = filesToBackup(app).map(fileInfo => ({
@@ -208,6 +234,37 @@ export const importBackup = async (app: App, quitApp: () => void): Promise<boole
     
     return false
   }
+}
+
+// what each JSON file of a backup must hold
+const jsonShapes: Record<string, (json: unknown) => boolean> = {
+  'settings.json': (json) => typeof json === 'object' && json !== null && !Array.isArray(json),
+  'apiKeys.json': (json) => typeof json === 'object' && json !== null && !Array.isArray(json),
+  'commands.json': (json) => Array.isArray(json),
+}
+
+const validateBackup = (app: App, dir: string, t: CallableFunction): void => {
+
+  // at least one of the things we restore
+  const names = [...filesToBackup(app), ...foldersToBackup(app)].map(entry => entry.name)
+  if (!names.some(name => fs.existsSync(path.join(dir, name)))) {
+    throw new Error(t('backup.restore.error.notBackup'))
+  }
+
+  // files that are parsed at startup must be parseable
+  for (const [name, isValid] of Object.entries(jsonShapes)) {
+    const source = path.join(dir, name)
+    if (!fs.existsSync(source)) continue
+    let valid = false
+    try {
+      // (a byte order mark is accepted)
+      valid = isValid(JSON.parse(fs.readFileSync(source, 'utf-8').replace(/^\uFEFF/, '')))
+    } catch { /* not JSON */ }
+    if (!valid) {
+      throw new Error(t('backup.restore.error.damaged', { file: name }))
+    }
+  }
+
 }
 
 // Helper function to copy directory recursively

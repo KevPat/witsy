@@ -458,8 +458,10 @@
         "title": "Restore Backup"
       },
       "error": {
+        "damaged": "The backup is damaged: {file} cannot be read. Nothing was restored.",
         "detail": "Error: {error}",
         "message": "Failed to restore settings from backup.",
+        "notBackup": "This file is not a Witsy backup. Nothing was restored.",
         "title": "Restore Failed"
       },
       "files": "Backup files",

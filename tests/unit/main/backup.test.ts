@@ -54,6 +54,8 @@ vi.mock('fs', () => ({
     createWriteStream: vi.fn(),
     mkdirSync: vi.fn(),
     copyFileSync: vi.fn(),
+    // the files of a backup are parsed before anything is restored
+    readFileSync: vi.fn((path: string) => String(path).endsWith('commands.json') ? '[]' : '{}'),
     renameSync: vi.fn(),
     readdirSync: vi.fn((path, opts) => 
       opts?.withFileTypes ? [ { name: 'file1.jpg', isDirectory: () => false }, { name: 'file2.png', isDirectory: () => false } ] : [ 'file1.jpg', 'file2.png' ]),

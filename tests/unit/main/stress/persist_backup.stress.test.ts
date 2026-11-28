@@ -262,13 +262,13 @@ describe('backup and restore', () => {
     expect(fs.readdirSync(path.join(root, 'tmp'))).toEqual([])
   })
 
-  bug('a zip that is not a Witsy backup is refused instead of being reported as restored', async () => {
+  test('a zip that is not a Witsy backup is refused instead of being reported as restored', async () => {
     // nothing checks that the zip holds anything to restore: nothing is copied, yet the success dialog is shown and the app restarts
     const zip = await makeZip('holiday-pictures.zip', { 'readme.txt': 'not a backup', 'pictures/beach.txt': 'sand' })
     expect(await restoreFromZip(zip)).toEqual({ result: false, quit: 0 })
   })
 
-  bug.each([
+  test.each([
     ['truncated', '{"general":{"locale":"f'],
     ['empty', ''],
     ['not an object', '[1,2,3]'],
@@ -378,12 +378,12 @@ describe('archiver events during an export', () => {
 
   const errorWithCode = (code: string) => Object.assign(new Error(`${code}: simulated`), { code })
 
-  bug('an archiver error makes the export fail instead of throwing from the event handler', async () => {
+  test('an archiver error makes the export fail instead of throwing from the event handler', async () => {
     // the handler rethrows inside the emitter, out of reach of the try/catch of exportBackup: an uncaught exception, and the export never reports its failure
     expect(await playEvent('error', errorWithCode('EACCES'))).toEqual({ settled: false, thrown: undefined })
   })
 
-  bug('an archiver warning other than ENOENT makes the export fail instead of throwing from the event handler', async () => {
+  test('an archiver warning other than ENOENT makes the export fail instead of throwing from the event handler', async () => {
     // same rethrow for every warning that is not ENOENT
     expect(await playEvent('warning', errorWithCode('EACCES'))).toEqual({ settled: false, thrown: undefined })
   })
