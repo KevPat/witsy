@@ -54,7 +54,6 @@ export const resolveRealPath = (target: string, depth = 0): string => {
   const missing: string[] = []
   let current = resolved
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
 
     let stats: fs.Stats | null = null
