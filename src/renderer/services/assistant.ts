@@ -98,175 +98,182 @@ export default class {
       this.config.llm.forceLocale = true
     }
 
-    // merge with defaults
-    const defaults: AssistantCompletionOpts = {
-      ... this.llmManager.getChatEngineModel(),
-      instructions: null,
-      titling: true,
-      attachments: [],
-      docrepos: null,
-      expert: null,
-      skill: null,
-      sources: true,
-      citations: true,
-      caching: true,
-    }
-    opts = {...defaults, ...opts }
+    try {
 
-    // we need a chat
-    if (this.chat === null) {
-      this.initChat()
-    }
-
-    // create system message if not exists
-    if (this.chat.messages.length === 0) {
-      this.chat.addMessage(new Message('system', ''))
-    }
-
-    // code execution mode from config
-    const codeExecutionMode: CodeExecutionMode = this.config.llm.codeExecution
-
-    // update system message with latest instructions
-    const llmUtils = new LlmUtils(this.config)
-    this.chat.messages[0].content = llmUtils.getSystemInstructions(this.chat.instructions, {
-      noMarkdown: opts.noMarkdown,
-      codeExecutionMode
-    })
-
-    // make sure we have the right engine and model
-    // special case: chat was started without an apiKey
-    // so engine and model are null so we need to keep opts ones...
-    opts.engine = this.chat.engine || opts.engine
-    opts.model = this.chat.model || opts.model
-    opts.docrepos = this.chat.docrepos || opts.docrepos
-
-    // disable streaming
-    opts.streaming = opts.streaming ?? (this.chat.disableStreaming !== true)
-
-    // make sure chat options are set
-    this.chat.setEngineModel(opts.engine, opts.model)
-    this.chat.docrepos = opts.docrepos
-
-    // we need an llm
-    if (opts?.keepLlm !== true) {
-      this.initLlm(opts.engine)
-    }
-    if (this.llm === null) {
-      return null
-    }
-
-    // add user message
-    const userMessage = new Message('user', prompt)
-    userMessage.setExpert(fullExpertI18n(opts.expert))
-    userMessage.engine = opts.engine
-    userMessage.model = opts.model
-    userMessage.execMode = opts?.execMode || 'prompt'
-    opts.attachments.map(a => userMessage.attach(a))
-
-    // skill
-    let skill: Skill|null = opts.skill || null
-    if (skill?.id) {
-      const loadedSkill = window.api.skills.load(this.workspaceId, skill.id)
-      if (loadedSkill) {
-        skill = loadedSkill
+      // merge with defaults
+      const defaults: AssistantCompletionOpts = {
+        ... this.llmManager.getChatEngineModel(),
+        instructions: null,
+        titling: true,
+        attachments: [],
+        docrepos: null,
+        expert: null,
+        skill: null,
+        sources: true,
+        citations: true,
+        caching: true,
       }
-    }
-    userMessage.setSkill(skill)
+      opts = {...defaults, ...opts }
 
-    // done
-    this.chat.addMessage(userMessage)
-
-    // // track expert usage
-    // if (opts.expert) {
-    //   const { trackExpertUsage } = await import('./experts')
-    //   const { store } = await import('./store')
-    //   trackExpertUsage(opts.expert.id, store.experts, store.config.workspaceId)
-    // }
-
-    // add assistant message
-    const assistantMessage = new Message('assistant')
-    assistantMessage.engine = opts.engine
-    assistantMessage.model = opts.model
-    assistantMessage.execMode = opts?.execMode || 'prompt'
-    this.chat.addMessage(assistantMessage)
-    llmCallback?.call(null, null)
-
-    // callback
-    generationCallback?.('before_generation')
-
-    // make sure llm has latest tools
-    if (opts?.keepLlm !== true) {
-      if (!this.llmManager.isComputerUseModel(opts.engine, opts.model)) {
-        await this.llmManager.loadTools(this.llm, this.workspaceId, availablePlugins, this.chat.tools, { codeExecutionMode })
-      } else {
-        this.llm.clearPlugins()
+      // we need a chat
+      if (this.chat === null) {
+        this.initChat()
       }
-    }
 
-    // save this
-    const hadPlugins = this.llm.plugins.length > 0
-
-    // deep research will come with its own instructions
-    let rc: GenerationResult = 'error'
-    if (userMessage.execMode === 'deepresearch') {
-      // const dpOpts = useDeepResearchMultiAgent(this.config, this.llm, this.chat, opts)
-      // this.chat.messages[0].content = this.getSystemInstructions(this.chat.messages[0].content)
-      // opts = { ...opts, ...dpOpts }
-
-      const runtime = this.config.deepresearch.runtime
-      if (runtime === 'ma') {
-        this.deepResearch = new DeepResearchMultiAgent(this.config, this.workspaceId)
-      } else if (runtime === 'al') {
-        this.deepResearch = new DeepResearchAL(this.config, this.workspaceId)
-      } else {
-        this.deepResearch = new DeepResearchMultiStep(this.config, this.workspaceId)
+      // create system message if not exists
+      if (this.chat.messages.length === 0) {
+        this.chat.addMessage(new Message('system', ''))
       }
-      rc = await this.deepResearch.run(this.llm, this.chat, {
-        ...opts,
-        breadth: this.config.deepresearch.breadth,
-        depth: this.config.deepresearch.depth,
-        searchResults: this.config.deepresearch.searchResults,
+
+      // code execution mode from config
+      const codeExecutionMode: CodeExecutionMode = this.config.llm.codeExecution
+
+      // update system message with latest instructions
+      const llmUtils = new LlmUtils(this.config)
+      this.chat.messages[0].content = llmUtils.getSystemInstructions(this.chat.instructions, {
+        noMarkdown: opts.noMarkdown,
+        codeExecutionMode
       })
-      
-    } else {
 
-      // generate text
-      rc = await this._prompt(opts, llmCallback)
+      // make sure we have the right engine and model
+      // special case: chat was started without an apiKey
+      // so engine and model are null so we need to keep opts ones...
+      opts.engine = this.chat.engine || opts.engine
+      opts.model = this.chat.model || opts.model
+      opts.docrepos = this.chat.docrepos || opts.docrepos
 
-      // check if streaming is not supported
-      if (rc === 'streaming_not_supported') {
-        this.chat.disableStreaming = true
+      // disable streaming
+      opts.streaming = opts.streaming ?? (this.chat.disableStreaming !== true)
+
+      // make sure chat options are set
+      this.chat.setEngineModel(opts.engine, opts.model)
+      this.chat.docrepos = opts.docrepos
+
+      // we need an llm
+      if (opts?.keepLlm !== true) {
+        this.initLlm(opts.engine)
+      }
+      if (this.llm === null) {
+        return null
+      }
+
+      // add user message
+      const userMessage = new Message('user', prompt)
+      userMessage.setExpert(fullExpertI18n(opts.expert))
+      userMessage.engine = opts.engine
+      userMessage.model = opts.model
+      userMessage.execMode = opts?.execMode || 'prompt'
+      opts.attachments.map(a => userMessage.attach(a))
+
+      // skill
+      let skill: Skill|null = opts.skill || null
+      if (skill?.id) {
+        const loadedSkill = window.api.skills.load(this.workspaceId, skill.id)
+        if (loadedSkill) {
+          skill = loadedSkill
+        }
+      }
+      userMessage.setSkill(skill)
+
+      // done
+      this.chat.addMessage(userMessage)
+
+      // // track expert usage
+      // if (opts.expert) {
+      //   const { trackExpertUsage } = await import('./experts')
+      //   const { store } = await import('./store')
+      //   trackExpertUsage(opts.expert.id, store.experts, store.config.workspaceId)
+      // }
+
+      // add assistant message
+      const assistantMessage = new Message('assistant')
+      assistantMessage.engine = opts.engine
+      assistantMessage.model = opts.model
+      assistantMessage.execMode = opts?.execMode || 'prompt'
+      this.chat.addMessage(assistantMessage)
+      llmCallback?.call(null, null)
+
+      // callback
+      generationCallback?.('before_generation')
+
+      // make sure llm has latest tools
+      if (opts?.keepLlm !== true) {
+        if (!this.llmManager.isComputerUseModel(opts.engine, opts.model)) {
+          await this.llmManager.loadTools(this.llm, this.workspaceId, availablePlugins, this.chat.tools, { codeExecutionMode })
+        } else {
+          this.llm.clearPlugins()
+        }
+      }
+
+      // save this
+      const hadPlugins = this.llm.plugins.length > 0
+
+      // deep research will come with its own instructions
+      let rc: GenerationResult = 'error'
+      if (userMessage.execMode === 'deepresearch') {
+        // const dpOpts = useDeepResearchMultiAgent(this.config, this.llm, this.chat, opts)
+        // this.chat.messages[0].content = this.getSystemInstructions(this.chat.messages[0].content)
+        // opts = { ...opts, ...dpOpts }
+
+        const runtime = this.config.deepresearch.runtime
+        if (runtime === 'ma') {
+          this.deepResearch = new DeepResearchMultiAgent(this.config, this.workspaceId)
+        } else if (runtime === 'al') {
+          this.deepResearch = new DeepResearchAL(this.config, this.workspaceId)
+        } else {
+          this.deepResearch = new DeepResearchMultiStep(this.config, this.workspaceId)
+        }
+        rc = await this.deepResearch.run(this.llm, this.chat, {
+          ...opts,
+          breadth: this.config.deepresearch.breadth,
+          depth: this.config.deepresearch.depth,
+          searchResults: this.config.deepresearch.searchResults,
+        })
+        
+      } else {
+
+        // generate text
         rc = await this._prompt(opts, llmCallback)
+
+        // check if streaming is not supported
+        if (rc === 'streaming_not_supported') {
+          this.chat.disableStreaming = true
+          opts.streaming = false
+          rc = await this._prompt(opts, llmCallback)
+        }
+
+      }
+
+      // titling
+      if (rc !== 'success') {
+        opts.titling = false
+      }
+
+      // check if generator disabled plugins
+      if (hadPlugins && this.llm.plugins.length === 0) {
+        generationCallback?.('plugins_disabled')
+        this.chat.disableTools()
+      }
+
+      // check if we need to update title
+      if (opts.titling && !this.chat.hasTitle()) {
+        generationCallback?.('before_title')
+        this.chat.title = await this.getTitle() || this.chat.title
+      }
+
+      // done
+      generationCallback?.('generation_done')
+      return rc
+
+    } finally {
+
+      // restore llm locale once, including early returns and thrown errors
+      if (llmLocale) {
+        setLlmLocale(llmLocale)
+        this.config.llm.forceLocale = forceLocale
       }
 
     }
-
-    // titling
-    if (rc !== 'success') {
-      opts.titling = false
-    }
-
-    // check if generator disabled plugins
-    if (hadPlugins && this.llm.plugins.length === 0) {
-      generationCallback?.('plugins_disabled')
-      this.chat.disableTools()
-    }
-
-    // check if we need to update title
-    if (opts.titling && !this.chat.hasTitle()) {
-      generationCallback?.('before_title')
-      this.chat.title = await this.getTitle() || this.chat.title
-    }
-
-    // restore llm locale
-    if (llmLocale) {
-      setLlmLocale(llmLocale)
-      this.config.llm.forceLocale = forceLocale
-    }
-
-    // done
-    generationCallback?.('generation_done')
-    return rc
   
   }
 

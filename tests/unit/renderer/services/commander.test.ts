@@ -216,6 +216,28 @@ test('Other commands', async () => {
 
 })
 
+test('Replaces every {input} literally', async () => {
+
+  const commander = new Commander()
+  const command = buildCommand('chat_window', 'A {input} / B {input}')
+  const textId = putCachedText('cost is $& and $$')
+  await commander.execCommand(app, {
+    textId,
+    sourceApp: {
+      id: 'appId',
+      name: 'appName',
+      path: 'appPath',
+      window: 'title'
+    },
+    action: 'default',
+    command
+  })
+
+  const args = (window.openPromptAnywhere as Mock).mock.calls[0][0]
+  expect(getCachedText(args.promptId)).toBe('A cost is $& and $$ / B cost is $& and $$')
+
+})
+
 test('No text', async () => {
   
   const commander = new Commander()

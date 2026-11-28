@@ -68,7 +68,7 @@ export default class HuggingFace implements ModelLoader {
       }
 
     } catch (e) {
-      console.error(`Error loading collection ${name}`, e)
+      console.error(`Error loading collection ${task}`, e)
       return null
     }
   }

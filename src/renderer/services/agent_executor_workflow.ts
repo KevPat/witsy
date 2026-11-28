@@ -161,7 +161,8 @@ export default class AgentWorkflowExecutor extends AgentExecutorBase {
           sources: true,
           citations: true,
         }
-        opts = {...defaults, ...opts }
+        // Step schema must win over structuredOutput carried from the previous step.
+        opts = { ...defaults, ...opts, structuredOutput: stepStructuredOutput }
 
         // disable streaming
         opts.streaming = opts.streaming ?? (this.agent.disableStreaming !== true)
@@ -287,8 +288,15 @@ export default class AgentWorkflowExecutor extends AgentExecutorBase {
         this.config.llm.forceLocale = forceLocale
       }
 
-      // save
-      run.status = 'success'
+      // Abort paths return before this assignment. Map the generation result;
+      // a stopped run is canceled (same as checkAbort) and must not fall through to catch.
+      if (rc === 'success') {
+        run.status = 'success'
+      } else if (rc === 'stopped') {
+        run.status = 'canceled'
+      } else {
+        run.status = 'error'
+      }
       run.updatedAt = Date.now()
       if (!opts?.ephemeral) {
         this.saveRun(run)

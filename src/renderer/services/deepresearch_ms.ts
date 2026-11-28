@@ -237,6 +237,10 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
         })
       )
 
+      if (opts.abortSignal?.aborted) {
+        throw new AbortError()
+      }
+
       // exec summary and conclusion
       const status4 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `Let me put the final touches`)
       response.appendText({ type: 'content', text: status4 + '\n\n', done: false })

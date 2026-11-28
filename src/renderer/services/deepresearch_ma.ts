@@ -21,6 +21,10 @@ export default class DeepResearchMultiAgent implements dr.DeepResearch, AgentSto
 
   run = async (engine: LlmEngine, chat: Chat, opts: dr.DeepResearchOpts): Promise<GenerationResult> => {
 
+    if (opts.abortSignal?.aborted) {
+      return 'stopped'
+    }
+
     // remove all previous plugins
     engine.clearPlugins()
 
@@ -57,12 +61,23 @@ export default class DeepResearchMultiAgent implements dr.DeepResearch, AgentSto
     }
 
     // now we can generate
+    if (opts.abortSignal?.aborted) {
+      return 'stopped'
+    }
+
     const generator = new Generator(this.config)
-    return await generator.generate(engine, chat.messages, {
+    const rc = await generator.generate(engine, chat.messages, {
       ...opts,
       ...chat.modelOpts,
-      toolChoice: { type: 'tool', name: 'agent_planning'}
+      toolChoice: { type: 'tool', name: 'agent_planning'},
+      abortSignal: opts.abortSignal,
     })
+
+    if (opts.abortSignal?.aborted) {
+      return 'stopped'
+    }
+
+    return rc
 
   }
 

@@ -309,7 +309,15 @@ export default class ImageCreator implements MediaCreator {
       }
 
       // iterate on parts
-      for (const part of response.candidates[0].content.parts || []) {
+      const candidate = response?.candidates?.[0]
+      const parts = candidate?.content?.parts
+      if (!candidate || !parts) {
+        const reason = candidate?.finishReason
+          || response?.promptFeedback?.blockReason
+          || 'No content returned'
+        return { error: String(reason) }
+      }
+      for (const part of parts) {
         if (part.text) {
           console.log(`[google] image generation with ${model}`, part.text)
         } else if (part.inlineData) {

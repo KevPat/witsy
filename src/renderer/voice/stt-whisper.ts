@@ -80,29 +80,50 @@ export default class STTWhisper implements STTEngine {
 
     return new Promise((resolve, reject) => {
 
+      let settled = false
+      const fail = (error: unknown) => {
+        console.error(error)
+        if (settled) return
+        settled = true
+        reject(error)
+      }
+      const succeed = (value: TranscribeResponse) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+
       try {
 
         // we need to decode the audio file
         const fileReader = new FileReader()
-        fileReader.onloadend = async () => {
-          const audioCTX = new AudioContext({
-            sampleRate: 16000,
-          })
-          const arrayBuffer = fileReader.result as ArrayBuffer
-          const decoded = await audioCTX.decodeAudioData(arrayBuffer)
-
-          // now we can send the audio data to the transcriber
-          const output = await this.transcriber(decoded.getChannelData(0), {
-            language: this.config.stt.locale?.substring(0, 2),
-          })
-          resolve(output)
-
+        fileReader.onerror = () => {
+          fail(fileReader.error ?? new Error('Failed to read audio file'))
         }
-        fileReader.readAsArrayBuffer(audioBlob);
+        fileReader.onloadend = async () => {
+          try {
+            const arrayBuffer = fileReader.result
+            if (!(arrayBuffer instanceof ArrayBuffer)) {
+              throw new Error('Failed to read audio file')
+            }
+            const audioCTX = new AudioContext({
+              sampleRate: 16000,
+            })
+            const decoded = await audioCTX.decodeAudioData(arrayBuffer)
+
+            // now we can send the audio data to the transcriber
+            const output = await this.transcriber(decoded.getChannelData(0), {
+              language: this.config.stt.locale?.substring(0, 2),
+            })
+            succeed(output)
+          } catch (error) {
+            fail(error)
+          }
+        }
+        fileReader.readAsArrayBuffer(audioBlob)
 
       } catch (error) {
-        console.error(error);
-        reject(error);
+        fail(error)
       }
     })
   }

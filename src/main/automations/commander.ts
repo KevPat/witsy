@@ -99,7 +99,7 @@ export default class Commander {
       }
 
       // build prompt
-      const prompt = template.replace('{input}', text);
+      const prompt = template.replaceAll('{input}', () => text);
 
       // build the params
       const promptParams = {

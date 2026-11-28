@@ -233,8 +233,10 @@ export default class extends Plugin {
         // Extract text from documents
         textContent = await window.api.file.extractText(content.contents, ext)
       } else {
-        // For other files, just decode base64
-        textContent = atob(content.contents)
+        // atob yields latin1 bytes; decode those bytes as UTF-8
+        const binary = atob(content.contents)
+        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
+        textContent = new TextDecoder().decode(bytes)
       }
 
       return {
