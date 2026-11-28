@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { clipboard } from 'electron'
 import Automation, { AutomationAction } from '@main/automations/automation'
 import Automator from '@main/automations/automator'
-import { bug } from './bug'
 
 // A clipboard double that behaves like the real one: writing text replaces the whole clipboard,
 // so any image that was there is gone unless it was explicitly saved and restored.
@@ -52,7 +51,7 @@ describe('Automation.automate clipboard save/restore', () => {
     expect(state.text).toBe('ORIGINAL')
   })
 
-  bug('a non-text clipboard (image) survives an automation', async () => {
+  test('a non-text clipboard (image) survives an automation', async () => {
     // fails today: save/restore uses readText/writeText only, so the image is overwritten by the
     // LLM text and never put back.
     state = { text: '', image: { empty: false, id: 'screenshot' } }
@@ -60,7 +59,7 @@ describe('Automation.automate clipboard save/restore', () => {
     expect(clipboard.readImage().empty).toBe(false)
   })
 
-  bug('the original clipboard is restored even when pasting throws', async () => {
+  test('the original clipboard is restored even when pasting throws', async () => {
     // fails today: the restore writeText runs after the paste inside the same try, so a paste
     // failure skips it and leaves the LLM output on the clipboard.
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
