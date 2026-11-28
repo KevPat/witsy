@@ -318,6 +318,7 @@ export const CLI = {
 } as const;
 
 export const WEBVIEW = {
+  INIT_SESSION: 'webview-init-session',
   SET_LINK_BEHAVIOR: 'webview-set-link-behavior',
   SET_SPELL_CHECK: 'webview-set-spell-check',
 } as const;

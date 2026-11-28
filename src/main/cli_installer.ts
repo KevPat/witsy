@@ -98,27 +98,45 @@ async function installLinuxCLI(fallbackMethod: boolean): Promise<boolean> {
   const appPath = app.getPath('exe')
   const appDir = path.dirname(appPath)
   const sourcePath = path.join(appDir, 'resources', 'cli', 'bin', 'witsy')
+  const legacySymlinkPath = '/usr/local/bin/witsy'
+
+  try {
+    if (fs.lstatSync(legacySymlinkPath).isSymbolicLink()) {
+      const target = fs.readlinkSync(legacySymlinkPath).replaceAll('\\', '/')
+      if (target.endsWith('/resources/cli/bin/witsy')) {
+        fs.unlinkSync(legacySymlinkPath)
+      }
+    }
+  } catch {
+    // Missing links and links requiring elevation are handled below.
+  }
 
   const elevatedInstall = (sourcePath: string, symlinkPath: string) => {
 
     const script = `
       mkdir -p /usr/local/bin
+      if [ -L "${legacySymlinkPath}" ]; then
+        case "$(readlink "${legacySymlinkPath}")" in
+          */resources/cli/bin/witsy) rm -f "${legacySymlinkPath}" ;;
+        esac
+      fi
       ln -sf "${sourcePath}" "${symlinkPath}"
       chmod +x "${sourcePath}"
     `
     execSync(`pkexec sh -c '${script.replace(/'/g, "\\'")}'`)
   }
 
-  return await installUnixCLI(sourcePath, fallbackMethod ? elevatedInstall : undefined)
+  return await installUnixCLI(sourcePath, fallbackMethod ? elevatedInstall : undefined, 'witsy-cli')
 }
 
 async function installUnixCLI(
   sourcePath: string,
-  elevatedInstall: (sourcePath: string, symlinkPath: string) => void
+  elevatedInstall: (sourcePath: string, symlinkPath: string) => void,
+  commandName = 'witsy'
 ): Promise<boolean> {
 
   const t = useI18n(app)
-  const symlinkPath = '/usr/local/bin/witsy'
+  const symlinkPath = `/usr/local/bin/${commandName}`
 
   try {
     // Check if symlink already exists and is valid
@@ -140,7 +158,7 @@ async function installUnixCLI(
 
       fs.symlinkSync(sourcePath, symlinkPath)
       fs.chmodSync(sourcePath, 0o755)
-      log.info('CLI installed successfully to /usr/local/bin/witsy')
+      log.info(`CLI installed successfully to ${symlinkPath}`)
 
     } catch {
 
@@ -158,7 +176,7 @@ async function installUnixCLI(
           
           elevatedInstall(sourcePath, symlinkPath)
 
-          log.info('CLI installed successfully to /usr/local/bin/witsy (with elevated privileges)')
+          log.info(`CLI installed successfully to ${symlinkPath} (with elevated privileges)`)
         
         } catch (elevatedError) {
 

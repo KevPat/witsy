@@ -1,9 +1,9 @@
 <template>
-  <div class="studio split-pane" @keydown="onKeyDown" @drop="onDrop" @dragover="onDragOver" @dragenter="onDragEnter" @dragleave="onDragLeave" v-bind="$attrs">
+  <div class="studio split-pane" @drop="onDrop" @dragover="onDragOver" @dragenter="onDragEnter" @dragleave="onDragLeave" v-bind="$attrs">
     <div class="sp-sidebar">
       <header>
         <div class="title">{{ t('designStudio.title') }}</div>
-        <ButtonIcon class="reset" @click="onReset" v-if="currentMedia">
+        <ButtonIcon :label="t('common.reset')" class="reset" @click="onReset" v-if="currentMedia">
           <ListRestartIcon  />
         </ButtonIcon>
       </header>

@@ -12,6 +12,7 @@ interface ElementTooltipState {
   tooltipElement: HTMLElement | null
   hideTimeout: NodeJS.Timeout | null
   wrapper: HTMLElement | null
+  generatedAriaLabel: boolean
 }
 
 // WeakMap to store per-element state
@@ -22,7 +23,11 @@ let lastTooltipHidden = 0
 const createTooltip = (text: string, position: string = 'right'): HTMLElement => {
   const tooltip = document.createElement('div')
   tooltip.className = `tooltip-directive ${position}`
-  tooltip.textContent = text
+
+  const content = document.createElement('span')
+  content.className = 'content'
+  content.textContent = text
+  tooltip.appendChild(content)
   
   // Create arrow element
   const arrow = document.createElement('div')
@@ -131,11 +136,16 @@ export const vTooltip = {
     const options = parseBindingValue(binding)
     
     // Initialize element state
+    const generatedAriaLabel = !el.hasAttribute('aria-label')
+    if (generatedAriaLabel) {
+      el.setAttribute('aria-label', options.text)
+    }
     elementState.set(el, {
       options,
       tooltipElement: null,
       hideTimeout: null,
-      wrapper: null
+      wrapper: null,
+      generatedAriaLabel,
     })
     
     const onMouseEnter = () => {
@@ -178,10 +188,14 @@ export const vTooltip = {
     
     const newOptions = parseBindingValue(binding)
     state.options = newOptions
+    if (state.generatedAriaLabel) {
+      el.setAttribute('aria-label', newOptions.text)
+    }
     
     // Update tooltip text if it's currently visible
     if (state.tooltipElement) {
-      state.tooltipElement.textContent = newOptions.text
+      const content = state.tooltipElement.querySelector<HTMLElement>('.content')
+      if (content) content.textContent = newOptions.text
     }
   },
   

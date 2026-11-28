@@ -1,5 +1,5 @@
 import csvToMarkdown from 'csv-to-markdown-table'
-import * as XLSX from 'xlsx'
+import { Workbook } from 'exceljs'
 
 type PdfTextItem = {
   str: string
@@ -613,17 +613,28 @@ export async function getOfficeRawTextContent(contents: Buffer): Promise<string>
   return parseOfficeAsync(contents)
 }
 
-export function getExcelRawTextContent(contents: Buffer): Promise<string> {
+export async function getExcelRawTextContent(contents: Buffer): Promise<string> {
   try {
     let content = ''
-    const workbook = XLSX.read(contents, { type: 'buffer' })
-    for (const sheetName of workbook.SheetNames) {
-      const worksheet = workbook.Sheets[sheetName]
-      const sheet = XLSX.utils.sheet_to_csv(worksheet)
-      content += `Sheet: ${sheetName}\n`
-      content += csvToMarkdown(sheet, ',').split('\n').map(l => l.trim()).join('\n') + '\n\n'
+    const workbook = new Workbook()
+    await workbook.xlsx.load(contents as unknown as Parameters<typeof workbook.xlsx.load>[0])
+    for (const worksheet of workbook.worksheets) {
+      const rows: string[][] = []
+      worksheet.eachRow({ includeEmpty: true }, (row) => {
+        const cells: string[] = []
+        row.eachCell({ includeEmpty: true }, (cell, column) => {
+          cells[column - 1] = cell.text
+        })
+        rows.push(cells)
+      })
+      const csv = rows.map(row => row.map(cell => {
+        const value = cell ?? ''
+        return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+      }).join(',')).join('\n')
+      content += `Sheet: ${worksheet.name}\n`
+      content += csvToMarkdown(csv, ',').split('\n').map(l => l.trim()).join('\n') + '\n\n'
     }
-    return Promise.resolve(content.trim())
+    return content.trim()
   } catch {
     return getOfficeRawTextContent(contents)
   }

@@ -1,7 +1,7 @@
 <template>
   <div class="artifact panel">
 
-    <ContextMenuTrigger class="icon download" position="below-right" ref="downloadButton">
+    <ContextMenuTrigger :label="t('common.download')" class="icon download" position="below-right" ref="downloadButton">
       <template #trigger>
         <DownloadIcon class="icon"/>
       </template>
@@ -51,7 +51,7 @@ const onDownloadFormat = async (action: string) => {
       break
 
     case 'xlsx':
-      fileContent = arrayToXLSX(data)
+      fileContent = await arrayToXLSX(data)
       filename = 'table.xlsx'
       break
 

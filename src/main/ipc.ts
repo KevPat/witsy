@@ -1208,6 +1208,10 @@ export const installIpc = (
   })
 
   // webview
+  ipcMain.handle(IPC.WEBVIEW.INIT_SESSION, (_, partition: string) => {
+    webview.initWebviewSession(partition);
+  });
+
   ipcMain.handle(IPC.WEBVIEW.SET_LINK_BEHAVIOR, (_, webviewId: number, isExternal: boolean) => {
     webview.setWebviewLinkBehavior(webviewId, isExternal);
   });

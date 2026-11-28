@@ -29,8 +29,23 @@ test('WebAppViewer renders with correct structure', () => {
   const webview = wrapper.find('webview')
   expect(webview.exists()).toBe(true)
   expect(webview.attributes('data-webapp-id')).toBe('test-app')
-  expect(webview.attributes('partition')).toBe('persist:webapp_Test App')
+  expect(webview.attributes('partition')).toBe('persist:webapp_test-app')
   expect(webview.attributes('allowpopups')).toBeDefined()
+  expect(window.api.webview.initSession).toHaveBeenCalledWith('persist:webapp_test-app')
+})
+
+test('WebAppViewer keeps its session when the app is renamed', async () => {
+  const webapp: WebApp = {
+    id: 'stable-id',
+    name: 'Original name',
+    url: 'https://example.com',
+    enabled: true
+  }
+  const wrapper = mount(WebAppViewer, { props: { webapp, visible: true } })
+  expect(wrapper.find('webview').attributes('partition')).toBe('persist:webapp_stable-id')
+
+  await wrapper.setProps({ webapp: { ...webapp, name: 'Renamed app' } })
+  expect(wrapper.find('webview').attributes('partition')).toBe('persist:webapp_stable-id')
 })
 
 test('WebAppViewer hides when visible prop is false', () => {

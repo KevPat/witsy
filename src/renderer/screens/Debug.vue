@@ -6,7 +6,7 @@
       <div class="sp-sidebar">
         <header>
           <div class="title">{{ t('debugConsole.title') }}</div>
-          <ButtonIcon @click="clearRequests">
+          <ButtonIcon :label="t('common.clear')" @click="clearRequests">
             <Trash2Icon />
           </ButtonIcon>
         </header>

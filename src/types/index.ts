@@ -655,6 +655,7 @@ declare global {
         install(): Promise<{ success: boolean, message: string }>
       }
       webview: {
+        initSession(partition: string): Promise<void>
         setLinkBehavior(webviewId: number, isExternal: boolean): Promise<void>
         setSpellCheckEnabled(webviewId: number, enabled: boolean): Promise<void>
       }

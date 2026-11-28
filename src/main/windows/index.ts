@@ -374,12 +374,12 @@ export const releaseFocus = async (opts?: ReleaseFocusOpts) => {
       Menu.sendActionToFirstResponder('hide:');
     }
 
-  } else if (process.platform === 'win32') {
+  } else {
 
     let focused = false;
 
     // if we have an app then target it
-    if (opts?.sourceApp?.window) {
+    if (process.platform === 'win32' && opts?.sourceApp?.window) {
 
       try {
         console.log(`[window] Releasing focus to ${opts.sourceApp.window}`);
@@ -394,6 +394,9 @@ export const releaseFocus = async (opts?: ReleaseFocusOpts) => {
 
     if (!focused) {
 
+      // Creating and immediately closing a non-activating transient window
+      // asks the Windows/Linux window manager to return focus to the
+      // previously active application.
       const dummyTransparentWindow = new BrowserWindow({
           width: 1,
           height: 1,

@@ -39,10 +39,23 @@ export function purgeOnnxRuntime(buildPath: string, platform: string, arch: stri
 /**
  * Remove platform-specific @nut-tree-fork/libnut packages
  */
-export function purgeLibnut(buildPath: string, platform: string): void {
+export function purgeLibnut(buildPath: string, platform: string, arch: string): void {
   const libnutPath = path.join(buildPath, 'node_modules', '@nut-tree-fork');
 
   if (!fs.existsSync(libnutPath)) {
+    return;
+  }
+
+  // libnut does not publish Linux or Windows arm64 binaries. Keep nut-js
+  // installed so imports remain resolvable, but remove every native libnut
+  // package from arm64 bundles. NutAutomator gates these targets at runtime.
+  if (arch === 'arm64' && (platform === 'linux' || platform === 'win32')) {
+    for (const entry of fs.readdirSync(libnutPath)) {
+      if (entry.startsWith('libnut-')) {
+        console.log(`🗑️  Removing unsupported arm64 libnut package: ${entry}`);
+        fs.rmSync(path.join(libnutPath, entry), { recursive: true, force: true });
+      }
+    }
     return;
   }
 
@@ -78,7 +91,12 @@ export function purgeAutolib(buildPath: string, platform: string, arch: string):
 
   const allAutolibPrebuilds = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64'];
   const currentPlatformArch = `${platform}-${arch}`;
-  const autolibDirsToRemove = allAutolibPrebuilds.filter(dir => dir !== currentPlatformArch);
+  // The upstream linux-arm64 prebuild is currently an x86-64 ELF. Automation
+  // is gated for that target, so do not ship a binary the OS cannot load.
+  const keepCurrentPrebuild = currentPlatformArch !== 'linux-arm64';
+  const autolibDirsToRemove = allAutolibPrebuilds.filter(
+    dir => !keepCurrentPrebuild || dir !== currentPlatformArch
+  );
 
   for (const dir of autolibDirsToRemove) {
     const fullPath = path.join(autolibPath, dir);

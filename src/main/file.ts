@@ -1,4 +1,4 @@
-import autolib from 'autolib';
+import autolib from './native_automation';
 import { execFileSync } from 'child_process';
 import { App, dialog } from 'electron';
 import icns from 'icns-lib';

@@ -37,6 +37,7 @@
           class="waveform"
         />
         <ButtonIcon
+          :label="isRecording ? t('common.stop') : t('common.record')"
           class="voice-button"
           @click="onToggleVoice"
           :class="{ 'recording': isRecording, 'processing': processing }"
@@ -55,6 +56,7 @@ import { nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import useAudioRecorder from '../audio/audio_recorder'
 import useTranscriber from '../audio/transcriber'
 import { store } from '@services/store'
+import { t } from '@services/i18n'
 import { isSTTReady, StreamingChunk } from '../voice/stt'
 import ButtonIcon from './ButtonIcon.vue'
 import SpinningIcon from './SpinningIcon.vue'

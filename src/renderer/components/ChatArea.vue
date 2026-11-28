@@ -3,12 +3,12 @@
     
     <header :class="{ 'is-left-most': isLeftMost }">
       
-      <ButtonIcon class="toggle-sidebar" v-tooltip="{ text: t('main.toggleSidebar'), position: 'bottom-right' }" @click="toggleSideBar">
+      <ButtonIcon class="toggle-sidebar" v-tooltip="{ text: t('main.toggleSidebar'), position: 'bottom-right' }" @click="toggleSideBar" :label="t('main.toggleSidebar')">
         <PanelRightCloseIcon v-if="isLeftMost" />
         <PanelRightOpenIcon v-else />
       </ButtonIcon>
 
-      <ButtonIcon class="new-chat" v-if="isLeftMost" v-tooltip="{ text: t('common.newChat'), position: 'bottom-right' }" @click="onNewChat">
+      <ButtonIcon class="new-chat" v-if="isLeftMost" v-tooltip="{ text: t('common.newChat'), position: 'bottom-right' }" @click="onNewChat" :label="t('common.newChat')">
         <MessageCirclePlusIcon />
       </ButtonIcon>
 
@@ -21,11 +21,11 @@
       <div class="created-at" v-if="chat?.title && chat?.createdAt">{{ t('chat.startedAt', { date: formatDate(chat.createdAt) }) }}</div>
       <div class="flex-push"></div>
 
-      <ButtonIcon class="settings" @click="showModelSettings = !showModelSettings" v-if="store.isFeatureEnabled('chat.settings')">
+      <ButtonIcon :label="t('common.settings')" class="settings" @click="showModelSettings = !showModelSettings" v-if="store.isFeatureEnabled('chat.settings')">
         <SlidersHorizontalIcon />
       </ButtonIcon>
 
-      <ContextMenuTrigger class="menu" :position="chatMenuPosition" v-if="chat?.title || store.isFeatureEnabled('chat.temporary')">
+      <ContextMenuTrigger :label="t('common.actions')" class="menu" :position="chatMenuPosition" v-if="chat?.title || store.isFeatureEnabled('chat.temporary')">
         <template #trigger>
           <MoreVerticalIcon />
         </template>

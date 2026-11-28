@@ -69,10 +69,12 @@
     },
     "filename": "Filename",
     "fork": "Fork",
+    "fullscreen": "Fullscreen",
     "high": "High",
     "htmlGeneration": "HTML generation in progress…",
     "icon": "Icon",
     "import": "Import",
+    "info": "Information",
     "insert": "Insert",
     "install": "Install",
     "instructions": "Model instructions",
@@ -124,12 +126,14 @@
     "path": "Path",
     "pick": "Pick",
     "prompt": "Prompt",
+    "preview": "Preview",
     "provider": "Provider",
     "pull": "Pull",
     "quote": "Quote",
     "read": "Read",
     "recommended": "Recommended",
     "record": "Record",
+    "redo": "Redo",
     "rename": "Rename",
     "replace": "Replace",
     "required": {
@@ -182,12 +186,14 @@
     "tools": "Tools",
     "tryAgain": "Please try again.",
     "type": "Type",
+    "undo": "Undo",
     "unselectAll": "@:{'common.selectNone'}",
     "unselectAllShort": "None",
     "upload": "Upload",
     "url": "URL",
     "usage": "Usage",
     "value": "Value",
+    "view": "View",
     "variableEditor": {
       "validation": {
         "keyRequired": "Make sure you enter a key for this variable.",
@@ -2410,7 +2416,42 @@
   },
   "playbooks": {
     "editor": {
-      "exportError": "Failed to export file. Please try again."
+      "exportError": "Failed to export file. Please try again.",
+      "toolbar": {
+        "alignCenter": "Align center",
+        "alignJustify": "Justify",
+        "alignLeft": "Align left",
+        "alignRight": "Align right",
+        "bold": "Bold (Cmd+B)",
+        "codeBlock": "Code block",
+        "documentOutline": "Document outline",
+        "headingMenu": "Heading styles",
+        "highlight": "Highlight",
+        "inlineCode": "Inline code",
+        "insertLink": "Insert/edit link",
+        "insertTable": "Insert table (3x3)",
+        "italic": "Italic (Cmd+I)",
+        "listMenu": "List styles",
+        "redo": "Redo (Cmd+Shift+Z)",
+        "strikethrough": "Strikethrough",
+        "switchToSource": "Switch to source view",
+        "switchToWysiwyg": "Switch to WYSIWYG view",
+        "table": {
+          "addColumnLeft": "Add column left",
+          "addColumnRight": "Add column right",
+          "addRowAbove": "Add row above",
+          "addRowBelow": "Add row below",
+          "deleteColumn": "Delete column",
+          "deleteRow": "Delete row",
+          "deleteTable": "Delete table",
+          "mergeCells": "Merge cells",
+          "splitCell": "Split cell",
+          "toggleHeaderColumn": "Toggle header column",
+          "toggleHeaderRow": "Toggle header row"
+        },
+        "underline": "Underline",
+        "undo": "Undo (Cmd+Z)"
+      }
     },
     "marp": {
       "viewSlideshow": "View slideshow"
@@ -2607,6 +2648,7 @@
         "manage": "Manage Skills",
         "title": "@:{'common.skills'}"
       },
+      "title": "Add context",
       "tools": {
         "plugins": "@:{'common.appName'} plugins",
         "title": "@:{'common.tools'}"
@@ -3410,6 +3452,12 @@
     "icon": "Icon",
     "iconSearch": "Search icons…",
     "name": "Name",
+    "navigation": {
+      "back": "Go back",
+      "forward": "Go forward",
+      "home": "Go to home page",
+      "reload": "Reload"
+    },
     "noApps": "No web apps configured",
     "preserveColors": "Preserve webapp icon colors",
     "title": "Web Apps",

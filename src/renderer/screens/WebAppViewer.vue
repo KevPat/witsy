@@ -11,7 +11,7 @@
       <ButtonIcon
         @click="goHome"
         v-tooltip="{ text: t('webapps.toolbar.home'), position: 'bottom' }"
-      >
+       :label="t('webapps.toolbar.home')">
         <HomeIcon :size="16" />
       </ButtonIcon>
 
@@ -21,14 +21,14 @@
         @click="goBack"
         :disabled="!canGoBack"
         v-tooltip="{ text: t('webapps.toolbar.back'), position: 'bottom' }"
-      >
+       :label="t('webapps.toolbar.back')">
         <ArrowLeftIcon :size="16" />
       </ButtonIcon>
       <ButtonIcon
         @click="goForward"
         :disabled="!canGoForward"
         v-tooltip="{ text: t('webapps.toolbar.forward'), position: 'bottom' }"
-      >
+       :label="t('webapps.toolbar.forward')">
         <ArrowRightIcon :size="16" />
       </ButtonIcon>
 
@@ -37,7 +37,7 @@
       <ButtonIcon
         @click="reload"
         v-tooltip="{ text: t('webapps.toolbar.reload'), position: 'bottom' }"
-      >
+       :label="t('webapps.toolbar.reload')">
         <RotateCwIcon :size="16" />
       </ButtonIcon>
     </div>
@@ -57,6 +57,7 @@
 import { onMounted, onBeforeUnmount, ref, watch, computed } from 'vue'
 import Loader from '@components/Loader.vue'
 import ButtonIcon from '@components/ButtonIcon.vue'
+import { t } from '@services/i18n'
 import { ArrowLeftIcon, ArrowRightIcon, HomeIcon, RotateCwIcon } from 'lucide-vue-next'
 import { t } from '@services/i18n'
 import { WebApp } from 'types/workspace'
@@ -75,7 +76,7 @@ const webviewRef = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 let hasLoadedSrc = false
 
-const partition = computed(() => `persist:webapp_${props.webapp.name}`)
+const partition = computed(() => `persist:webapp_${props.webapp.id}`)
 
 // Navigation state
 const canGoBack = ref(false)
@@ -120,12 +121,13 @@ const updateNavigationState = () => {
 }
 
 // Update lastUsed when component becomes visible
-watch(() => props.visible, (isVisible) => {
+watch(() => props.visible, async (isVisible) => {
   if (isVisible && webviewRef.value) {
     emit('update-last-used')
 
     // Lazy load: only set src on first show
     if (!hasLoadedSrc) {
+      await window.api.webview.initSession(partition.value)
       const webview = webviewRef.value as any
       isLoading.value = true
       webview.src = props.webapp.url
@@ -179,12 +181,14 @@ onMounted(() => {
     webview.removeEventListener('dom-ready', handleDomReady)
   })
 
-  // Set src immediately if visible on mount
-  if (props.visible && !hasLoadedSrc) {
-    isLoading.value = true
-    webview.src = props.webapp.url
-    hasLoadedSrc = true
-  }
+  // Configure the actual stable partition before its first navigation.
+  window.api.webview.initSession(partition.value).then(() => {
+    if (props.visible && !hasLoadedSrc) {
+      isLoading.value = true
+      webview.src = props.webapp.url
+      hasLoadedSrc = true
+    }
+  })
 })
 
 </script>

@@ -32,8 +32,8 @@
               <div class="help">{{ t('agent.create.workflow.help.prompt') }}</div>
               <div class="prompt">
                 <div class="prompt-toolbar">
-                  <ButtonIcon @click="onInsertSystemVariable(index)" :id="`system-var-anchor-${index}`"><BracesIcon />{{ t('agent.create.workflow.insertSystemVariable') }}</ButtonIcon>
-                  <ButtonIcon @click="onCreateUserVariable(index)" :id="`plus-icon-${index}`"><PlusIcon />{{ t('agent.create.workflow.createUserVariable') }}</ButtonIcon>
+                  <ButtonIcon :label="t('agent.create.workflow.insertSystemVariable')" @click="onInsertSystemVariable(index)" :id="`system-var-anchor-${index}`"><BracesIcon />{{ t('agent.create.workflow.insertSystemVariable') }}</ButtonIcon>
+                  <ButtonIcon :label="t('agent.create.workflow.createUserVariable')" @click="onCreateUserVariable(index)" :id="`plus-icon-${index}`"><PlusIcon />{{ t('agent.create.workflow.createUserVariable') }}</ButtonIcon>
                 </div>
                 <textarea v-model="agent.steps[index].prompt" name="prompt" :ref="(el: any) => setTextareaRef(el, index)"></textarea>
               </div>

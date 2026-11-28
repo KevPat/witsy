@@ -1,5 +1,5 @@
 <template>
-  <div class="commands">
+  <div class="commands" ref="root">
     <template v-if="!showHelp">
       <div class="app" v-if="sourceApp">
         <img class="icon" :src="iconData" /> {{ t('common.workingWith') }} {{ sourceApp.name }}
@@ -47,6 +47,7 @@ const props = defineProps({
   extra: Object
 })
 
+const root = ref<HTMLElement | null>(null)
 const list= ref<HTMLElement | null>(null)
 const commands= ref<Command[]>([])
 const selected= ref<Command | null>(null)
@@ -78,7 +79,7 @@ onMounted(() => {
   // shortcuts work better at document level
   onDomEvent(document, 'keydown', onKeyDown)
   onDomEvent(document, 'keyup', onKeyUp)
-  onDomEvent(document, 'blur', onClose)
+  onDomEvent(document, 'focusout', onFocusOut)
 
   // events
   onIpcEvent('show', onShow)
@@ -93,6 +94,13 @@ onMounted(() => {
   }
 
 })
+
+const onFocusOut = (event: FocusEvent) => {
+  const nextTarget = event.relatedTarget as Node | null
+  if (!nextTarget || !root.value?.contains(nextTarget)) {
+    onClose()
+  }
+}
 
 const onFileModified = (file: string) => {
   if (file == 'commands') {

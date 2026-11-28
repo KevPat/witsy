@@ -17,6 +17,11 @@ export default class NutAutomator implements Automator {
     if (nut === null) {
       return false;
     }
+    if (process.arch === 'arm64' && (process.platform === 'linux' || process.platform === 'win32')) {
+      console.warn(`[nutjs] Automation is unavailable on ${process.platform}-arm64: no native libnut binary is published.`);
+      nut = null;
+      return false;
+    }
     try {
       const nutPackage = '@nut-tree-fork/nut-js';
       nut = await import(nutPackage);

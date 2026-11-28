@@ -272,7 +272,11 @@ test('Close command picker window', async () => {
   await window.closeCommandPicker({} as Application)
   expect(window.commandPicker).not.toBeNull()
   expect(window.commandPicker.isVisible()).toBe(false)
-  expect(Menu.sendActionToFirstResponder).toHaveBeenCalled()
+  if (process.platform === 'darwin') {
+    expect(Menu.sendActionToFirstResponder).toHaveBeenCalled()
+  } else {
+    expect(BrowserWindow.prototype.close).toHaveBeenCalled()
+  }
 })
 
 test('Create prompt anywhere window', async () => {

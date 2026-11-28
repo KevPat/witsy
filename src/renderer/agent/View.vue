@@ -14,7 +14,7 @@
 
         <div class="actions">
 
-          <ButtonIcon class="run" v-tooltip="{ text: t('agent.help.run'), position: 'bottom-left' }" @click="emit('run', agent)">
+          <ButtonIcon class="run" v-tooltip="{ text: t('agent.help.run'), position: 'bottom-left' }" @click="emit('run', agent)" :label="t('agent.help.run')">
             <PlayIcon />
           </ButtonIcon>
 
@@ -28,7 +28,7 @@
             </template>
           </AgentExecutionsMenu>
 
-          <ContextMenuTrigger position="below-right">
+          <ContextMenuTrigger :label="t('common.actions')" position="below-right">
             <template #menu>
               <div class="item edit" @click="emit('edit', agent)">
                 <PencilIcon /> {{ t('agent.help.edit') }}

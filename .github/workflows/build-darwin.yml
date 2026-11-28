@@ -20,7 +20,8 @@ on:
         required: true
 jobs:
   build-darwin:
-    runs-on: macos-15
+    # macos-15 is arm64; the explicit Intel label prevents cross-packaging x64.
+    runs-on: ${{ inputs.arch == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     permissions:
       contents: write
     steps:
