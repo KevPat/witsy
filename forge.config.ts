@@ -65,14 +65,18 @@ const config: ForgeConfig = {
     asar: true,
 
     /*
-     * electron-forge 7.9.0 fix but increases image size significantly
+     * Since electron-forge 7.9, the Vite plugin no longer copies node_modules into the package, but
+     * the main process keeps every runtime dependency external (vite.base.config.ts): without this
+     * the packaged app dies at launch on its first require (found by npm run verify:smoke).
+     * The packager still prunes devDependencies from the copied node_modules.
      */
-    // ignore: (file: string): boolean => {
-    //   if (!file) return false;
-    //   if (file.startsWith('/node_modules')) return false;
-    //   if (!file.startsWith('/.vite')) return true;
-    //   return false;
-    // },
+    ignore: (file: string): boolean => {
+      if (!file) return false;
+      if (file.startsWith('/node_modules')) return false;
+      if (file === '/package.json') return false;
+      if (!file.startsWith('/.vite')) return true;
+      return false;
+    },
 
     icon: 'assets/icon',
     executableName: process.platform == 'linux' ? 'witsy' : 'Witsy',
