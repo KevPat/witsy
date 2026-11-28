@@ -2,6 +2,22 @@
 import { LlmModelOpts, PluginParameter } from 'multi-llm-ts'
 import { Agent as AgentBase, AgentSource, AgentStep, AgentType } from 'types/agents'
 
+// a webhook token is the hex form of this many bytes of the system CSPRNG (see generateWebhookToken)
+export const kWebhookTokenBytes = 16
+
+const kWebhookTokenFormat = new RegExp(`^[0-9a-f]{${kWebhookTokenBytes * 2}}$`)
+
+/**
+ * Whether a webhook token predates the strong ones: any token that is not in the format
+ * of the current generator, such as the 8 characters out of Math.random of the first versions.
+ * Such a token still triggers its agent and is replaced when the user saves the agent in the editor.
+ * No token is no webhook, not a legacy token.
+ */
+export const isLegacyWebhookToken = (token: string|null|undefined): boolean => {
+  if (token === null || token === undefined || token === '') return false
+  return typeof token !== 'string' || !kWebhookTokenFormat.test(token)
+}
+
 export default class Agent implements AgentBase {
 
   uuid: string

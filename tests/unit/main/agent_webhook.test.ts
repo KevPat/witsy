@@ -36,6 +36,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockRunAgentFn.mockClear()
   vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
 
   mockRegister = vi.fn()
@@ -298,6 +299,116 @@ test('webhook endpoint combines GET and POST parameters', async () => {
     { fromQuery: 'yes', fromBody: 'also' },
     expect.any(String)
   )
+})
+
+// everything the handlers wrote to the log, whatever the level
+const loggedText = (): string => {
+  return [console.log, console.warn, console.error]
+    .flatMap((fn) => vi.mocked(fn).mock.calls)
+    .map((args) => args.map(String).join(' '))
+    .join('\n')
+}
+
+test('webhook endpoint still triggers an agent called with a legacy token', async () => {
+  const kLegacyToken = 'abc12345'
+  const mockAgent = { uuid: 'agent-legacy', name: 'Legacy Agent', webhookToken: kLegacyToken, invocationValues: {} }
+
+  vi.mocked(agentUtilsModule.findAgentByWebhookToken).mockReturnValue({
+    agent: mockAgent as any,
+    workspaceId: 'workspace-1'
+  })
+  mockRunAgentFn.mockResolvedValue({ uuid: 'run-1', agentId: 'agent-legacy', status: 'running' } as any)
+
+  installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
+
+  const handler = mockRegister.mock.calls[0][1]
+  const mockReq = { method: 'GET', headers: {}, on: vi.fn() } as any
+  const mockRes = { writeHead: vi.fn(), end: vi.fn() } as any
+  const mockUrl = new URL(`http://localhost:8090/api/agent/run/${kLegacyToken}?task=backup`)
+
+  await handler(mockReq, mockRes, mockUrl)
+
+  // the agent runs as before
+  expect(agentUtilsModule.findAgentByWebhookToken).toHaveBeenCalledWith(mockApp, kLegacyToken)
+  expect(mockRunAgentFn).toHaveBeenCalledWith('workspace-1', mockAgent, 'webhook', { task: 'backup' }, expect.any(String))
+  expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+  const response = JSON.parse(mockRes.end.mock.calls[0][0])
+  expect(response.success).toBe(true)
+  expect(response.statusUrl).toBe(`/api/agent/status/${kLegacyToken}/${response.runId}`)
+})
+
+test('webhook endpoint warns in the log when called with a legacy token, without the token', async () => {
+  const kLegacyToken = 'abc12345'
+  const mockAgent = { uuid: 'agent-legacy', name: 'Legacy Agent', webhookToken: kLegacyToken, invocationValues: {} }
+
+  vi.mocked(agentUtilsModule.findAgentByWebhookToken).mockReturnValue({
+    agent: mockAgent as any,
+    workspaceId: 'workspace-1'
+  })
+  mockRunAgentFn.mockResolvedValue({ uuid: 'run-1', agentId: 'agent-legacy', status: 'running' } as any)
+
+  installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
+
+  const handler = mockRegister.mock.calls[0][1]
+  const mockReq = { method: 'GET', headers: {}, on: vi.fn() } as any
+  const mockRes = { writeHead: vi.fn(), end: vi.fn() } as any
+  const mockUrl = new URL(`http://localhost:8090/api/agent/run/${kLegacyToken}?task=backup`)
+
+  await handler(mockReq, mockRes, mockUrl)
+
+  // one warning that names the agent and says what to do
+  expect(console.warn).toHaveBeenCalledTimes(1)
+  const warning = vi.mocked(console.warn).mock.calls[0].join(' ')
+  expect(warning).toContain('agent-legacy')
+  expect(warning).toContain('old weak token')
+  expect(warning).toContain('agent editor')
+
+  // neither the token nor the path nor the query are logged, at any level
+  expect(loggedText()).not.toContain(kLegacyToken)
+  expect(loggedText()).not.toContain('/api/agent/run/')
+  expect(loggedText()).not.toContain('backup')
+})
+
+test('webhook endpoint does not warn when called with a strong token', async () => {
+  const kStrongToken = '0123456789abcdef0123456789abcdef'
+  const mockAgent = { uuid: 'agent-strong', name: 'Strong Agent', webhookToken: kStrongToken, invocationValues: {} }
+
+  vi.mocked(agentUtilsModule.findAgentByWebhookToken).mockReturnValue({
+    agent: mockAgent as any,
+    workspaceId: 'workspace-1'
+  })
+  mockRunAgentFn.mockResolvedValue({ uuid: 'run-1', agentId: 'agent-strong', status: 'running' } as any)
+
+  installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
+
+  const handler = mockRegister.mock.calls[0][1]
+  const mockReq = { method: 'GET', headers: {}, on: vi.fn() } as any
+  const mockRes = { writeHead: vi.fn(), end: vi.fn() } as any
+  const mockUrl = new URL(`http://localhost:8090/api/agent/run/${kStrongToken}`)
+
+  await handler(mockReq, mockRes, mockUrl)
+
+  expect(mockRunAgentFn).toHaveBeenCalledTimes(1)
+  expect(console.warn).not.toHaveBeenCalled()
+  expect(loggedText()).not.toContain(kStrongToken)
+})
+
+test('webhook endpoint does not warn when the token is unknown', async () => {
+  vi.mocked(agentUtilsModule.findAgentByWebhookToken).mockReturnValue(null)
+
+  installAgentWebhook(mockHttpServer as HttpServer, mockApp, mockMcp)
+
+  const handler = mockRegister.mock.calls[0][1]
+  const mockReq = { method: 'GET', headers: {}, on: vi.fn() } as any
+  const mockRes = { writeHead: vi.fn(), end: vi.fn() } as any
+  const mockUrl = new URL('http://localhost:8090/api/agent/run/zzz99999')
+
+  await handler(mockReq, mockRes, mockUrl)
+
+  // a guess is not told that it looks like an old token
+  expect(mockRes.writeHead).toHaveBeenCalledWith(404, { 'Content-Type': 'application/json' })
+  expect(console.warn).not.toHaveBeenCalled()
+  expect(loggedText()).not.toContain('zzz99999')
 })
 
 test('installAgentWebhook registers status endpoint', () => {

@@ -416,6 +416,8 @@ Agent webhooks allow you to trigger agent execution via HTTP requests, enabling 
 5. Copy the webhook URL displayed (format: `http://localhost:{port}/api/agent/run/{token}`)
 6. You can regenerate the token at any time using the refresh button
 
+**Tokens from older versions:** webhooks created with an older version of Witsy have a short 8-character token. These tokens still work, but they are weak: they are flagged in the agent editor (and in the application log each time they are used) and are replaced by a strong token the next time you save the agent in the editor. Witsy then shows you the new URL: update your callers with it, as the old URL stops working.
+
 **Using the webhook:**
 - Send GET or POST requests to the webhook URL
 - Include parameters as query strings (GET) or JSON body (POST)

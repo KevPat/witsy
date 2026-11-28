@@ -7,6 +7,7 @@ import * as workspaceModule from '@main/workspace'
 import * as agentsModule from '@main/agents'
 import * as configModule from '@main/config'
 import AgentWorkflowExecutor from '@services/agent_executor_workflow'
+import { isLegacyWebhookToken } from '@models/agent'
 
 // Mock dependencies
 vi.mock('@main/workspace')
@@ -50,6 +51,12 @@ test('generateWebhookToken generates a 32 hex character token from the system CS
   expect(mathRandom).not.toHaveBeenCalled()
 
   vi.restoreAllMocks()
+})
+
+test('generateWebhookToken never generates a token that counts as a legacy one', () => {
+  for (let i = 0; i < 100; i++) {
+    expect(isLegacyWebhookToken(generateWebhookToken(mockApp, 'workspace-1', 'agent-1'))).toBe(false)
+  }
 })
 
 test('generateWebhookToken does not depend on Math.random', () => {

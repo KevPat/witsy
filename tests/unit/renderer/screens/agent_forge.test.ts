@@ -141,6 +141,40 @@ test('Import agent without conflict saves with original UUID', async () => {
   expect(savedAgent.name).toBe('New Agent')
 })
 
+test('Import agent does not replace a legacy webhook token', async () => {
+  const wrapper: VueWrapper<any> = mount(AgentForge)
+
+  // an import is not a save from the editor: nobody would be shown the new url
+  const legacyAgent = JSON.parse(JSON.stringify({
+    uuid: 'legacy-webhook-uuid',
+    name: 'Legacy Webhook Agent',
+    description: 'An agent exported by a former version',
+    type: 'runnable',
+    engine: 'openai',
+    model: 'gpt-4',
+    steps: [{ tools: [], agents: [] }],
+    webhookToken: 'abc12345'
+  }))
+
+  const fileContents = {
+    url: 'file://test.json',
+    mimeType: 'application/json',
+    contents: JSON.stringify(legacyAgent)
+  }
+  vi.mocked(window.api.file.pickFile).mockReturnValue(fileContents)
+
+  // Trigger import
+  const listComponent = wrapper.findComponent({ name: 'List' })
+  listComponent.vm.$emit('importJson')
+  await flushPromises()
+
+  expect(window.api.agents.save).toHaveBeenCalledTimes(1)
+  const savedAgent = vi.mocked(window.api.agents.save).mock.calls[0][1]
+  expect(savedAgent.uuid).toBe('legacy-webhook-uuid')
+  expect(savedAgent.webhookToken).toBe('abc12345')
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
+})
+
 test('Import agent with conflict shows dialog', async () => {
   const wrapper: VueWrapper<any> = mount(AgentForge)
 

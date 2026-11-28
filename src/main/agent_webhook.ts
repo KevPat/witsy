@@ -1,5 +1,6 @@
 import { App } from 'electron'
 import { v7 as uuidv7 } from 'uuid'
+import { isLegacyWebhookToken } from '@models/agent'
 import { AgentExecutor, findAgentByWebhookToken } from './agent_utils'
 import { getAgentRun } from './agents'
 import { HttpServer, RouteOptions } from './http_server'
@@ -36,6 +37,12 @@ export function installAgentWebhook(httpServer: HttpServer, app: App, mcp: Mcp, 
       }
 
       const { agent, workspaceId } = result
+
+      // a token of a former version still runs its agent so that callers keep working,
+      // but it is weak: say so, with neither the token nor the path in the log
+      if (isLegacyWebhookToken(token)) {
+        console.warn(`[http] Agent webhook: agent ${agent.uuid} was called with an old weak token. Save the agent in the agent editor to replace it with a strong one, then update the callers with the new URL`)
+      }
 
       // Parse parameters from request
       const params = await parseParams(req, parsedUrl)

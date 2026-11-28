@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { App } from 'electron'
 import { Agent, AgentRun, AgentRunTrigger } from 'types/agents'
 import { v7 as uuidv7 } from 'uuid'
+import { kWebhookTokenBytes } from '@models/agent'
 import { createAgentExecutor } from '../renderer/services/agent_utils'
 import { registerAbortController } from './agent_tracker'
 import { listAgents } from './agents'
@@ -19,7 +20,8 @@ export function generateWebhookToken(app: App, workspaceId: string, agentId: str
   const maxAttempts = 1000
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const token = crypto.randomBytes(16).toString('hex')
+    // isLegacyWebhookToken tells this format apart from the tokens of former versions
+    const token = crypto.randomBytes(kWebhookTokenBytes).toString('hex')
 
     // Check if token is unique across all workspaces
     let isUnique = true

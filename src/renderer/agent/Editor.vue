@@ -106,7 +106,7 @@ import { computed, onMounted, PropType, ref, watch } from 'vue'
 import FlowIcon from '@assets/flow.svg?component'
 import TriggerIcon from '@assets/trigger.svg?component'
 import Dialog from '@renderer/utils/dialog'
-import Agent from '@models/agent'
+import Agent, { isLegacyWebhookToken } from '@models/agent'
 import { t } from '@services/i18n'
 import { extractPromptInputs, extractAllWorkflowInputs } from '@services/prompt'
 import { store } from '@services/store'
@@ -325,10 +325,51 @@ const save = async () => {
     }
   }
 
+  // a weak token of a former version is replaced here and only here: this is the one save
+  // made by the user, who is then shown the new url. the other saves of an agent (run
+  // bookkeeping, import, duplicate, migrations) leave the token alone, as replacing it
+  // there would break the callers of the webhook without anybody being told
+  const legacyToken = await replaceLegacyWebhookToken()
+
   // we can save
   const rc = window.api.agents.save(store.config.workspaceId, JSON.parse(JSON.stringify(agent.value)))
-  if (rc) {
-    emit('save', agent.value)
+  if (!rc) {
+    // the old token is still the one on disk
+    if (legacyToken) agent.value.webhookToken = legacyToken
+    return
+  }
+
+  // the old url is dead from now on: the user gets the new one
+  const webhookUrl = legacyToken ? stepInvocation.value?.webhookUrl : null
+  emit('save', agent.value)
+  if (webhookUrl) {
+    const result = await Dialog.show({
+      title: t('agent.trigger.webhook_replaced_title'),
+      text: t('agent.trigger.webhook_replaced_text', { url: webhookUrl }),
+      confirmButtonText: t('agent.trigger.webhook_copy'),
+      cancelButtonText: t('common.close'),
+      showCancelButton: true,
+    })
+    if (result?.isConfirmed) {
+      navigator.clipboard.writeText(webhookUrl)
+    }
+  }
+
+}
+
+// returns the legacy token that was replaced, if any: when no strong token
+// can be had the agent keeps the token it has and is saved all the same
+const replaceLegacyWebhookToken = async (): Promise<string|null> => {
+  const legacyToken = agent.value.webhookToken
+  if (!isLegacyWebhookToken(legacyToken)) return null
+  try {
+    const token = await window.api.agents.generateWebhookToken(store.config.workspaceId, agent.value.uuid)
+    if (!token || isLegacyWebhookToken(token)) return null
+    agent.value.webhookToken = token
+    return legacyToken
+  } catch (error) {
+    console.error('Could not replace the legacy webhook token of the agent', error)
+    return null
   }
 }
 
