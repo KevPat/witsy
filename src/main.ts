@@ -7,12 +7,31 @@ import process from 'node:process';
 
 // Prevent EPIPE errors from crashing the app
 process.on('uncaughtException', (error) => {
-  if (error.message?.includes('EPIPE') || error.message?.includes('EBADF')) {
-    // Silently ignore pipe errors
+
+  // Silently ignore pipe errors
+  const action = classifyUncaughtException(error, app.isReady());
+  if (action === 'ignore') {
     return;
   }
-  // Log other errors to file only
+
+  // Log other errors to file
   log.error('Uncaught exception:', error);
+
+  // an exception during startup leaves a process with no window: tell the user and exit
+  if (action === 'fatal') {
+    try {
+      dialog.showErrorBox('Witsy could not start', error?.stack || String(error));
+    } catch { /* empty */ }
+    app.exit(1);
+  }
+
+});
+
+// a rejected promise nobody handles must at least be in the log file
+process.on('unhandledRejection', (reason) => {
+  if (classifyUncaughtException(reason, true) !== 'ignore') {
+    log.error('Unhandled rejection:', reason);
+  }
 });
 
 import PromptAnywhere from './main/automations/anywhere';
@@ -27,6 +46,7 @@ import DocumentMonitor from './main/rag/docmonitor';
 import DocumentRepository from './main/rag/docrepo';
 import Scheduler from './main/scheduler';
 import TrayIconManager from './main/tray';
+import { classifyUncaughtException, handleRenderProcessGone } from './main/crash';
 
 import { fixPath } from './main/utils';
 //import { useI18n } from './main/i18n';
@@ -419,8 +439,12 @@ app.on('will-quit', () => {
   try { mcp?.shutdown(); } catch { /* empty */ }
 })
 
-// vscode debugging
-app.on('render-process-gone', () => {
-  quitAnyway = true;
-  app.quit();
+// a renderer that dies takes its window down, not the app
+// (when debugging, vscode kills the renderer to restart the app: quit)
+app.on('render-process-gone', (_, webContents, details) => {
+  handleRenderProcessGone(webContents, details, {
+    debug: !!process.env.DEBUG,
+    mainWindow: window.mainWindow,
+    quit: quitApp,
+  });
 })
