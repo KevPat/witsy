@@ -2,6 +2,23 @@
 import { App, autoUpdater, dialog } from 'electron';
 import { useI18n } from './i18n';
 
+const kDefaultUpdateRepository = 'Kochava-Studios/witsy'
+
+// GitHub repository (owner/name) whose releases feed the updater. It is set at build time
+// (WITSY_UPDATE_REPOSITORY, else GITHUB_REPOSITORY, see vite.main.config.ts) so that a
+// build of a fork does not install the releases of the official repository.
+export const getUpdateRepository = (): string => {
+  const repository = typeof __WITSY_UPDATE_REPOSITORY__ === 'string' ? __WITSY_UPDATE_REPOSITORY__ : ''
+  if (!repository) {
+    return kDefaultUpdateRepository
+  }
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    console.warn(`[update] Invalid update repository "${repository}", using ${kDefaultUpdateRepository}`)
+    return kDefaultUpdateRepository
+  }
+  return repository
+}
+
 export default class AutoUpdater {
 
   app: App
@@ -30,7 +47,7 @@ export default class AutoUpdater {
 
     // basic setup
     const server = 'https://update.electronjs.org'
-    const feed = `${server}/Kochava-Studios/witsy/${process.platform}-${process.arch}/${this.app.getVersion()}`
+    const feed = `${server}/${getUpdateRepository()}/${process.platform}-${process.arch}/${this.app.getVersion()}`
     console.log('[update] Checking for updates at', feed)
     autoUpdater.setFeedURL({ url: feed })
 

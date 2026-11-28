@@ -9,6 +9,8 @@ export default defineConfig((env) => {
   const forgeEnv = env as ConfigEnv;
   const { forgeConfigSelf } = forgeEnv as any;
   const define = getBuildDefine(forgeEnv);
+  // a build made by the CI of a fork is updated from the releases of that fork: see getUpdateRepository in src/main/autoupdate.ts
+  define.__WITSY_UPDATE_REPOSITORY__ = JSON.stringify(process.env.WITSY_UPDATE_REPOSITORY || process.env.GITHUB_REPOSITORY || '');
   const mainExternal = external.filter((dependency) => dependency !== 'pdfjs-dist');
   const config: UserConfig = {
     build: {
