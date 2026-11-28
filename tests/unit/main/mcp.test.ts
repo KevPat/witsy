@@ -1339,3 +1339,40 @@ test('updateTokens does not save if tokens unchanged', async () => {
   // saveSettings should not have been called since tokens are the same
   expect(saveSettings).not.toHaveBeenCalled()
 })
+
+test('getServers accepts an mcpServers entry without args', async () => {
+  // @ts-expect-error "args" is optional in the mcpServers format
+  config.mcpServers['bare'] = { command: 'my-mcp-server' }
+  const mcp = new Mcp(app)
+  expect(mcp.getServers().find(s => s.uuid === 'bare')).toMatchObject({
+    registryId: 'bare', state: 'enabled', type: 'stdio', command: 'my-mcp-server', url: '',
+  })
+  await mcp.connect()
+  expect(StdioClientTransport).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'my-mcp-server', args: [] }))
+  expect(mcp.clients.find(c => c.server.uuid === 'bare')).toBeDefined()
+})
+
+test('HTTP server with OAuth client credentials but no tokens connects', async () => {
+  const mcp = new Mcp(app)
+  expect(await mcp.editServer({
+    uuid: null, registryId: null, state: 'enabled', type: 'http',
+    url: 'http://localhost:3001',
+    oauth: { clientId: 'client-id', clientSecret: 'client-secret', scope: 'read' },
+    toolSelection: null,
+  })).toBe(true)
+  const server = mcp.getServers().find(s => s.url === 'http://localhost:3001')
+  expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(new URL('http://localhost:3001/'), {
+    requestInit: { headers: {} },
+    authProvider: expect.any(Object)
+  })
+  expect(mcp.clients.find(c => c.server.uuid === server!.uuid)).toBeDefined()
+  expect(mcp.logs[server!.uuid!].join('\n')).not.toContain('Cannot read properties')
+})
+
+test('updateTokens ignores an mcp server without extra config', async () => {
+  const mcp = new Mcp(app)
+  const server = mcp.getServers().find(s => s.uuid === 's1')
+  expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
+  expect(await mcp.updateTokens(server!, { access_token: 'token', token_type: 'bearer' }, 'read')).toBe(true)
+  expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
+})

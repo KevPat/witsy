@@ -9,7 +9,7 @@ import { exec } from 'child_process'
 import { app, App } from 'electron'
 import { PluginParameter, PluginTool } from 'multi-llm-ts'
 import { anyDict } from 'types/index'
-import { McpClient, McpInstallStatus, McpServer, McpServerWithTools, McpStatus, McpTool } from 'types/mcp'
+import { McpClaudeServer, McpClient, McpInstallStatus, McpServer, McpServerWithTools, McpStatus, McpTool } from 'types/mcp'
 import { loadSettings, saveSettings, settingsFilePath } from './config'
 import { useI18n } from './i18n'
 import McpOAuthManager from './mcp_auth'
@@ -223,20 +223,23 @@ export default class Mcp {
         ...server,
         toolSelection: server.toolSelection ?? null
       })),
-      ...Object.keys(config.mcpServers).reduce((arr: McpServer[], key: string) => {
+      ...Object.keys(config.mcpServers ?? {}).reduce((arr: McpServer[], key: string) => {
+        // "args" (like cwd and env) is optional in the mcpServers format
+        const entry: Partial<McpClaudeServer> = config.mcpServers[key] ?? {}
+        const extra = config.mcp.mcpServersExtra?.[key]
         arr.push({
           uuid: key.replace('@', ''),
           registryId: key,
-          label: config.mcp.mcpServersExtra[key]?.label || undefined,
-          state: config.mcp.mcpServersExtra[key]?.state || 'enabled',
+          label: extra?.label || undefined,
+          state: extra?.state || 'enabled',
           type: 'stdio',
-          command: config.mcpServers[key].command,
-          url: config.mcpServers[key].args.join(' '),
-          cwd: config.mcpServers[key].cwd,
-          env: config.mcpServers[key].env,
-          oauth: config.mcp.mcpServersExtra[key]?.oauth || undefined,
-          toolSelection: config.mcp.mcpServersExtra[key]?.toolSelection || null,
-          toolMappings: config.mcp.mcpServersExtra[key]?.toolMappings || undefined
+          command: entry.command,
+          url: Array.isArray(entry.args) ? entry.args.join(' ') : '',
+          cwd: entry.cwd,
+          env: entry.env,
+          oauth: extra?.oauth || undefined,
+          toolSelection: extra?.toolSelection || null,
+          toolMappings: extra?.toolMappings || undefined
         })
         return arr
       }, [])
@@ -491,7 +494,7 @@ export default class Mcp {
 
     // and in mcp servers
     const originalMcp = config.mcpServers[server.registryId]
-    if (originalMcp && config.mcp.mcpServersExtra[server.registryId].oauth) {
+    if (originalMcp && config.mcp.mcpServersExtra[server.registryId]?.oauth) {
       if (JSON.stringify(config.mcp.mcpServersExtra[server.registryId].oauth.tokens) !== JSON.stringify(tokens)) {
         config.mcp.mcpServersExtra[server.registryId].oauth.tokens = tokens
         config.mcp.mcpServersExtra[server.registryId].oauth.scope = scope
@@ -854,7 +857,7 @@ export default class Mcp {
       // add OAuth provider if configured
       if (server.oauth && (server.oauth.tokens || server.oauth.clientId)) {
 
-        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens.scope ?? server.oauth.scope)
+        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens?.scope ?? server.oauth.scope)
         const oauthProvider = await this.oauthManager.createOAuthProvider(clientMetadata, (redirectUrl) => {
           console.log(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
           this.logs[server.uuid].push(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
