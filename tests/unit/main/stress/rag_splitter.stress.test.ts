@@ -2,7 +2,6 @@
 import { describe, expect, test } from 'vitest'
 import Splitter from '@main/rag/splitter'
 import { Configuration } from '@/types/config'
-import { bug } from './bug'
 
 // deterministic PRNG so a failing fuzz case can be replayed
 const mulberry32 = (seed: number) => () => {
@@ -97,19 +96,19 @@ describe('Splitter invariants', () => {
 
 describe('Splitter content fidelity', () => {
 
-  bug('words separated by one space are not returned with two spaces', async () => {
+  test('words separated by one space are not returned with two spaces', async () => {
     // splits keep their leading separator and are then joined with the separator again
     const chunks = await splitter(30, 5).split('one two three four five six seven eight nine ten eleven twelve')
     expect(chunks.filter(chunk => chunk.includes('  '))).toEqual([])
   })
 
-  bug('paragraph breaks are not doubled', async () => {
+  test('paragraph breaks are not doubled', async () => {
     // "\n\n" + join("\n\n") turns one blank line into three
     const chunks = await splitter(40, 0).split('para one.\n\npara two.\n\npara three.\n\npara four.')
     expect(chunks.filter(chunk => chunk.includes('\n\n\n'))).toEqual([])
   })
 
-  bug('fuzz: every chunk is a verbatim excerpt of the source text', async () => {
+  test('fuzz: every chunk is a verbatim excerpt of the source text', async () => {
     // the doubled separators make chunks contain text that is not in the document
     const rand = mulberry32(20261127)
     const invented: string[] = []
@@ -123,7 +122,7 @@ describe('Splitter content fidelity', () => {
     expect(invented.slice(0, 3)).toEqual([])
   })
 
-  bug('fuzz: without overlap the chunks add up to the source text', async () => {
+  test('fuzz: without overlap the chunks add up to the source text', async () => {
     // every merged chunk gains one extra separator per split
     const rand = mulberry32(42)
     for (let i = 0; i < 40; i++) {
@@ -151,19 +150,19 @@ describe('Splitter line endings', () => {
     expect(chunks.map(chunk => chunk.trim())).toEqual(paragraphs.map(lines => lines.join('\n')))
   })
 
-  bug('CRLF paragraphs are split on the blank lines', async () => {
+  test('CRLF paragraphs are split on the blank lines', async () => {
     // "\r\n\r\n" does not contain "\n\n", so the text is split on single lines and paragraphs get mixed
     const chunks = await splitter(60, 0).split(document('\r\n'))
     expect(chunks.map(chunk => chunk.trim())).toEqual(paragraphs.map(lines => lines.join('\r\n')))
   })
 
-  bug('a CRLF pair is never cut in half', async () => {
+  test('a CRLF pair is never cut in half', async () => {
     // the text is split in front of "\n", which leaves the "\r" at the end of the previous split
     const chunks = await splitter(60, 0).split(document('\r\n'))
     expect(chunks.filter(chunk => chunk.endsWith('\r'))).toEqual([])
   })
 
-  bug('fuzz: CRLF text never yields a chunk that ends with a lone carriage return', async () => {
+  test('fuzz: CRLF text never yields a chunk that ends with a lone carriage return', async () => {
     // same defect on random documents, whatever the chunk size
     const rand = mulberry32(5)
     const cut: string[] = []
@@ -189,13 +188,13 @@ describe('Splitter unicode', () => {
     expect(chunks.filter(hasLoneSurrogate)).toEqual([])
   })
 
-  bug('a long run of emoji is not cut inside a surrogate pair', async () => {
+  test('a long run of emoji is not cut inside a surrogate pair', async () => {
     // the last resort separator is "", which splits the string into UTF-16 code units
     const chunks = await splitter(5, 0).split('😀'.repeat(12))
     expect(chunks.filter(hasLoneSurrogate)).toEqual([])
   })
 
-  bug('fuzz: unbroken text with astral characters only yields well formed chunks', async () => {
+  test('fuzz: unbroken text with astral characters only yields well formed chunks', async () => {
     // same defect: chunk boundaries are counted in code units, not code points
     const rand = mulberry32(11)
     const alphabet = ['a', 'é', '語', '😀', '𝒳', '🇫🇷', '𠀋']

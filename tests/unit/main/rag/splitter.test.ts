@@ -177,6 +177,144 @@ describe('Splitter', () => {
 
   })
 
+  describe('Text fidelity', () => {
+
+    const split = (text: string, chunkSize: number, chunkOverlap: number) =>
+      new Splitter({ rag: { chunkSize, chunkOverlap } } as Configuration).split(text)
+
+    const hasLoneSurrogate = (text: string) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text)
+
+    test('does not add or drop any character when there is no overlap', async () => {
+      const text = 'Title\n\nFirst paragraph, line one.\nFirst paragraph, line two.\n\n\nSecond paragraph with   several   spaces.\n\nThird one.\n'
+      for (const chunkSize of [1, 2, 5, 10, 25, 40, 100, 1000]) {
+        const chunks = await split(text, chunkSize, 0)
+        expect(chunks.join(''), `chunkSize=${chunkSize}`).toBe(text)
+      }
+    })
+
+    test('merges paragraphs without doubling the blank line', async () => {
+      const chunks = await split('one.\n\ntwo.\n\nthree.\n\nfour.', 14, 0)
+      expect(chunks).toEqual(['one.\n\ntwo.', '\n\nthree.', '\n\nfour.'])
+    })
+
+    test('merges words without doubling the space', async () => {
+      const chunks = await split('aa bb cc dd ee ff', 9, 3)
+      expect(chunks).toEqual(['aa bb cc', ' cc dd ee', ' ee ff'])
+    })
+
+    test('consecutive chunks leave no gap and repeat at most the overlap', async () => {
+      // every word is unique, so each chunk has exactly one position in the text
+      const text = Array.from({ length: 400 }, (_, i) => `w${String(i).padStart(3, '0')}`).join(' ')
+      for (const [chunkSize, chunkOverlap] of [[100, 20], [60, 30], [35, 0], [20, 19], [1000, 200]]) {
+        const chunks = await split(text, chunkSize, chunkOverlap)
+        let covered = 0
+        let repeated = 0
+        for (const chunk of chunks) {
+          const label = `chunkSize=${chunkSize} chunkOverlap=${chunkOverlap} chunk=${JSON.stringify(chunk)}`
+          expect(chunk.length, label).toBeLessThanOrEqual(chunkSize)
+          const start = text.indexOf(chunk)
+          expect(start, label).toBeGreaterThanOrEqual(0)
+          expect(text.indexOf(chunk, start + 1), label).toBe(-1)
+          expect(start, label).toBeLessThanOrEqual(covered)
+          expect(covered - start, label).toBeLessThanOrEqual(chunkOverlap)
+          expect(start + chunk.length, label).toBeGreaterThan(covered)
+          repeated += covered - start
+          covered = start + chunk.length
+        }
+        expect(covered).toBe(text.length)
+        expect(chunks.length).toBeGreaterThan(1)
+        if (chunkOverlap > 0) expect(repeated).toBeGreaterThan((chunks.length - 1) * chunkOverlap / 2)
+        else expect(repeated).toBe(0)
+      }
+    })
+
+    test('splits CRLF text on blank lines first, then on lines', async () => {
+      const text = 'Para one, line one.\r\nPara one, line two.\r\n\r\nPara two, line one.\r\nPara two, line two.'
+      expect(await split(text, 50, 0)).toEqual([
+        'Para one, line one.\r\nPara one, line two.',
+        '\r\n\r\nPara two, line one.\r\nPara two, line two.',
+      ])
+      expect(await split(text, 30, 0)).toEqual([
+        'Para one, line one.',
+        '\r\nPara one, line two.',
+        '\r\n\r\nPara two, line one.',
+        '\r\nPara two, line two.',
+      ])
+    })
+
+    test('never separates the two characters of a CRLF, whatever the mix of line endings', async () => {
+      const text = 'a\r\n\r\nb\r\n\nc\n\r\nd\r\n\r\n\r\ne\n\n\nf\r\n' + '\r\n'.repeat(30) + 'g\rh\r\r\ni j\r\n k \r\n'
+      for (const chunkSize of [1, 2, 3, 4, 5, 7, 16, 50]) {
+        const chunks = await split(text, chunkSize, 0)
+        expect(chunks.join(''), `chunkSize=${chunkSize}`).toBe(text)
+        let boundary = 0
+        for (const chunk of chunks.slice(0, -1)) {
+          boundary += chunk.length
+          expect(text.slice(boundary - 1, boundary + 1), `chunkSize=${chunkSize} boundary=${boundary}`).not.toBe('\r\n')
+        }
+      }
+    })
+
+    test('never separates the two characters of a CRLF when chunks overlap', async () => {
+      // every "\n" of this text belongs to a CRLF
+      const text = Array.from({ length: 80 }, (_, i) => `w${i}`).map((word, i) => word + (i % 7 === 0 ? '\r\n\r\n' : i % 3 === 0 ? '\r\n' : ' ')).join('') + '\r\n'.repeat(20)
+      for (const chunkSize of [1, 2, 3, 5, 12, 40]) {
+        for (const chunkOverlap of [1, 2, 6, 100]) {
+          const chunks = await split(text, chunkSize, chunkOverlap)
+          const label = `chunkSize=${chunkSize} chunkOverlap=${chunkOverlap}`
+          expect(chunks.filter(chunk => chunk.startsWith('\n') || chunk.endsWith('\r')), label).toEqual([])
+          expect(chunks.filter(chunk => !text.includes(chunk)), label).toEqual([])
+        }
+      }
+    })
+
+    test('never cuts a surrogate pair, with or without overlap', async () => {
+      const text = '😀'.repeat(20) + '𠀋語a𝒳é🇫🇷'.repeat(10)
+      for (const chunkSize of [1, 2, 3, 4, 5, 8, 33]) {
+        for (const chunkOverlap of [0, 1, 2, 3, 100]) {
+          const chunks = await split(text, chunkSize, chunkOverlap)
+          const label = `chunkSize=${chunkSize} chunkOverlap=${chunkOverlap}`
+          expect(chunks.filter(hasLoneSurrogate), label).toEqual([])
+          if (chunkOverlap === 0) expect(chunks.join(''), label).toBe(text)
+        }
+      }
+    })
+
+    test('counts the chunk size in UTF-16 units and never exceeds it with astral characters', async () => {
+      const chunks = await split('😀'.repeat(10), 5, 0)
+      expect(chunks).toEqual(Array(5).fill('😀😀'))
+    })
+
+    test('returns a character that cannot be cut on its own when it is longer than the chunk size', async () => {
+      expect(await split('a😀\r\nb', 1, 0)).toEqual(['a', '😀', '\r\n', 'b'])
+    })
+
+    test('keeps the lone surrogates of the source text as they are', async () => {
+      const text = 'ab\uD83Dcd\uDE00ef'
+      const chunks = await split(text, 3, 0)
+      expect(chunks.join('')).toBe(text)
+    })
+
+    test.each([[10, 10], [10, 50], [2, 1], [1, 5]])('terminates and keeps every word with chunk size %i and overlap %i', async (chunkSize, chunkOverlap) => {
+      const text = Array.from({ length: 60 }, (_, i) => `w${i}`).join(' ')
+      const chunks = await split(text, chunkSize, chunkOverlap)
+      expect(chunks.every(chunk => chunk.length <= chunkSize)).toBe(true)
+      expect(chunks.join('').replace(/\s+/g, '').length).toBeGreaterThanOrEqual(text.replace(/\s+/g, '').length)
+      if (chunkSize >= 10) {
+        for (const word of text.split(' ')) expect(chunks.some(chunk => chunk.includes(word)), word).toBe(true)
+      }
+    })
+
+    test('a single token longer than the chunk size is cut into chunks of the chunk size', async () => {
+      const text = 'x'.repeat(1050)
+      const chunks = await split(text, 100, 0)
+      expect(chunks.join('')).toBe(text)
+      expect(chunks.every(chunk => chunk.length <= 100)).toBe(true)
+      expect(chunks.length).toBeLessThanOrEqual(12)
+    })
+
+  })
+
   describe('Large documents', () => {
 
     test('handles 1MB document without blocking', async () => {

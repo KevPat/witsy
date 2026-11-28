@@ -38,7 +38,7 @@ export default class {
         separator = s
         break
       }
-      if (text.includes(s)) {
+      if (this.separatorRegex(s).test(text)) {
         separator = s
         newSeparators = separators.slice(separators.indexOf(s) + 1)
         break
@@ -49,6 +49,8 @@ export default class {
     const splits = this.splitOnSeparator(text, separator)
 
     // Merge and recursively split
+    // (splits keep their separator, so they are merged without adding it again)
+    const mergeSeparator = ""
     const goodSplits: string[] = []
     let iterationCount = 0
 
@@ -65,7 +67,7 @@ export default class {
         goodSplits.push(s)
       } else {
         if (goodSplits.length > 0) {
-          const mergedText = await this.mergeSplits(goodSplits, separator, abortSignal)
+          const mergedText = await this.mergeSplits(goodSplits, mergeSeparator, abortSignal)
           finalChunks.push(...mergedText)
           goodSplits.length = 0
         }
@@ -80,7 +82,7 @@ export default class {
     }
 
     if (goodSplits.length > 0) {
-      const mergedText = await this.mergeSplits(goodSplits, separator, abortSignal)
+      const mergedText = await this.mergeSplits(goodSplits, mergeSeparator, abortSignal)
       finalChunks.push(...mergedText)
     }
 
@@ -89,12 +91,19 @@ export default class {
 
   private splitOnSeparator(text: string, separator: string): string[] {
     if (!separator) {
-      return text.split("")
+      // Split on characters, not UTF-16 code units: surrogate pairs and CRLF stay whole
+      return text.match(/\r\n|[\s\S]/gu) ?? []
     }
     // Keep separator at start of each split
-    const regexEscapedSeparator = separator.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&")
-    const splits = text.split(new RegExp(`(?=${regexEscapedSeparator})`))
+    const splits = text.split(this.separatorRegex(separator))
     return splits.filter(s => s !== "")
+  }
+
+  // Matches the position in front of a separator. A "\n" of the separator also
+  // stands for "\r\n", and the position between "\r" and "\n" never matches.
+  private separatorRegex(separator: string): RegExp {
+    const regexEscapedSeparator = separator.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&").replace(/\n/g, "\\r?\\n")
+    return new RegExp(`(?=${regexEscapedSeparator})(?<!\\r(?=\\n))`)
   }
 
   private async mergeSplits(splits: string[], separator: string, abortSignal?: AbortSignal): Promise<string[]> {
