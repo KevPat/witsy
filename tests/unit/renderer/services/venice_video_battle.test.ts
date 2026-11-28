@@ -129,9 +129,6 @@ test('a download url on another host is fetched and deleted without the api key'
     if (String(url) === DOWNLOAD && init.method === 'DELETE') {
       throw new TypeError('delete failed')
     }
-    if (String(url).endsWith('/video/complete')) {
-      return jsonResponse({ success: true })
-    }
     throw new Error(`unexpected ${url}`)
   })
 
@@ -149,7 +146,10 @@ test('a download url on another host is fetched and deleted without the api key'
   expect(deletion?.init.headers?.['Authorization']).toBeUndefined()
   const queue = calls.find((call) => call.url.endsWith('/video/queue'))
   expect(queue?.init.headers?.['Authorization']).toBe(`Bearer ${API_KEY}`)
-  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(true)
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
+  const retrieve = JSON.parse(String(calls.find((call) => call.url.endsWith('/video/retrieve'))?.init.body))
+  expect(retrieve.delete_media_on_completion).toBe(true)
+  expect(typeof retrieve.delete_media_on_completion).toBe('boolean')
   for (const call of calls) {
     if (call.url === DOWNLOAD) expect(JSON.stringify(call.init.headers || {})).not.toContain(API_KEY)
   }

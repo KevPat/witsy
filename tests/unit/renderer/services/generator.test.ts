@@ -194,6 +194,55 @@ test('Generator works without abortSignal (optional)', async () => {
   expect(llmMock.generate).toHaveBeenCalled()
 })
 
+test('Generator does not mutate the configured chat model capabilities', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  const chatModel = store.config.engines.mock.models.chat[0]
+  chatModel.capabilities.tools = false
+  const capabilities = chatModel.capabilities
+
+  llmMock.generate.mockReturnValue((async function* () {
+    yield { type: 'content', text: 'Hi', done: true } as LlmChunk
+  })())
+
+  await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(store.config.engines.mock.models.chat[0]).toBe(chatModel)
+  expect(store.config.engines.mock.models.chat[0].capabilities).toBe(capabilities)
+  expect(store.config.engines.mock.models.chat[0].capabilities.tools).toBe(false)
+  expect(llmMock.generate.mock.calls[0][0]).not.toBe(chatModel)
+  expect(llmMock.generate.mock.calls[0][0].capabilities).not.toBe(capabilities)
+  expect(llmMock.generate.mock.calls[0][0].capabilities.tools).toBe(true)
+})
+
+test('Generator does not throw when model capabilities are missing', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  const chatModel = store.config.engines.mock.models.chat[0]
+  // @ts-expect-error capabilities can be missing on a stored model
+  chatModel.capabilities = undefined
+
+  llmMock.generate.mockReturnValue((async function* () {
+    yield { type: 'content', text: 'Hi', done: true } as LlmChunk
+  })())
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(result).toBe('success')
+  expect(store.config.engines.mock.models.chat[0].capabilities).toBeUndefined()
+  expect(llmMock.generate.mock.calls[0][0].capabilities.tools).toBe(true)
+})
+
 // ============================================================================
 // Conversation Management Tests
 // ============================================================================
@@ -383,6 +432,63 @@ test('Generator handles generic error', async () => {
   expect(messages[2].content).toContain('generator.errors.couldNotGenerate')
 })
 
+test('Generator handles a provider error with no message', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  llmMock.generate.mockImplementation(() => {
+    const error: any = { name: 'ProviderError', status: 500 }
+    throw error
+  })
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(result).toBe('error')
+  expect(messages[2].content).toContain('generator.errors.couldNotGenerate')
+})
+
+test('Generator still maps a 401 error that includes a message', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  llmMock.generate.mockImplementation(() => {
+    const error: any = new Error('Unauthorized')
+    error.status = 401
+    throw error
+  })
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(result).toBe('missing_api_key')
+  expect(messages[2].content).toContain('generator.errors.missingApiKey')
+})
+
+test('Generator returns stopped for an AbortError without a message', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  llmMock.generate.mockImplementation(() => {
+    const error: any = { name: 'AbortError' }
+    throw error
+  })
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(result).toBe('stopped')
+})
+
 // ============================================================================
 // Streaming Tests
 // ============================================================================
@@ -445,6 +551,85 @@ test('Generator handles streaming not supported error', async () => {
 
   // Generator returns 'streaming_not_supported' for this specific error
   expect(result).toBe('streaming_not_supported')
+})
+
+test('Generator does not retry streaming-required when streaming is already on', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  let calls = 0
+  llmMock.generate.mockImplementation(() => {
+    calls += 1
+    if (calls > 1) {
+      throw new Error('generate retried more than once')
+    }
+    const error: any = new Error('streaming is required')
+    error.status = 0
+    throw error
+  })
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: true })
+
+  expect(result).toBe('error')
+  expect(llmMock.generate).toHaveBeenCalledTimes(1)
+  expect(messages[2].content).toContain('generator.errors.couldNotGenerate')
+})
+
+test('Generator retries once with streaming when streaming was off', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  llmMock.complete.mockImplementation(() => {
+    const error: any = new Error('streaming is required')
+    error.status = 0
+    throw error
+  })
+  llmMock.generate.mockReturnValue((async function* () {
+    yield { type: 'content', text: 'Retried', done: true } as LlmChunk
+  })())
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat', streaming: false })
+
+  expect(result).toBe('success')
+  expect(llmMock.complete).toHaveBeenCalledTimes(1)
+  expect(llmMock.generate).toHaveBeenCalledTimes(1)
+  expect(llmMock.generate.mock.calls[0][2].streaming).toBe(true)
+  expect(messages[2].content).toBe('Retried')
+})
+
+test('Generator retries streaming-required once when streaming is undefined', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', '')
+  ]
+
+  let calls = 0
+  llmMock.generate.mockImplementation(() => {
+    calls += 1
+    if (calls > 2) {
+      throw new Error('generate retried more than once')
+    }
+    const error: any = new Error('streaming is required')
+    error.status = 0
+    throw error
+  })
+
+  const result = await generator.generate(llmMock, messages, { model: 'chat' })
+
+  expect(result).toBe('error')
+  expect(llmMock.generate).toHaveBeenCalledTimes(2)
+  expect(llmMock.generate.mock.calls[1][2].streaming).toBe(true)
+  expect(messages[2].content).toContain('generator.errors.couldNotGenerate')
 })
 
 // ============================================================================
@@ -597,6 +782,46 @@ test('Generator adds dummy tool call when doc repo is queried with results', asy
   // Verify that callback was called with both running and completed tool calls
   const toolChunks = chunks.filter(c => c.type === 'tool')
   expect(toolChunks.length).toBeGreaterThanOrEqual(2) // at least running and completed
+})
+
+test('Generator keeps done true on content chunks when doc repo returns sources', async () => {
+  const generator = new Generator(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'What is the capital of France?'),
+    new Message('assistant', '')
+  ]
+
+  window.api.docrepo.list = vi.fn().mockReturnValue([
+    { uuid: 'test-repo-id', name: 'Geography Knowledge Base', workspaceId: store.config.workspaceId }
+  ])
+  window.api.docrepo.query = vi.fn().mockResolvedValue([
+    { content: 'Paris is the capital of France', metadata: { title: 'Geography', uuid: 'doc1' }, score: 0.95 }
+  ])
+
+  const partial = { type: 'content', text: 'Par', done: false } as LlmChunk
+  const terminal = { type: 'content', text: 'is', done: true } as LlmChunk
+  llmMock.generate.mockReturnValue((async function* () {
+    yield partial
+    yield terminal
+  })())
+
+  const contentDone: boolean[] = []
+  const result = await generator.generate(llmMock, messages, {
+    model: 'chat',
+    streaming: true,
+    docrepos: ['test-repo-id']
+  }, (chunk) => {
+    if (chunk?.type === 'content') {
+      contentDone.push(chunk.done)
+    }
+  })
+
+  expect(result).toBe('success')
+  expect(contentDone).toEqual([false, true])
+  expect(terminal.done).toBe(true)
+  expect(messages[2].transient).toBe(false)
+  expect(messages[2].content).toContain('Paris')
 })
 
 test('Generator adds dummy tool call when doc repo query returns no results', async () => {

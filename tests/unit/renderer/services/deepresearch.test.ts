@@ -16,6 +16,7 @@ import AgentWorkflowExecutor, { AgentWorkflowExecutorOpts } from '@services/agen
 import { AgentRun, AgentRunTrigger } from '@/types/agents'
 import { kDefaultWorkspaceId } from '@/consts'
 import { replacePromptInputs } from '@services/prompt'
+import LlmFactory from '@services/llms/llm'
 
 // Mock dependencies
 vi.mock('@services/plugins/search')
@@ -590,6 +591,47 @@ test('DeepResearchMultiStep JSON parsing error handling', async () => {
   )
 })
 
+test('DeepResearchMultiStep abort during sections skips synthesis', async () => {
+  const deepResearch = new DeepResearchMultiStep(mockConfig, kDefaultWorkspaceId)
+  const chat = new Chat()
+  chat.messages = [
+    new Message('system', 'You are a helpful assistant'),
+    new Message('user', 'Research quantum computing'),
+    new Message('assistant', '')
+  ]
+
+  const abortController = new AbortController()
+  const agents: string[] = []
+
+  // @ts-expect-error mock
+  vi.mocked(AgentWorkflowExecutor).mockImplementation((_config, _workspaceId, agent) => {
+    agents.push(agent.name)
+    return {
+      run: vi.fn(async () => {
+        if (agent.name === 'analysis') {
+          abortController.abort()
+          return analysisResult
+        }
+        if (agent.name === 'planning') return planningResult
+        if (agent.name === 'writer') return writerResult
+        return synthesisResult
+      })
+    }
+  })
+
+  const result = await deepResearch.run(mockEngine, chat, {
+    ...mockOpts,
+    abortSignal: abortController.signal
+  })
+
+  expect(result).toBe('stopped')
+  expect(result).not.toBe('success')
+  expect(agents).toContain('planning')
+  expect(agents).toContain('analysis')
+  expect(agents).not.toContain('synthesis')
+  expect(agents).not.toContain('title')
+})
+
 test('DeepResearchMultiStep abort handling', async () => {
   const deepResearch = new DeepResearchMultiStep(mockConfig, kDefaultWorkspaceId)
   const chat = new Chat()
@@ -727,6 +769,92 @@ test('DeepResearchMultiAgent generator call', async () => {
     })
   )
   expect(result).toBe('success')
+})
+
+test('DeepResearchMultiAgent stops when abortSignal is already aborted', async () => {
+  vi.clearAllMocks()
+
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, kDefaultWorkspaceId)
+  const chat = new Chat()
+  chat.messages = []
+
+  const mockGenerate = vi.fn().mockResolvedValue('success')
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: mockGenerate,
+    stop: vi.fn()
+  }))
+
+  const abortController = new AbortController()
+  abortController.abort()
+  const result = await deepResearch.run(mockEngine, chat, {
+    ...mockOpts,
+    abortSignal: abortController.signal
+  })
+
+  expect(result).toBe('stopped')
+  expect(mockGenerate).not.toHaveBeenCalled()
+  expect(mockEngine.clearPlugins).not.toHaveBeenCalled()
+})
+
+test('DeepResearchMultiAgent forwards abortSignal to generator', async () => {
+  vi.clearAllMocks()
+
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, kDefaultWorkspaceId)
+  const chat = new Chat()
+  chat.messages = [new Message('user', 'topic')]
+  chat.modelOpts = { temperature: 0.2 }
+  ;(chat.modelOpts as { abortSignal?: AbortSignal }).abortSignal = AbortSignal.abort()
+
+  const mockGenerate = vi.fn().mockResolvedValue('success')
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: mockGenerate,
+    stop: vi.fn()
+  }))
+
+  const abortController = new AbortController()
+  const result = await deepResearch.run(mockEngine, chat, {
+    ...mockOpts,
+    abortSignal: abortController.signal
+  })
+
+  expect(result).toBe('success')
+  expect(mockGenerate).toHaveBeenCalledWith(
+    mockEngine,
+    chat.messages,
+    expect.objectContaining({
+      abortSignal: abortController.signal,
+      toolChoice: { type: 'tool', name: 'agent_planning' }
+    })
+  )
+})
+
+test('DeepResearchMultiAgent returns stopped when aborted during generate', async () => {
+  vi.clearAllMocks()
+
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, kDefaultWorkspaceId)
+  const chat = new Chat()
+  chat.messages = [new Message('user', 'topic')]
+
+  const abortController = new AbortController()
+  const mockGenerate = vi.fn().mockImplementation(async () => {
+    abortController.abort()
+    return 'success'
+  })
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: mockGenerate,
+    stop: vi.fn()
+  }))
+
+  const result = await deepResearch.run(mockEngine, chat, {
+    ...mockOpts,
+    abortSignal: abortController.signal
+  })
+
+  expect(mockGenerate).toHaveBeenCalled()
+  expect(result).toBe('stopped')
 })
 
 test('Deep research agents count', () => {
@@ -1108,6 +1236,35 @@ test('DeepResearchAgentLoop - Error handling in runAgentLoop', async () => {
   const result = await deepResearchAL.run(mockEngine, chat, mockOpts)
 
   expect(result).toBe('error')
+})
+
+test('DeepResearchAgentLoop - missing model returns invalid_model', async () => {
+  const chat = new Chat()
+  chat.addMessage(new Message('system', 'System'))
+  chat.addMessage(new Message('user', 'test'))
+  chat.addMessage(new Message('assistant', ''))
+
+  const manager = LlmFactory.manager(mockConfig)
+  const getChatModel = vi.mocked(manager.getChatModel)
+  getChatModel.mockReturnValue(undefined)
+
+  const generate = vi.fn().mockResolvedValue('success')
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate,
+    stop: vi.fn()
+  }))
+
+  try {
+    const deepResearchAL = new DeepResearchAL(mockConfig, kDefaultWorkspaceId)
+    const result = await deepResearchAL.run(mockEngine, chat, mockOpts)
+
+    expect(result).toBe('invalid_model')
+    expect(generate).not.toHaveBeenCalled()
+    expect(chat.lastMessage()?.content ?? '').toContain('invalidModel')
+  } finally {
+    getChatModel.mockReturnValue({ id: 'test-model' })
+  }
 })
 
 test('DeepResearchAgentLoop - Abort signal handling', async () => {

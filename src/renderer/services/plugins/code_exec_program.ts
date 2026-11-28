@@ -272,10 +272,13 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
       result = response.result
     }
     if (typeof result === 'string') {
-      try {
-        result = JSON.parse(result)
-      } catch {
-        // Not JSON, keep as string
+      const trimmed = result.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          result = JSON.parse(trimmed)
+        } catch {
+          // Not JSON, keep as string
+        }
       }
     }
 

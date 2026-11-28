@@ -1026,6 +1026,40 @@ describe('CodeExecutionProgramPlugin', () => {
 
       expect(result).toEqual({ status: 'ok', value: 42 })
     })
+
+    test('parses JSON objects and arrays but keeps other strings', async () => {
+      const cases: Array<{ raw: string, expected: unknown }> = [
+        { raw: '42', expected: '42' },
+        { raw: 'true', expected: 'true' },
+        { raw: '{"a":1}', expected: { a: 1 } },
+        { raw: '[1]', expected: [1] },
+        { raw: '  {"a":1}  ', expected: { a: 1 } },
+        { raw: '{not json', expected: '{not json' },
+        { raw: '[1,', expected: '[1,' },
+      ]
+
+      for (const { raw, expected } of cases) {
+        const mockTool = new MockPlugin('tool1', () => raw)
+        mockEngine.plugins = [mockTool]
+        await plugin.install(mockEngine)
+
+        const result = await plugin.execute({} as any, {
+          tool: `${kCodeExecutionPluginPrefix}run_program`,
+          parameters: {
+            program: {
+              steps: [
+                { id: 'step1', tool: 'tool1', args: {} }
+              ]
+            }
+          }
+        })
+
+        expect(result).toEqual(expected)
+        if (typeof expected === 'string') {
+          expect(typeof result).toBe('string')
+        }
+      }
+    })
   })
 
   describe('Unknown Tool Handling', () => {

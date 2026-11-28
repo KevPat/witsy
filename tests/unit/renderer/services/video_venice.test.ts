@@ -87,6 +87,11 @@ test('VideoCreator queues Venice and returns the saved file url', async () => {
 
   expect(retrieves).toBe(1)
   expect(result).toEqual({ url: 'file:///tmp/studio.mp4' })
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
+  const retrieve = calls.find((call) => call.url.endsWith('/video/retrieve'))
+  const retrieveBody = JSON.parse(String(retrieve?.init.body))
+  expect(retrieveBody.delete_media_on_completion).toBe(true)
+  expect(typeof retrieveBody.delete_media_on_completion).toBe('boolean')
   expect(calls[0].url).toBe(`${VENICE_API_BASE}/video/queue`)
   expect(calls[0].init.redirect).toBe('manual')
   expect(JSON.parse(String(calls[0].init.body))).toEqual({
@@ -119,9 +124,9 @@ test('cancelling a Venice generation does not report a file', async () => {
 })
 
 test('image-to-video sends a data url built from the reference', async () => {
-  const calls: RequestInit[] = []
+  const calls: { url: string, init: RequestInit }[] = []
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-    calls.push(init)
+    calls.push({ url: String(url), init })
     if (String(url).endsWith('/video/queue')) {
       return new Response(JSON.stringify({
         model: 'wan-2.5-preview-image-to-video',
@@ -139,5 +144,8 @@ test('image-to-video sends a data url built from the reference', async () => {
   }, [{ mimeType: 'image/png', contents: 'aGVsbG8=' }])
 
   expect(result.url).toBe('file://file_saved')
-  expect(JSON.parse(String(calls[0].body)).image_url).toBe('data:image/png;base64,aGVsbG8=')
+  expect(JSON.parse(String(calls[0].init.body)).image_url).toBe('data:image/png;base64,aGVsbG8=')
+  expect(calls.some((call) => call.url.endsWith('/video/complete'))).toBe(false)
+  const retrieve = JSON.parse(String(calls.find((call) => call.url.endsWith('/video/retrieve'))?.init.body))
+  expect(retrieve.delete_media_on_completion).toBe(true)
 })

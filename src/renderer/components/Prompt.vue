@@ -633,7 +633,7 @@ const onSendPrompt = () => {
 
   let message = prompt.value.trim()
   if (command.value) {
-    message = commandI18n(command.value, 'template').replace('{input}', message)
+    message = commandI18n(command.value, 'template').replaceAll('{input}', () => message)
     command.value = null
   }
   prompt.value = defaultPrompt(props.conversationMode)

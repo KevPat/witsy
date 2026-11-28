@@ -113,8 +113,14 @@ export default class Generator {
     // sanitize options to ensure proper types
     opts = this.sanitizeOpts(opts)
 
-    // use tools always
-    model.capabilities.tools = true
+    // use tools always, on a clone so the configured model is not persisted as tool-capable
+    const modelForCall = {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        tools: true,
+      },
+    }
 
     try {
 
@@ -150,7 +156,7 @@ export default class Generator {
       if (opts.streaming === false) {
 
         // normal completion
-        const llmResponse: LlmResponse = await llm.complete(model, conversation, {
+        const llmResponse: LlmResponse = await llm.complete(modelForCall, conversation, {
           visionFallbackModel: visionModel,
           usage: true,
           ...opts
@@ -192,7 +198,7 @@ export default class Generator {
       } else {
 
         // now stream
-        const stream = llm.generate(model, conversation, {
+        const stream = llm.generate(modelForCall, conversation, {
           visionFallbackModel: visionModel,
           usage: true,
           ...opts
@@ -210,9 +216,6 @@ export default class Generator {
               response.addToolCall(msg, opts.noToolsInContent ? false : true)
               llmCallback?.call(null, msg)
             } else if (msg.type === 'content') {
-              if (msg && sources && sources.length > 0) {
-                msg.done = false
-              }
               response.appendText(msg)
               llmCallback?.call(null, msg)
             } else if (msg.type === 'reasoning') {
@@ -275,15 +278,16 @@ export default class Generator {
 
     console.error('Error while generating text', error)
 
-    if (error.name !== 'AbortError') {
+    if (error?.name !== 'AbortError') {
 
       // get the error message
-      const cause = error.cause?.stack?.toString()?.toLowerCase() || ''
-      const message = error.message.toLowerCase()
+      const cause = error?.cause?.stack?.toString()?.toLowerCase() || ''
+      const message = String(error?.message ?? error ?? '').toLowerCase()
+      const errorText = error?.message ?? ''
 
       // best case status is the http status code
       // if not we can try to find it in the message
-      let status = error.status ?? error.status_code ?? 0
+      let status = error?.status ?? error?.status_code ?? 0
       if (status === 0) {
         // extract from message with \d\d\d
         const statusMatch = message.match(/\b(\d{3})\b/)
@@ -293,46 +297,46 @@ export default class Generator {
       }
 
       // proxy
-      if (!error.status && (cause.includes('proxy') || cause.includes('network'))) {
+      if (!error?.status && (cause.includes('proxy') || cause.includes('network'))) {
         console.error('Network error:', cause)
-        response.setText(t('generator.errors.networkError', { error: error.message }))
+        response.setText(t('generator.errors.networkError', { error: errorText }))
         return 'error'
       }
 
       // missing api key
       else if ([401, 403].includes(status) || message.includes('401') || message.includes('apikey')) {
         console.error('Missing API key:', status, message)
-        response.setText(t('generator.errors.missingApiKey', { error: error.message }))
+        response.setText(t('generator.errors.missingApiKey', { error: errorText }))
         return 'missing_api_key'
       }
 
       // out of credits
       else if ([400, 402].includes(status) && (message.includes('credit') || message.includes('balance'))) {
         console.error('Out of credits:', status, message)
-        response.setText(t('generator.errors.outOfCredits', { error: error.message }))
+        response.setText(t('generator.errors.outOfCredits', { error: errorText }))
         return 'out_of_credits'
 
       // quota exceeded
       } else if ([413, 429].includes(status) && (message.includes('resource') || message.includes('quota') || message.includes('rate limit') || message.includes('too many') || message.includes('tokens per minute'))) {
         console.error('Quota exceeded:', status, message)
-        response.setText(t('generator.errors.quotaExceeded', { error: error.message }))
+        response.setText(t('generator.errors.quotaExceeded', { error: errorText }))
         return 'quota_exceeded'
 
       // too many tools
       } else if ([400].includes(status) && (message.includes('array too long') || message.includes('maximum tools'))) {
           console.error('Too many tools provided:', status, message)
-          response.setText(t('generator.errors.tooManyTools', { error: error.message }))
+          response.setText(t('generator.errors.tooManyTools', { error: errorText }))
           return 'too_many_tools'
 
       // context length or function description too long
       } else if ([400, 429].includes(status) && (message.includes('context length') || message.includes('too long') || message.includes('too large'))) {
         if (message.includes('function.description')) {
           console.error('Function description too long:', status, message)
-          response.setText(t('generator.errors.pluginDescriptionTooLong', { error: error.message }))
+          response.setText(t('generator.errors.pluginDescriptionTooLong', { error: errorText }))
           return 'function_description_too_long'
         } else if (message.includes('tools') && message.includes('array too long')) {
           console.error('Too many tools provided:', status, message)
-          response.setText(t('generator.errors.tooManyTools', { error: error.message }))
+          response.setText(t('generator.errors.tooManyTools', { error: errorText }))
           return 'too_many_tools'
         } else {
           console.error('Context too long:', status, message)
@@ -354,13 +358,13 @@ export default class Generator {
       // invalid model
       } else if ([404].includes(status) && message.includes('model')) {
         console.error('Provider reports invalid model:', status, message)
-        response.setText(t('generator.errors.invalidModel', { error: error.message }))
+        response.setText(t('generator.errors.invalidModel', { error: errorText }))
         return 'invalid_model'
 
       // thinking cannot be disabled
       } else if ([400].includes(status) && message.includes('only works in thinking mode')) {
         console.error('Invalid budget:', status, message)
-        response.setText(t('generator.errors.onlyThinkingMode', { error: error.message }))
+        response.setText(t('generator.errors.onlyThinkingMode', { error: errorText }))
         return 'invalid_budget'
 
       // invalid budget
@@ -372,12 +376,12 @@ export default class Generator {
           const max = parseInt(match[2], 10)
           response.setText(t('generator.errors.invalidBudgetKnown', { min, max }))
         } else {
-          response.setText(t('generator.errors.invalidBudgetUnknown', { error: error.message }))
+          response.setText(t('generator.errors.invalidBudgetUnknown', { error: errorText }))
         }
         return 'invalid_budget'
 
-      // anthropic: streaming required
-      } else if ([0].includes(status) && message.includes('streaming is required')) {
+      // anthropic: streaming required. Retry once, and only when streaming was off.
+      } else if ([0].includes(status) && message.includes('streaming is required') && opts.streaming !== true) {
         console.warn('Anthropic model requires streaming:', status, message)
         return this.generate(llm, messages, { ...opts, streaming: true }, llmCallback)
 
@@ -386,14 +390,14 @@ export default class Generator {
         console.error('Error while generating text:', status, message)
         if (response.content === '') {
           if (opts?.contextWindowSize || opts?.maxTokens || opts?.temperature || opts?.top_k || opts?.top_p || Object.keys(opts?.customOpts || {}).length > 0) {
-            response.setText(t('generator.errors.tryWithoutParams', { error: error.message }))
+            response.setText(t('generator.errors.tryWithoutParams', { error: errorText }))
           } else if (llm.plugins.length > 0) {
-            response.setText(t('generator.errors.tryWithoutPlugins', { error: error.message }))
+            response.setText(t('generator.errors.tryWithoutPlugins', { error: errorText }))
           } else {
-            response.setText(t('generator.errors.couldNotGenerate', { error: error.message }))
+            response.setText(t('generator.errors.couldNotGenerate', { error: errorText }))
           }
         } else {
-          response.appendText({ type: 'content', text: t('generator.errors.cannotContinue', { error: error.message }), done: true })
+          response.appendText({ type: 'content', text: t('generator.errors.cannotContinue', { error: errorText }), done: true })
         }
         return 'error'
       }

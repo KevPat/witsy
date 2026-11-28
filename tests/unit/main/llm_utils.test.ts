@@ -458,6 +458,20 @@ test('getTitle handles error and returns null', async () => {
   expect(title).toBeNull()
 })
 
+test('getTitle returns null when the chat model is missing', async () => {
+  vi.mocked(LlmManager).prototype.getChatModel = vi.fn(() => null)
+  const completeSpy = vi.spyOn(LlmUtils, 'complete')
+  const freshUtils = new LlmUtils(store.config)
+  const messages = [
+    new Message('system', 'System'),
+    new Message('user', 'Hello'),
+    new Message('assistant', 'Response')
+  ]
+  const title = await freshUtils.getTitle('mock', 'chat', messages)
+  expect(title).toBeNull()
+  expect(completeSpy).not.toHaveBeenCalled()
+})
+
 // ============================================================================
 // generateStatusUpdate Tests
 // ============================================================================
@@ -467,6 +481,15 @@ test('generateStatusUpdate returns status text', async () => {
   expect(status).toBeDefined()
   expect(typeof status).toBe('string')
   expect(status.length).toBeGreaterThan(0)
+})
+
+test('generateStatusUpdate returns null when the chat model is missing', async () => {
+  vi.mocked(LlmManager).prototype.getChatModel = vi.fn(() => null)
+  const completeSpy = vi.spyOn(LlmUtils, 'complete')
+  const freshUtils = new LlmUtils(store.config)
+  const status = await freshUtils.generateStatusUpdate('mock', 'chat', 'Test prompt')
+  expect(status).toBeNull()
+  expect(completeSpy).not.toHaveBeenCalled()
 })
 
 test('generateStatusUpdate calls stream method', async () => {

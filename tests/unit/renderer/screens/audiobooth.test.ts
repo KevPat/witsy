@@ -220,6 +220,22 @@ test('Translates transcription', async () => {
   })
 })
 
+test('Command replaces every {input} literally', async () => {
+  const command = store.commands.find(c => c.id === 'uuid3')!
+  const previous = command.template
+  command.template = 'pre {input} mid {input} post'
+  const wrapper: VueWrapper<any> = mount(AudioBooth)
+  wrapper.vm.transcription = 'pay $& and $$'
+  await wrapper.vm.$nextTick()
+  await wrapper.find('.actions button[name=commands]').trigger('click')
+  await wrapper.find('.context-menu .item:nth-child(3)').trigger('click')
+  expect(emitBusEventMock).toHaveBeenCalledWith('new-chat', {
+    prompt: 'pre pay $& and $$ mid pay $& and $$ post',
+    submit: true,
+  })
+  command.template = previous
+})
+
 test('Commands transcription', async () => {
   const wrapper: VueWrapper<any> = mount(AudioBooth)
   wrapper.vm.transcription = 'test'
