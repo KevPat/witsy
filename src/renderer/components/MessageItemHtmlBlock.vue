@@ -23,7 +23,7 @@
     </div>
     <div class="panel-body variable-font-size" ref="panelBody">
       <MessageItemBody v-if="!previewHtml" :message="message" tool-calls-display="none" />
-      <iframe ref="htmlIframe" sandbox="allow-scripts allow-same-origin allow-forms" v-else-if="!transient || headComplete" :srcdoc="html" style="width: 100%; border: none;" />
+      <iframe ref="htmlIframe" sandbox="allow-scripts allow-forms" v-else-if="!transient || headComplete" :srcdoc="html" style="width: 100%; border: none;" />
       <div v-else class="html-loading">{{ t('common.htmlGeneration') }}</div>
     </div>
 
@@ -57,6 +57,64 @@ const panelBody = ref<HTMLElement>()
 const htmlIframe = ref<HTMLIFrameElement>()
 const headComplete = ref(false)
 const initialHtmlWithListener = ref('')
+
+const kMaxFrameHeight = 20000
+const kMaxSnapshotLength = 20 * 1024 * 1024
+const kSnapshotTimeout = 2000
+
+const frameId = crypto.randomUUID()
+
+// The artifact runs in an opaque origin (no allow-same-origin), so the app cannot read its document
+// and it cannot read the app's: the two only exchange messages. An opaque origin cannot be named
+// as a postMessage target, hence '*' on both sides; each side checks event.source instead.
+// The height is reported at fixed moments and not from a ResizeObserver: the app sets the frame
+// height from these reports, and a page sized in vh would then grow on every report, without end.
+// For the same reason a resize is only reported when the width changed.
+const frameBridge = `
+<script data-witsy-bridge>
+(() => {
+  const id = '${frameId}';
+  const post = (message) => window.parent.postMessage(message, '*');
+  const reportHeight = () => post({ type: 'witsy-artifact-height', id, height: document.documentElement.offsetHeight });
+  const snapshot = () => {
+    const root = document.documentElement.cloneNode(true);
+    const canvases = document.querySelectorAll('canvas');
+    root.querySelectorAll('canvas').forEach((canvas, index) => {
+      try {
+        const image = document.createElement('img');
+        image.src = canvases[index].toDataURL('image/png');
+        image.style.cssText = canvas.style.cssText;
+        if (!image.style.width) image.style.width = canvases[index].width + 'px';
+        if (!image.style.height) image.style.height = canvases[index].height + 'px';
+        canvas.replaceWith(image);
+      } catch (e) { /* tainted canvas */ }
+    });
+    return root.outerHTML;
+  };
+  let width = window.innerWidth;
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent || !event.data) return;
+    if (event.data.type === 'update' && document.body) {
+      document.body.innerHTML = event.data.body;
+      reportHeight();
+    } else if (event.data.type === 'witsy-artifact-snapshot-request' && event.data.id === id) {
+      post({ type: 'witsy-artifact-snapshot', id, html: snapshot() });
+    }
+  });
+  window.addEventListener('load', () => {
+    reportHeight();
+    setTimeout(reportHeight, 100); // what the page renders in its own load handlers
+  });
+  let resizeTimeout;
+  window.addEventListener('resize', () => {
+    if (window.innerWidth === width) return;
+    width = window.innerWidth;
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(reportHeight, 100);
+  });
+})();
+<\/script>
+`
 
 const props = defineProps({
   title: {
@@ -124,10 +182,21 @@ const injectDarkModeCSS = (htmlContent: string) => {
   return darkModeCSS + htmlContent
 }
 
+const injectFrameBridge = (htmlContent: string) => {
+  const headEndIndex = htmlContent.search(/<\/head\s*>/i)
+  if (headEndIndex !== -1) {
+    return htmlContent.substring(0, headEndIndex) + frameBridge + htmlContent.substring(headEndIndex)
+  }
+
+  // no head: stay behind the doctype and the html tag so the page keeps its rendering mode
+  const prefix = htmlContent.match(/^\s*(<!doctype[^>]*>)?\s*(<html[^>]*>)?/i)?.[0] ?? ''
+  return prefix + frameBridge + htmlContent.substring(prefix.length)
+}
+
 const html = computed(() => {
   // Non-transient: return full HTML content with dark mode CSS injected
   if (!props.transient) {
-    return injectDarkModeCSS(extractHtmlContent())
+    return injectFrameBridge(injectDarkModeCSS(extractHtmlContent()))
   }
 
   // Transient: wait for head to complete
@@ -139,13 +208,42 @@ const html = computed(() => {
   return initialHtmlWithListener.value
 })
 
-const adjustIframeHeight = () => {
-  if (!htmlIframe.value || !htmlIframe.value.contentDocument) return
+let resolveSnapshot: ((html: string|null) => void)|null = null
+let snapshotRequest: Promise<string|null>|null = null
 
-  const offsetHeight = htmlIframe.value.contentDocument.documentElement.offsetHeight
-  if (offsetHeight > 0) {
-    htmlIframe.value.style.height = offsetHeight + 'px'
+// what the frame sends is written by the artifact: only a bounded number and a bounded string
+// are read from it, and the string is never inserted in the document of the app
+const onFrameMessage = (event: Event) => {
+  const { source, data } = event as MessageEvent
+  const iframe = htmlIframe.value
+  if (!iframe?.contentWindow || source !== iframe.contentWindow) return
+  if (!data || typeof data !== 'object' || data.id !== frameId) return
+
+  if (data.type === 'witsy-artifact-height') {
+    const height = data.height
+    if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return
+    iframe.style.height = Math.min(Math.ceil(height), kMaxFrameHeight) + 'px'
+  } else if (data.type === 'witsy-artifact-snapshot') {
+    if (typeof data.html !== 'string' || data.html.length > kMaxSnapshotLength) return
+    resolveSnapshot?.(data.html)
   }
+}
+
+const requestSnapshot = (frame: Window): Promise<string|null> => {
+  if (!snapshotRequest) {
+    snapshotRequest = new Promise((resolve) => {
+      const done = (html: string|null) => {
+        clearTimeout(timeout)
+        resolveSnapshot = null
+        snapshotRequest = null
+        resolve(html)
+      }
+      const timeout = setTimeout(() => done(null), kSnapshotTimeout)
+      resolveSnapshot = done
+      frame.postMessage({ type: 'witsy-artifact-snapshot-request', id: frameId }, '*')
+    })
+  }
+  return snapshotRequest
 }
 
 const updateIframeContent = () => {
@@ -154,29 +252,16 @@ const updateIframeContent = () => {
 
   // Check if head is complete (contains </head>)
   if (!headComplete.value && htmlContent.includes('</head>')) {
-    const listenerScript = `
-  <script type="module">
-    window.addEventListener('message', (event) => {
-      if (event.data.type === 'update') {
-        document.body.innerHTML = event.data.body;
-      }
-    });
-  <\/script>
-  `
-
     // Extract everything up to and including </head>
     const headEndIndex = htmlContent.indexOf('</head>') + 7
     const headSection = htmlContent.substring(0, headEndIndex)
 
     // Inject dark mode CSS and listener before </head> and add empty body
     const darkModeCSS = isDarkMode() ? getDarkModeCSS() : ''
-    const htmlWithListener = headSection.replace('</head>', darkModeCSS + listenerScript + '</head>')
+    const htmlWithListener = headSection.replace('</head>', () => darkModeCSS + frameBridge + '</head>')
     initialHtmlWithListener.value = htmlWithListener + '<body></body></html>'
 
     headComplete.value = true
-
-    // Adjust height after iframe renders
-    setTimeout(() => adjustIframeHeight(), 50)
     return
   }
 
@@ -189,20 +274,10 @@ const updateIframeContent = () => {
       { type: 'update', body: bodyContent },
       '*'
     )
-
-    // Adjust height after content updates
-    setTimeout(() => adjustIframeHeight(), 50)
   }
 }
 
 let delayTimeout: NodeJS.Timeout | null = null
-let resizeTimeout: NodeJS.Timeout | null = null
-
-const handleResize = () => {
-  if (!htmlIframe.value) return
-  if (resizeTimeout) clearTimeout(resizeTimeout)
-  resizeTimeout = setTimeout(() => adjustIframeHeight(), 100)
-}
 
 const setupHtmlDelay = () => {
   if (!props.transient) {
@@ -246,34 +321,18 @@ onMounted(() => {
         delayTimeout = null
       }
       htmlRenderingDelayPassed.value = true
-      // Adjust height for non-transient HTML
-      setTimeout(() => adjustIframeHeight(), 100)
     } else {
       // Message became transient (shouldn't happen normally, but handle it)
       setupHtmlDelay()
     }
   })
 
-  // Watch for iframe to appear (for non-transient messages)
-  watch(htmlIframe, (newIframe) => {
-    if (newIframe && !props.transient) {
-      // Adjust height after iframe loads
-      setTimeout(() => adjustIframeHeight(), 100)
-    }
-  })
-
-  // For non-transient messages on mount
-  if (!props.transient) {
-    setTimeout(() => adjustIframeHeight(), 100)
-  }
-
-  // Adjust height on window resize (with debounce)
-  onDomEvent(window, 'resize', handleResize)
+  // The frame reports its height and answers snapshot requests with messages
+  onDomEvent(window, 'message', onFrameMessage)
 })
 
 onBeforeUnmount(() => {
   if (delayTimeout) clearTimeout(delayTimeout)
-  if (resizeTimeout) clearTimeout(resizeTimeout)
 })
 
 const toggleHtml = () => {
@@ -301,14 +360,13 @@ const onDownloadFormat = async (action: string) => {
             return
           }
 
-          // Get the actual HTML document from inside the iframe
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-          if (!iframeDoc) {
-            console.error('Could not access iframe content')
-            return
-          }
+          // The frame sends its rendered document as a string; without an answer the source is exported.
+          // DOMParser gives an inert document: its scripts do not run in the app.
+          const snapshot = iframe.contentWindow ? await requestSnapshot(iframe.contentWindow) : null
+          const iframeDoc = new DOMParser().parseFromString(snapshot ?? extractHtmlContent(), 'text/html')
+          iframeDoc.querySelectorAll('script[data-witsy-bridge]').forEach((script) => script.remove())
 
-          // Export the entire HTML document from the iframe
+          // Export the entire HTML document of the artifact
           await exportToPdf({
             title: filename.replace(/\.[^.]+$/, ''),
             element: iframeDoc.documentElement, // This gets the <html> element with all its content

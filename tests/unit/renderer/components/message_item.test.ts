@@ -339,7 +339,7 @@ test('Assistant artifact with HTML preview', async () => {
   // Now iframe should exist with cached HTML (head + empty body + listener)
   let iframe = artifact.find('iframe')
   expect(iframe.exists()).toBe(true)
-  expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+  expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
   expect(iframe.attributes('srcdoc')).toContain('<body></body>')
   expect(iframe.attributes('srcdoc')).toContain('window.addEventListener')
   expect(artifact.find('.html-loading').exists()).toBe(false)
@@ -378,12 +378,23 @@ test('Assistant artifact with HTML preview (non-transient)', async () => {
   const iframe = artifact.find('iframe')
   if (iframe.exists()) {
     // Non-transient message should show HTML immediately (no loading message)
-    expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+    expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
     expect(iframe.attributes('srcdoc')).toContain('<!DOCTYPE html>')
     expect(iframe.attributes('srcdoc')).toContain('<h1>Hello from DOCTYPE</h1>')
     expect(iframe.attributes('srcdoc')).not.toContain('common.htmlGeneration')
   }
 
+})
+
+test('HTML preview isolates untrusted scripts from the application origin', async () => {
+  store.config.appearance.chat.autoPreview.html = true
+  const wrapper = await mount(botMessageToolArtifactHtml2)
+  const iframe = wrapper.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+  const sandboxTokens = iframe.attributes('sandbox').split(/\s+/)
+  expect(sandboxTokens).toContain('allow-scripts')
+  expect(sandboxTokens).not.toContain('allow-same-origin')
 })
 
 test('Assistant artifact with HTML preview (DOCTYPE)', async () => {
