@@ -3452,12 +3452,6 @@
     "icon": "Icon",
     "iconSearch": "Search icons…",
     "name": "Name",
-    "navigation": {
-      "back": "Go back",
-      "forward": "Go forward",
-      "home": "Go to home page",
-      "reload": "Reload"
-    },
     "noApps": "No web apps configured",
     "preserveColors": "Preserve webapp icon colors",
     "title": "Web Apps",
