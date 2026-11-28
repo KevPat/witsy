@@ -14,6 +14,60 @@ test('does not render html', () => {
   expect(html).toContain('<p>&lt;h1&gt;Hello World&lt;/h1&gt;</p>')
 })
 
+test('escapes event handlers in untrusted HTML', () => {
+  const html = renderMarkdown('<img src=x onerror=alert(1)>')
+  expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  expect(html).not.toContain('<img')
+})
+
+test('does not create javascript links', () => {
+  const html = renderMarkdown('[click](javascript:alert(1))')
+  expect(html).not.toContain('<a')
+  expect(html).not.toContain('href=')
+})
+
+const mermaidBlock = (markdown: string): HTMLElement => {
+  const template = document.createElement('template')
+  template.innerHTML = renderMarkdown(markdown)
+  return template.content.querySelector<HTMLElement>('pre.mermaid')
+}
+
+test('escapes the body of a mermaid fence', () => {
+  const markdown = '```mermaid\ngraph TD\n<img src=x onerror=alert(1)>\n</pre><script>alert(1)</script>\n```'
+  const html = renderMarkdown(markdown)
+  expect(html).not.toContain('<img')
+  expect(html).not.toContain('<script')
+  expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  expect(html).toContain('&lt;/pre&gt;&lt;script&gt;alert(1)&lt;/script&gt;')
+  const pre = mermaidBlock(markdown)
+  expect(pre.children).toHaveLength(0)
+  expect(pre.parentNode.querySelectorAll('img, script')).toHaveLength(0)
+})
+
+test('keeps the mermaid source intact for the renderer', () => {
+  const source = [
+    'graph TD',
+    '  A --> B',
+    '  B["x < y"] -->|"a & b > c"| C[\'single\']',
+    '  C --> D["<b>bold</b> &amp; #quot;entity#quot;"]',
+    '  D -.-> E{{"100% <br/> done"}}',
+  ].join('\n')
+  for (const markdown of [`\`\`\`mermaid\n${source}\n\`\`\``, `~~~mermaid\n${source}\n~~~`, `\`\`\`mermaid\n${source}\`\`\``]) {
+    const pre = mermaidBlock(markdown)
+    expect(pre.getAttribute('data-svg')).toBe('data-diagram-mermaid')
+    expect(pre.children).toHaveLength(0)
+    expect(pre.textContent).toBe(`${source}\n`)
+  }
+})
+
+test('leaves other fences to their renderers', () => {
+  const plantuml = renderMarkdown('```plantuml\nA -> B\n```')
+  expect(plantuml).toMatch(/^<div data-svg="data-diagram-plantuml" class="diagram-m"><img src="https:\/\/www\.plantuml\.com\/plantuml\/svg\/[\w-]+" alt="uml diagram"><\/div>$/)
+  const code = renderMarkdown('```mermaidx\nA --> B\n```')
+  expect(code).toContain('<pre class="hljs">')
+  expect(code).not.toContain('class="mermaid')
+})
+
 // test('renders deeplinks', () => {
 //   const markdown = 'Click <a href="#section">here</a>'
 //   const html = renderMarkdown(markdown)

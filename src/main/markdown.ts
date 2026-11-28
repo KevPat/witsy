@@ -99,7 +99,24 @@ const mdPostprocess = (html: string) => {
   postprocessed = postprocessed.replace(/&lt;tool (id|index)=&quot;([^&]+)&quot;&gt;/g, '<tool $1="$2">').replace(/&lt;\/tool&gt;/g, '</tool>')
   return postprocessed
 }
-  
+
+// markdown-it-diagram copies the body of a mermaid fence into the page as is.
+// The renderer reads the diagram source back with textContent, so escaping
+// the body keeps the source intact while no markup of the fence goes live.
+const escapeMermaidFences = (md: MarkdownIt) => {
+  const diagramFence = md.renderer.rules.fence
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx]
+    const info = token.info ? md.utils.unescapeAll(token.info).trim() : ''
+    if (info.split(/\s+/g)[0] !== 'mermaid') {
+      return diagramFence(tokens, idx, options, env, self)
+    }
+    let code = token.content.trim()
+    if (code.endsWith('```')) code = code.slice(0, -3)
+    return `<pre data-svg="data-diagram-mermaid" class="mermaid diagram-m">\n${md.utils.escapeHtml(code)}\n</pre>\n`
+  }
+}
+
 let md: MarkdownIt | null = null
 
 export const renderMarkdown = (markdown: string): string => {
@@ -117,6 +134,7 @@ export const renderMarkdown = (markdown: string): string => {
     md.use(MarkdownItKatex)
     md.use(MarkdownItMark)
     md.use(MarkdownItDiagram)
+    escapeMermaidFences(md)
     // addSourceOffsets(md)
   
   }
