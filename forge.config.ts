@@ -146,10 +146,12 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
+      // bin/witsy runs the CLI with ELECTRON_RUN_AS_NODE=1: this stays on until the CLI has its own launcher
       [FuseV1Options.RunAsNode]: true,
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-      [FuseV1Options.EnableNodeCliInspectArguments]: true,
+      // Playwright drives the e2e build (TEST=1) through --inspect; release builds must not accept it
+      [FuseV1Options.EnableNodeCliInspectArguments]: !!process.env.TEST,
       [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
