@@ -1,6 +1,7 @@
 
 import { LlmEngine } from 'multi-llm-ts'
-import { z } from 'zod'
+import { z } from 'zod/v3'
+import { v3Structure } from './schema'
 import Agent from '@models/agent'
 import Chat from '@models/chat'
 import { AssistantCompletionOpts } from './assistant'
@@ -91,13 +92,13 @@ Your output will ONLY consist of the list of sections as a JSON object with no m
 )
 planningAgent.steps[0].structuredOutput = {
   name: 'planning',
-  structure: z.object({
+  structure: v3Structure(z.object({
     sections: z.array(z.object({
       title: z.string(),
       description: z.string(),
       queries: z.array(z.string())
     }))
-  })
+  }))
 }
 
 export const searchAgent = Agent.fromJson({
@@ -195,9 +196,9 @@ Your output will ONLY consist of the list of learnings as a JSON object with no 
 )
 analysisAgent.steps[0].structuredOutput = {
   name: 'analysis',
-  structure: z.object({
+  structure: v3Structure(z.object({
     learnings: z.array(z.string())
-  })
+  }))
 }
 
 export const writerAgent = Agent.fromJson({
@@ -328,9 +329,9 @@ Your output will ONLY consist of the title as a JSON object with no markdown for
 )
 titleAgent.steps[0].structuredOutput = {
   name: 'title',
-  structure: z.object({
+  structure: v3Structure(z.object({
     title: z.string()
-  })
+  }))
 }
 
 export const synthesisAgent = Agent.fromJson({

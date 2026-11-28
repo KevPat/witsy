@@ -608,9 +608,25 @@ export async function getPDFRawTextContent(contents: Buffer): Promise<string> {
   }
 }
 
-export async function getOfficeRawTextContent(contents: Buffer): Promise<string> {
-  const { parseOfficeAsync } = await loadOfficeParserModule()
-  return parseOfficeAsync(contents)
+export type OfficeFileType = 'docx' | 'pptx' | 'xlsx'
+
+export async function getOfficeRawTextContent(contents: Buffer, fileType?: OfficeFileType): Promise<string> {
+  const { parseOffice } = await loadOfficeParserModule()
+  // officeparser 8: the caller already knows the format, so pass it as an
+  // authoritative hint (skips magic-byte sniffing entirely), never fetch
+  // pdf.js/OCR assets from the library's CDN defaults, and keep OCR off
+  const ast = await parseOffice(contents, {
+    ...(fileType ? { fileType } : {}),
+    allowRemoteAssets: false,
+    ocr: false,
+  })
+  // flat text (one table cell per line, no list markers or image placeholders)
+  // matches what officeparser 5 returned for docx and pptx
+  const { value } = await ast.to('text', {
+    includeImages: false,
+    textConfig: { preserveLayout: false },
+  })
+  return value
 }
 
 export async function getExcelRawTextContent(contents: Buffer): Promise<string> {
@@ -636,7 +652,7 @@ export async function getExcelRawTextContent(contents: Buffer): Promise<string> 
     }
     return content.trim()
   } catch {
-    return getOfficeRawTextContent(contents)
+    return getOfficeRawTextContent(contents, 'xlsx')
   }
 }
 
@@ -648,7 +664,7 @@ export function getTextContent(b64contents: string, format: string): Promise<str
       return getPDFRawTextContent(Buffer.from(b64contents, 'base64'))
     case 'docx':
     case 'pptx':
-      return getOfficeRawTextContent(Buffer.from(b64contents, 'base64'))
+      return getOfficeRawTextContent(Buffer.from(b64contents, 'base64'), format)
     case 'xlsx':
       return getExcelRawTextContent(Buffer.from(b64contents, 'base64'))
     default:

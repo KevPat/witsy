@@ -148,7 +148,7 @@
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^8.2.0",
     "elevenlabs": "^1.59.0",
-    "exa-js": "^1.9.3",
+    "exa-js": "^2.29.0",
     "exceljs": "^4.4.0",
     "extract-zip": "^2.0.1",
     "fast-xml-parser": "^5.12.1",
@@ -173,7 +173,7 @@
     "mitt": "^3.0.1",
     "multi-llm-ts": "5.1.0-beta9",
     "number-flip-animation": "^2.1.1",
-    "officeparser": "^5.2.0",
+    "officeparser": "^8.9.0",
     "ollama": "^0.6.0",
     "openai": "^6.7.0",
     "openai-speech-stream-player": "^1.0.8",
@@ -190,7 +190,7 @@
     "terminal-kit": "^3.1.2",
     "update-electron-app": "^3.1.1",
     "uuid": "^11.1.0",
-    "vectra": "^0.11.1",
+    "vectra": "^0.15.0",
     "vega": "^6.1.2",
     "vue": "^3.5.46",
     "vue-drawing-canvas": "^1.0.14",
@@ -200,7 +200,7 @@
     "webm-to-wav-converter": "^1.1.0",
     "youtube-transcript-scraper": "^1.0.0",
     "ytv": "^1.0.3",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "build": {
     "appId": "com.nabocorp.witsy",
@@ -215,6 +215,7 @@
   },
   "overrides": {
     "@huggingface/transformers": {
+      ".": "$@huggingface/transformers",
       "sharp": "^0.35.5"
     },
     "@mdit/plugin-katex": {
@@ -224,7 +225,8 @@
       "uuid": "$uuid"
     },
     "multi-llm-ts": {
-      "minimatch": "$minimatch"
+      "minimatch": "$minimatch",
+      "zod": "$zod"
     },
     "pptxgenjs": {
       "image-size": "^2.2.0"
