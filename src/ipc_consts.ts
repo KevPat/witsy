@@ -59,6 +59,7 @@ export const FILE = {
   FILE_STATS: 'file-stats',
   WRITE_FILE: 'write-file',
   NORMALIZE_PATH: 'normalize-path',
+  RESOLVE_ALLOWED_PATH: 'resolve-allowed-path',
   OPEN_IN_EXPLORER: 'open-in-explorer',
   MEDIA_OPEN: 'media-open',
   MEDIA_APPEND: 'media-append',

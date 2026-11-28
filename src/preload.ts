@@ -99,6 +99,7 @@ contextBridge.exposeInMainWorld(
     },
     file: {
       normalize: (filePath: string): string => { return ipcRenderer.sendSync(IPC.FILE.NORMALIZE_PATH, filePath) },
+      resolveAllowedPath: (targetPath: string, allowedPaths: string[]): string | null => { return ipcRenderer.sendSync(IPC.FILE.RESOLVE_ALLOWED_PATH, targetPath, allowedPaths) },
       exists: (filePath: string): boolean => { return ipcRenderer.sendSync(IPC.FILE.FILE_EXISTS, filePath) },
       stats: (filePath: string): FileStats | null => { return ipcRenderer.sendSync(IPC.FILE.FILE_STATS, filePath) },
       read: (filepath: string): FileContents => { return ipcRenderer.sendSync(IPC.FILE.READ_FILE, filepath) },

@@ -39,6 +39,7 @@ import * as commands from './commands';
 import * as config from './config';
 import * as experts from './experts';
 import * as file from './file';
+import { resolveAllowedPath } from './path_containment';
 import * as mediaFile from './media_file';
 import * as google from './google';
 import * as history from './history';
@@ -542,6 +543,15 @@ export const installIpc = (
 
   ipcMain.on(IPC.FILE.NORMALIZE_PATH, (event, filePath) => {
     event.returnValue = file.normalizePath(app, filePath);
+  });
+
+  ipcMain.on(IPC.FILE.RESOLVE_ALLOWED_PATH, (event, targetPath, allowedPaths) => {
+    try {
+      event.returnValue = resolveAllowedPath(targetPath, allowedPaths);
+    } catch (error) {
+      console.error('Error while resolving allowed path', error);
+      event.returnValue = null;
+    }
   });
 
   ipcMain.on(IPC.FILE.OPEN_IN_EXPLORER, (event, filePath) => {

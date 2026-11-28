@@ -396,6 +396,7 @@ declare global {
       file: {
         stats(filePath: string): FileStats
         normalize(filePath: string): string
+        resolveAllowedPath(targetPath: string, allowedPaths: string[]): string | null
         exists(filePath: string): boolean
         read(filepath: string): FileContents
         readIcon(filepath: string): FileContents

@@ -153,3 +153,91 @@ export const safeBasename = (name: string): string | null => {
   if (base === '' || base === '.' || base === '..') return null
   return base
 }
+
+export type AllowedPathEnv = {
+  // path flavour, so that Windows rules can be exercised on any host
+  pathImpl?: path.PlatformPath
+  // folder that `~` and relative paths start from
+  home?: string
+  exists?: (target: string) => boolean
+  // symlink (and on-disk case) resolution, must accept paths that do not exist
+  realPath?: (target: string) => string
+}
+
+/**
+ * Maps a path chosen by a model to a path inside one of the folders the user
+ * allowed, or returns null. Three spellings are understood, in this order:
+ * 1. an absolute, `~` or home-relative path inside an allowed folder
+ * 2. a path relative to an allowed folder, when it exists
+ * 3. a path that starts with the name of an allowed folder, when it exists
+ *    (allowed `/x/Documents`, target `./Documents/folder/test.txt`)
+ * Whatever the spelling, the candidate is only returned when its real path
+ * (symlinks resolved) is inside the real path of the allowed folder. The
+ * result is absolute and has no `.` or `..` segment.
+ */
+export const resolveAllowedPath = (targetPath: string, allowedPaths: string[], env: AllowedPathEnv = {}): string | null => {
+
+  if (typeof targetPath !== 'string' || targetPath.includes('\0')) return null
+  if (!Array.isArray(allowedPaths)) return null
+
+  const p = env.pathImpl ?? path
+  const home = env.home ?? (process.env.HOME || process.env.USERPROFILE || '')
+  const exists = env.exists ?? fs.existsSync
+  const realPath = env.realPath ?? resolveRealPath
+
+  // same rules as normalizePath in file.ts
+  const absolute = (value: string): string => {
+    if (home) {
+      if (value === '~') value = home
+      else if (value.startsWith('~/') || value.startsWith(`~${p.sep}`)) value = p.join(home, value.slice(2))
+      else if (!p.isAbsolute(value)) value = p.join(home, value)
+    }
+    return p.resolve(value)
+  }
+
+  const inside = (base: string, candidate: string): string | null => {
+    const resolved = p.resolve(candidate)
+    let realBase: string
+    let realCandidate: string
+    try {
+      realBase = realPath(base)
+      realCandidate = realPath(resolved)
+    } catch {
+      return null
+    }
+    if (!isPathInside(realCandidate, realBase, p)) return null
+    // a spelling that only matches once resolved (another case on a case-insensitive
+    // volume, a link that leads into the folder) is returned as the real path
+    return isPathInside(resolved, base, p) ? resolved : realCandidate
+  }
+
+  const bases = allowedPaths
+    .filter((allowed) => typeof allowed === 'string' && allowed.length > 0 && !allowed.includes('\0'))
+    .map(absolute)
+
+  const target = absolute(targetPath)
+  for (const base of bases) {
+    const found = inside(base, target)
+    if (found) return found
+  }
+
+  for (const base of bases) {
+    const found = inside(base, p.join(base, targetPath))
+    if (found && exists(found)) return found
+  }
+
+  // the model may use either separator, whatever the platform
+  const relative = targetPath.replace(/^\.[\\/]/, '')
+  const parts = relative.split(/[\\/]/)
+  for (const base of bases) {
+    if (!parts[0] || parts[0].toLowerCase() !== p.basename(base).toLowerCase()) continue
+    const parent = p.dirname(base)
+    for (const candidate of new Set([p.join(parent, relative), p.join(parent, ...parts)])) {
+      const found = inside(base, candidate)
+      if (found && exists(found)) return found
+    }
+  }
+
+  return null
+
+}
