@@ -293,6 +293,7 @@ export default class DocumentRepository {
     // check if it exists
     console.log('[rag] Adding document', origin)
     let document: DocumentSourceImpl = base.documents.find(d => d.origin == origin)
+    const reindex = !!document
     if (!document) {
       document = new DocumentSourceImpl(queued?.uuid ?? crypto.randomUUID(), type, origin, opts?.title)
     }
@@ -303,7 +304,7 @@ export default class DocumentRepository {
     this.activeProcessingTasks.set(taskId, abortController)
 
     // add to queue
-    this.queue.push({ uuid: document.uuid, baseId, type, origin, opts, operation: 'add', fromUserAction, taskId })
+    this.queue.push({ uuid: document.uuid, baseId, type, origin, opts, operation: 'add', fromUserAction, taskId, reindex })
 
     // process
     this.processQueue()
@@ -334,6 +335,7 @@ export default class DocumentRepository {
     // check if child already exists
     console.log('[rag] Adding child document', origin, 'to parent', parentDoc.origin)
     let childDoc = parentDoc.items.find(item => item.origin === origin)
+    const reindex = !!childDoc
     if (!childDoc) {
       childDoc = new DocumentSourceImpl(queued?.uuid ?? crypto.randomUUID(), type, origin)
       // Don't add to parent's items yet - wait for successful processing
@@ -345,7 +347,7 @@ export default class DocumentRepository {
     this.activeProcessingTasks.set(taskId, abortController)
 
     // add to queue (we still need to process the actual content)
-    this.queue.push({ uuid: childDoc.uuid, baseId, type, origin, parentDocId, operation: 'add', fromUserAction, taskId })
+    this.queue.push({ uuid: childDoc.uuid, baseId, type, origin, parentDocId, operation: 'add', fromUserAction, taskId, reindex })
 
     // process
     this.processQueue()
@@ -789,11 +791,22 @@ export default class DocumentRepository {
 
   private async handleOperationError(queueItem: DocumentQueueItem, base: DocumentBaseImpl): Promise<void> {
     // If there was an error during add operation, remove the document
-    if (queueItem.operation === 'add') {
+    // (not one that was already indexed: it keeps its previous content)
+    if (queueItem.operation === 'add' && !queueItem.reindex) {
       if (queueItem.parentDocId) {
         // Remove child from parent's items
         this.removeChildFromParent(queueItem, base)
       } else {
+        // a folder or a sitemap that stops halfway has indexed some of its items:
+        // their chunks go with it, or they stay in the index with no document to delete them
+        const document = base.documents.find(doc => doc.uuid === queueItem.uuid)
+        if (document?.items?.length) {
+          try {
+            await base.deleteDocumentSource(queueItem.uuid)
+          } catch (e) {
+            console.error('[rag] Error removing the items of a document that failed to index', e)
+          }
+        }
         // Remove top-level document from base
         this.removeDocumentFromBase(queueItem, base)
       }

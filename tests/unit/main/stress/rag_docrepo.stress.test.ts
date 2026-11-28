@@ -252,7 +252,7 @@ describe('DocumentRepository queue', () => {
     expect(documentsOf(docrepo, a).map(doc => doc.filename)).toEqual(['first.txt', 'twice.txt'])
   })
 
-  bug('a failed index write during a removal does not block later additions to the base', async () => {
+  test('a failed index write during a removal does not block later additions to the base', async () => {
     // the transaction of the failed removal is never cancelled: every later one fails with "Update already in progress"
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -383,7 +383,7 @@ describe('DocumentRepository index consistency', () => {
     expect(chunksOnDisk(a, uuid).length).toBeGreaterThan(0)
   })
 
-  bug.each([
+  test.each([
     ['offline scan (updateChildDocumentSource)', (docrepo: DocumentRepository, baseId: string, folder: DocumentSource, child: DocumentSource) => docrepo.updateChildDocumentSource(baseId, child.uuid, false)],
     ['file watcher (addChildDocumentSource)', (docrepo: DocumentRepository, baseId: string, folder: DocumentSource, child: DocumentSource) => docrepo.addChildDocumentSource(baseId, folder.uuid, 'file', child.origin, false)],
   ])('re-indexing a file of a folder through the %s does not duplicate its chunks', async (_, reindex) => {
@@ -401,7 +401,7 @@ describe('DocumentRepository index consistency', () => {
     expect(chunksOnDisk(a, child.uuid).length).toBe(before)
   })
 
-  bug('the previous content of a modified folder file is no longer in the index', async () => {
+  test('the previous content of a modified folder file is no longer in the index', async () => {
     // same defect: the old chunks stay next to the new ones and keep being returned by queries
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -415,7 +415,7 @@ describe('DocumentRepository index consistency', () => {
     expect(chunksOnDisk(a, child.uuid).filter(chunk => chunk.content.includes('obsolete')).length).toBe(0)
   })
 
-  bug.each([
+  test.each([
     ['offline scan or rescan (updateDocumentSource)', (docrepo: DocumentRepository, baseId: string, doc: DocumentSource) => docrepo.updateDocumentSource(baseId, doc.uuid, false)],
     ['file watcher (addDocumentSource)', (docrepo: DocumentRepository, baseId: string, doc: DocumentSource) => docrepo.addDocumentSource(baseId, 'file', doc.origin, false)],
   ])('a document survives a re-indexing through the %s that fails because embeddings are unavailable', async (_, reindex) => {
@@ -433,7 +433,7 @@ describe('DocumentRepository index consistency', () => {
     expect(chunksOnDisk(a, doc.uuid).length).toBe(before)
   })
 
-  bug('a document whose indexing failed halfway is not returned by queries', async () => {
+  test('a document whose indexing failed halfway is not returned by queries', async () => {
     // the vectra "transaction" shares its items array with the live index, so cancelling it removes nothing
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -447,7 +447,7 @@ describe('DocumentRepository index consistency', () => {
     expect(results.map(result => result.metadata.title)).toEqual([])
   })
 
-  bug('the chunks of a document whose indexing failed halfway are not persisted by the next commit', async () => {
+  test('the chunks of a document whose indexing failed halfway are not persisted by the next commit', async () => {
     // same defect: the orphan chunks are written to index.json when the next document is added
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -460,7 +460,7 @@ describe('DocumentRepository index consistency', () => {
     expect(docIdsOnDisk(a)).toEqual(documentsOf(docrepo, a).map(doc => doc.uuid))
   })
 
-  bug('a file whose indexing is cancelled halfway leaves nothing in the index', async () => {
+  test('a file whose indexing is cancelled halfway leaves nothing in the index', async () => {
     // same defect, reached through cancelTask(): the batches embedded before the abort stay in the live index
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -478,7 +478,7 @@ describe('DocumentRepository index consistency', () => {
     expect(docIdsOnDisk(a)).toEqual(documentsOf(docrepo, a).map(doc => doc.uuid))
   })
 
-  bug('a folder whose indexing is cancelled leaves nothing in the index', async () => {
+  test('a folder whose indexing is cancelled leaves nothing in the index', async () => {
     // the folder entry is dropped from the list but the chunks of the files already committed are never deleted
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
