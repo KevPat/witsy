@@ -88,6 +88,8 @@ export interface DocumentQueueItem {
   fromUserAction: boolean
   opts?: AddDocumentOptions
   taskId?: string
+  // the document was already indexed when this was queued: a failure must not drop it
+  reindex?: boolean
 }
 
 export type DocRepoAddDocResponse = {

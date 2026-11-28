@@ -9,6 +9,7 @@ import fs from 'fs'
 import { loadSettings } from '../config'
 import { Configuration } from 'types/config'
 import Loader from './loader'
+import { backupCorruptFile, writeFileAtomicSync } from '../atomic'
 
 export default class DocumentRepository {
 
@@ -19,6 +20,7 @@ export default class DocumentRepository {
   processing = false
   listeners: DocRepoListener[] = []
   activeProcessingTasks = new Map<string, AbortController>()
+  private currentTask: AbortController | null = null
 
   constructor(app: App) {
     this.app = app
@@ -110,18 +112,35 @@ export default class DocumentRepository {
     const docrepoFile = docrepoFilePath(this.app)
 
     // load the file
+    let unreadable = false
     try {
 
       const repoJson = fs.readFileSync(docrepoFile, 'utf-8')
-      for (const jsonDb of JSON.parse(repoJson)) {
-        const base = DocumentBaseImpl.fromJSON(this.app, jsonDb)
-        this.contents.push(base)
+      const jsonDbs = JSON.parse(repoJson)
+      if (!Array.isArray(jsonDbs)) {
+        throw new Error('docrepo.json is not a list of document bases')
+      }
+      for (const jsonDb of jsonDbs) {
+        try {
+          const base = DocumentBaseImpl.fromJSON(this.app, jsonDb)
+          this.contents.push(base)
+        } catch (error) {
+          // one broken entry must not hide the bases that follow it
+          console.log('[rag] Error retrieving document base', jsonDb?.uuid, error)
+          unreadable = true
+        }
       }
 
     } catch (error) {
       if (error.code !== 'ENOENT') {
         console.log('[rag] Error retrieving docrepo', error)
+        unreadable = true
       }
+    }
+
+    // the next save replaces the file: keep a copy of what could not be read
+    if (unreadable) {
+      backupCorruptFile(docrepoFile)
     }
 
   }
@@ -131,7 +150,7 @@ export default class DocumentRepository {
 
       // save the file
       const docrepoFile = docrepoFilePath(this.app)
-      fs.writeFileSync(docrepoFile, JSON.stringify(this.contents.map((db: DocumentBaseImpl) => ({
+      writeFileAtomicSync(docrepoFile, JSON.stringify(this.contents.map((db: DocumentBaseImpl) => ({
         ...db,
         app: undefined,
         db: undefined,
@@ -190,6 +209,9 @@ export default class DocumentRepository {
     // get the base to access its documents before deletion
     const base = this.contents[index]
 
+    // nothing queued for this base can be processed anymore
+    this.dropQueuedItems(baseId)
+
     // notify listeners about removal of all document sources in this base
     for (const document of base.documents) {
       this.notifyDocumentRemoved(document.origin)
@@ -224,16 +246,56 @@ export default class DocumentRepository {
 
   }
 
+  private dropQueuedItems(baseId: string): void {
+
+    // the item being processed stays at the head until the queue loop is done with it: just stop it
+    const first = this.processing ? 1 : 0
+    if (first === 1 && this.queue[0]?.baseId === baseId) {
+      this.currentTask?.abort()
+    }
+
+    // the others are removed
+    for (let i = this.queue.length - 1; i >= first; i--) {
+      const item = this.queue[i]
+      if (item.baseId === baseId) {
+        this.queue.splice(i, 1)
+        if (item.taskId && !this.queue.some(other => other.taskId === item.taskId)) {
+          this.activeProcessingTasks.delete(item.taskId)
+        }
+      }
+    }
+
+  }
+
+  // the last request queued for this origin, if it is an addition
+  private findQueuedAdd(baseId: string, type: SourceType, origin: string, parentDocId?: string): DocumentQueueItem | undefined {
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      const item = this.queue[i]
+      if (item.baseId === baseId && item.type === type && item.origin === origin && item.parentDocId === parentDocId) {
+        return item.operation === 'add' ? item : undefined
+      }
+    }
+    return undefined
+  }
+
   async addDocumentSource(baseId: string, type: SourceType, origin: string, fromUserAction: boolean, opts?: AddDocumentOptions): Promise<string> {
 
     // connect
     const base = await this.connect(baseId)
 
+    // already waiting in the queue: it is indexed once (the head of the queue is being processed)
+    const queued = this.findQueuedAdd(baseId, type, origin)
+    if (queued && queued !== this.queue[0]) {
+      queued.fromUserAction = queued.fromUserAction || fromUserAction
+      return queued.taskId
+    }
+
     // check if it exists
     console.log('[rag] Adding document', origin)
     let document: DocumentSourceImpl = base.documents.find(d => d.origin == origin)
+    const reindex = !!document
     if (!document) {
-      document = new DocumentSourceImpl(crypto.randomUUID(), type, origin, opts?.title)
+      document = new DocumentSourceImpl(queued?.uuid ?? crypto.randomUUID(), type, origin, opts?.title)
     }
 
     // use document UUID as task ID and create abort controller
@@ -242,7 +304,7 @@ export default class DocumentRepository {
     this.activeProcessingTasks.set(taskId, abortController)
 
     // add to queue
-    this.queue.push({ uuid: document.uuid, baseId, type, origin, opts, operation: 'add', fromUserAction, taskId })
+    this.queue.push({ uuid: document.uuid, baseId, type, origin, opts, operation: 'add', fromUserAction, taskId, reindex })
 
     // process
     this.processQueue()
@@ -263,11 +325,19 @@ export default class DocumentRepository {
       throw new Error('Parent document not found')
     }
 
+    // already waiting in the queue: it is indexed once (the head of the queue is being processed)
+    const queued = this.findQueuedAdd(baseId, type, origin, parentDocId)
+    if (queued && queued !== this.queue[0]) {
+      queued.fromUserAction = queued.fromUserAction || fromUserAction
+      return queued.taskId
+    }
+
     // check if child already exists
     console.log('[rag] Adding child document', origin, 'to parent', parentDoc.origin)
     let childDoc = parentDoc.items.find(item => item.origin === origin)
+    const reindex = !!childDoc
     if (!childDoc) {
-      childDoc = new DocumentSourceImpl(crypto.randomUUID(), type, origin)
+      childDoc = new DocumentSourceImpl(queued?.uuid ?? crypto.randomUUID(), type, origin)
       // Don't add to parent's items yet - wait for successful processing
     }
 
@@ -277,7 +347,7 @@ export default class DocumentRepository {
     this.activeProcessingTasks.set(taskId, abortController)
 
     // add to queue (we still need to process the actual content)
-    this.queue.push({ uuid: childDoc.uuid, baseId, type, origin, parentDocId, operation: 'add', fromUserAction, taskId })
+    this.queue.push({ uuid: childDoc.uuid, baseId, type, origin, parentDocId, operation: 'add', fromUserAction, taskId, reindex })
 
     // process
     this.processQueue()
@@ -590,38 +660,42 @@ export default class DocumentRepository {
     // set the flag
     this.processing = true
 
-    try {
+    // empty the queue: whatever happens to an item, it is removed and the next one is processed
+    while (this.queue.length > 0) {
 
-      // empty the queue
-      while (this.queue.length > 0) {
+      // get the item
+      const queueItem = this.queue[0]
+      let error: Error | null = null
 
-        // get the item
-        const queueItem = this.queue[0]
+      try {
 
         // get the base
         const base = await this.connect(queueItem.baseId)
-        if (!base) {
-          this.queue.shift()
-          continue
-        }
 
         // log
         console.log('[rag] Processing document', queueItem.operation, queueItem.origin)
 
         // process the document based on operation
-        const error = await this.processQueueItem(queueItem, base)
+        this.currentTask = (queueItem.taskId && this.activeProcessingTasks.get(queueItem.taskId)) || new AbortController()
+        error = await this.processQueueItem(queueItem, base)
 
-        // remove item from queue and save
-        this.queue.shift()
-        this.save()
-
-        // notify about the result
-        this.notifyQueueItemResult(queueItem, error)
-
+      } catch (e) {
+        console.error('[rag] Error processing document', e)
+        error = e as Error
       }
 
-    } catch (error) {
-      console.error('[rag] Error processing document', error)
+      // remove item from queue and save
+      this.currentTask = null
+      this.queue.shift()
+      this.save()
+
+      // notify about the result
+      try {
+        this.notifyQueueItemResult(queueItem, error)
+      } catch (e) {
+        console.error('[rag] Error notifying document result', e)
+      }
+
     }
 
     // done
@@ -659,7 +733,7 @@ export default class DocumentRepository {
   private async processAddOperation(queueItem: DocumentQueueItem, base: DocumentBaseImpl): Promise<void> {
     
     // get abort controller for this task
-    const abortController = queueItem.taskId ? this.activeProcessingTasks.get(queueItem.taskId) : undefined
+    const abortController = this.currentTask
 
     if (queueItem.parentDocId) {
       // First, find and add the child to the parent's items if not already there
@@ -697,7 +771,7 @@ export default class DocumentRepository {
 
   private async processUpdateOperation(queueItem: DocumentQueueItem, base: DocumentBaseImpl): Promise<void> {
     // get abort controller for this task
-    const abortController = queueItem.taskId ? this.activeProcessingTasks.get(queueItem.taskId) : undefined
+    const abortController = this.currentTask
 
     // For updates, we essentially re-add the document
     if (queueItem.parentDocId) {
@@ -717,11 +791,22 @@ export default class DocumentRepository {
 
   private async handleOperationError(queueItem: DocumentQueueItem, base: DocumentBaseImpl): Promise<void> {
     // If there was an error during add operation, remove the document
-    if (queueItem.operation === 'add') {
+    // (not one that was already indexed: it keeps its previous content)
+    if (queueItem.operation === 'add' && !queueItem.reindex) {
       if (queueItem.parentDocId) {
         // Remove child from parent's items
         this.removeChildFromParent(queueItem, base)
       } else {
+        // a folder or a sitemap that stops halfway has indexed some of its items:
+        // their chunks go with it, or they stay in the index with no document to delete them
+        const document = base.documents.find(doc => doc.uuid === queueItem.uuid)
+        if (document?.items?.length) {
+          try {
+            await base.deleteDocumentSource(queueItem.uuid)
+          } catch (e) {
+            console.error('[rag] Error removing the items of a document that failed to index', e)
+          }
+        }
         // Remove top-level document from base
         this.removeDocumentFromBase(queueItem, base)
       }
@@ -792,8 +877,11 @@ export default class DocumentRepository {
       if (queueItem.operation === 'delete') {
         this.notifyDocumentRemoved(queueItem.origin)
       } else {
+        // the base may have been deleted in the meantime
         const docSource = this.getDocumentSource(queueItem.baseId, queueItem.uuid)
-        this.notifyDocumentAdded(docSource)
+        if (docSource) {
+          this.notifyDocumentAdded(docSource)
+        }
       }
     }
   }

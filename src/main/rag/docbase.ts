@@ -76,7 +76,15 @@ export default class DocumentBaseImpl {
 
     // check existing
     let source = this.documents.find(d => d.uuid === uuid)
-    if (source) {
+    if (source && type !== 'folder' && type !== 'sitemap') {
+
+      // re-indexing a single document: addDocument replaces the chunks only once the new ones
+      // are computed, so a failure (embeddings unavailable, cancellation) keeps what we have
+      await this.addDocument(source, opts)
+      console.log(`[rag] Updated document "${source.url}" in database "${this.name}"`)
+      return source.uuid
+
+    } else if (source) {
       await this.deleteDocumentSource(uuid)
     } else {
       source = new DocumentSourceImpl(uuid, type, url, opts?.title)
@@ -206,57 +214,61 @@ export default class DocumentBaseImpl {
     // loose estimate of the batch size based on:
     // 1 token = 4 bytes
     // max tokens = 8192 (apply a 75% contingency)
-    const batchSize = Math.min(EMBED_BATCH_SIZE, Math.floor(8192.0 * .75 / (splitter.chunkSize / 4.0)))
+    // (never less than one chunk per batch, whatever the configured chunk size)
+    const batchSize = Math.max(1, Math.min(EMBED_BATCH_SIZE, Math.floor(8192.0 * .75 / (splitter.chunkSize / 4.0))))
     const batchCount = Math.ceil(chunks.length / batchSize)
     const logInterval = Math.max(1, Math.floor(batchCount / 10))
     console.log(`[rag] Embedding ${chunks.length} chunks into ${batchCount} batches`)
 
-    // we manage transactions for performance
-    let transactionSize = 0
-    await this.db.beginTransaction()
+    // embed everything before touching the index: an error or a cancellation halfway
+    // must leave neither orphan chunks nor a document that lost its previous content
+    const items: { content: string, vector: number[] }[] = []
+    let batchIndex = 0
+    const embedder = await Embedder.init(this.app, config, this.embeddingEngine, this.embeddingModel)
+    while (chunks.length > 0) {
 
-    try {
-      // now embed and store
-      let batchIndex = 0
-      const embedder = await Embedder.init(this.app, config, this.embeddingEngine, this.embeddingModel)
-      while (chunks.length > 0) {
-
-        // check if cancelled before each batch
-        if (opts?.abortSignal?.aborted) {
-          throw new Error()
-        }
-
-        // log
-        if (++batchIndex % logInterval === 0) {
-          console.log(`[rag] Embedding batch ${batchIndex} of ${batchCount} (${chunks.length} chunks left)`)
-        }
-
-        // embed
-        const batch = chunks.splice(0, batchSize)
-        const embeddings = await embedder.embed(batch)
-        //console.log('Embeddings', JSON.stringify(embeddings, null, 2))
-
-        // store each embedding as a document
-        for (let i = 0; i < batch.length; i++) {
-          await this.db.insert(source.uuid, batch[i], embeddings[i], {
-            uuid: source.uuid,
-            type: source.type,
-            title: source.title,
-            url: source.url
-          })
-          if (++transactionSize === 1000) {
-            await this.db.commitTransaction()
-            await this.db.beginTransaction()
-            transactionSize = 0
-          }
-        }
-
+      // check if cancelled before each batch
+      if (opts?.abortSignal?.aborted) {
+        throw new Error()
       }
 
-      // finalize
+      // log
+      if (++batchIndex % logInterval === 0) {
+        console.log(`[rag] Embedding batch ${batchIndex} of ${batchCount} (${chunks.length} chunks left)`)
+      }
+
+      // embed
+      const batch = chunks.splice(0, batchSize)
+      const embeddings = await embedder.embed(batch)
+      if (!Array.isArray(embeddings) || embeddings.length < batch.length) {
+        throw new Error('[rag] Embedder returned fewer embeddings than chunks')
+      }
+      for (let i = 0; i < batch.length; i++) {
+        items.push({ content: batch[i], vector: embeddings[i] })
+      }
+
+    }
+
+    // check if cancelled after embedding
+    if (opts?.abortSignal?.aborted) {
+      throw new Error()
+    }
+
+    // now replace the chunks of this document in one transaction:
+    // the previous ones (re-indexing) are removed with the same commit that adds the new ones
+    await this.db.beginTransaction()
+    try {
+      await this.db.delete(source.uuid)
+      for (const item of items) {
+        await this.db.insert(source.uuid, item.content, item.vector, {
+          uuid: source.uuid,
+          type: source.type,
+          title: source.title,
+          url: source.url
+        })
+      }
       await this.db.commitTransaction()
     } catch (error) {
-      // Cancel transaction on error or cancellation
       try {
         this.db.cancelTransaction()
       } catch (cancelError) {

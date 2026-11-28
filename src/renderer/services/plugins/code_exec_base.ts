@@ -64,7 +64,7 @@ export default class CodeExecutionBase extends MultiToolPlugin {
    * Extract error from a result object
    */
   protected getError(res: any): string | null {
-    if (res.error) {
+    if (res?.error) {
       return res.error
     }
     if (typeof res === 'string' && res.toLowerCase().startsWith('error')) {

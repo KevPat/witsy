@@ -141,7 +141,7 @@ export default class {
       {
         label: t('tray.menu.audioBooth'),
         accelerator: shortcuts.shortcutAccelerator(configShortcuts?.audioBooth),
-        click: () => window.openAudioBooth(),
+        click: () => Dictation.openAudioBooth(),
       },
       {
         label: t('tray.menu.voiceMode'),

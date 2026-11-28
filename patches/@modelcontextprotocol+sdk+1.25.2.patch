@@ -7,7 +7,7 @@ index ee48b40..93a5191 100644
                  },
                  stdio: ['pipe', 'pipe', this._serverParams.stderr ?? 'inherit'],
 -                shell: false,
-+                node_process_1.default.platform === "win32",
++                shell: node_process_1.default.platform === "win32",
                  windowsHide: node_process_1.default.platform === 'win32' && isElectron(),
                  cwd: this._serverParams.cwd
              });

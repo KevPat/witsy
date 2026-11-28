@@ -701,7 +701,8 @@ test('Computer Plugin', async () => {
   expect(computer.getRunningDescription()).toBe('Using your computer…')
   expect(computer.getParameters()).toStrictEqual([])
 
-  // all actions should return a screenshot
+  // all successful actions should return a screenshot
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce(true)
   const result = await computer.execute(context, { action: 'whatever' })
   expect(window.api.computer.takeScreenshot).toHaveBeenCalled()
   expect(result).toStrictEqual({
@@ -716,6 +717,54 @@ test('Computer Plugin', async () => {
       }
     ]
   })
+})
+
+test('Computer Plugin action results', async () => {
+
+  const computer = new Computer(store.config.plugins.computer, 'test-workspace')
+  const screenshot = { content: [ { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'screenshot_url' } } ] }
+
+  // no action
+  expect(await computer.execute(context, {})).toStrictEqual({ content: 'No action specified' })
+  expect(window.api.computer.executeAction).not.toHaveBeenCalled()
+  expect(window.api.computer.takeScreenshot).not.toHaveBeenCalled()
+
+  // screenshot does not execute anything
+  expect(await computer.execute(context, { action: 'screenshot' })).toStrictEqual(screenshot)
+  expect(window.api.computer.executeAction).not.toHaveBeenCalled()
+  expect(window.api.computer.takeScreenshot).toHaveBeenCalledTimes(1)
+
+  // successful actions: true or a cursor position
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce(true)
+  expect(await computer.execute(context, { action: 'left_click' })).toStrictEqual(screenshot)
+  expect(window.api.computer.executeAction).toHaveBeenLastCalledWith({ action: 'left_click' })
+  vi.mocked(window.api.computer.executeAction).mockReturnValueOnce({ x: 10, y: 20 })
+  expect(await computer.execute(context, { action: 'cursor_position' })).toStrictEqual(screenshot)
+  expect(window.api.computer.takeScreenshot).toHaveBeenCalledTimes(3)
+
+})
+
+test.each([
+  { name: 'false', impl: () => false, reason: '' },
+  { name: 'nothing', impl: () => undefined, reason: '' },
+  { name: 'null', impl: () => null, reason: '' },
+  { name: 'an error object', impl: () => ({ error: 'nut-js not available' }), reason: ': nut-js not available' },
+  { name: 'an exception', impl: () => { throw new Error('reply was never sent') }, reason: ': reply was never sent' },
+  { name: 'a thrown string', impl: () => { throw 'ipc failure' }, reason: ': ipc failure' },
+])('Computer Plugin failed action returning $name', async ({ impl, reason }) => {
+
+  const computer = new Computer(store.config.plugins.computer, 'test-workspace')
+  vi.mocked(window.api.computer.executeAction).mockImplementationOnce(impl)
+
+  // an error and no screenshot: the model must not take the action for a success
+  const result = await computer.execute(context, { action: 'left_click' })
+  expect(result).toStrictEqual({
+    content: `An error occurred while executing the "left_click" action${reason}. Do not assume it was performed.`,
+    is_error: true,
+  })
+  expect(window.api.computer.executeAction).toHaveBeenCalledTimes(1)
+  expect(window.api.computer.takeScreenshot).not.toHaveBeenCalled()
+
 })
 
 test('MCP Plugin', async () => {

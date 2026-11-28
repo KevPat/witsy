@@ -17,7 +17,7 @@
 
 import Chat from '@models/chat'
 import { SearchState } from '@screens/Chat.vue'
-import { computed, inject, nextTick, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import SearchBar from './SearchBar.vue'
 
 const props = defineProps({
@@ -40,6 +40,7 @@ const searchMatchCount = ref(0)
 const searchMarks = ref<HTMLElement[]>([])
 const visible = computed(() => searchState?.localSearch.value || searchMatchCount.value > 0)
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
+let unmounted = false
 
 const updateSearchMarks = () => {
   if (!props.scroller) return
@@ -94,6 +95,8 @@ const resetAndScanMarks = async () => {
   searchMarks.value = []
   if (searchState?.filter.value) {
     await nextTick()
+    if (unmounted) return
+    if (searchTimeout) clearTimeout(searchTimeout)
     searchTimeout = setTimeout(() => {
       updateSearchMarks()
       if (searchMatchCount.value > 0) {
@@ -129,6 +132,11 @@ if (searchState) {
 
 watch(() => props.chat, () => {
   resetAndScanMarks()
+})
+
+onBeforeUnmount(() => {
+  unmounted = true
+  if (searchTimeout) clearTimeout(searchTimeout)
 })
 
 </script>

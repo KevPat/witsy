@@ -4,6 +4,7 @@ import fs from 'fs'
 import { LlmModelOpts } from 'multi-llm-ts'
 import path from 'path'
 import { Chat, History } from 'types/index'
+import { writeFileAtomicSync } from './atomic'
 import Monitor from './monitor'
 import { emitIpcEventToAll } from './windows'
 import { workspaceFolderPath } from './workspace'
@@ -19,6 +20,12 @@ const monitor: Monitor = new Monitor(() => {
 export const historyFilePath = (app: App, workspaceId: string): string => {
   const workspacePath = workspaceFolderPath(app, workspaceId)
   return path.join(workspacePath, 'history.json')
+}
+
+// where the chats of a window that could not load the history are kept (see saveHistory)
+export const unsavedHistoryFilePath = (app: App, workspaceId: string): string => {
+  const workspacePath = workspaceFolderPath(app, workspaceId)
+  return path.join(workspacePath, 'history.unsaved.json')
 }
 
 export const attachmentsFilePath = (app: App, workspaceId: string): string => {
@@ -56,6 +63,15 @@ export const loadHistory = async (app: App, workspaceId: string): Promise<Histor
     if (Array.isArray(history)) {
       console.log('Upgrading history data')
       history = { version: kHistoryVersion, folders: [], chats: history, quickPrompts: []}
+    }
+
+    // a history is its chats: without them this is not a history file.
+    // folders came later: a file without them still holds chats that must load
+    if (!Array.isArray(history.chats)) {
+      throw new Error('History file has no chats')
+    }
+    if (history.folders === undefined || history.folders === null) {
+      history.folders = []
     }
 
     // backwards compatibility for folder defaults
@@ -117,12 +133,20 @@ export const saveHistory = (app: App, workspaceId: string, history: History) => 
 
     // check version
     if (history.version !== kHistoryVersion) {
+
+      // no version at all: the window could not load the history (unreadable file).
+      // what it holds must not replace that file, and must not be lost either
+      if ((history.version === undefined || history.version === null) && history.chats?.length) {
+        writeFileAtomicSync(unsavedHistoryFilePath(app, workspaceId), JSON.stringify({ ...history, version: kHistoryVersion }, null, 2))
+      }
+
       return
     }
 
-    // local
-    const filepath = historyFilePath(app, workspaceId) 
-    fs.writeFileSync(filepath, JSON.stringify(history, null, 2))
+    // local: written to a temporary file that then replaces the history, so that a crash
+    // or a full disk during the save leaves the previous history readable
+    const filepath = historyFilePath(app, workspaceId)
+    writeFileAtomicSync(filepath, JSON.stringify(history, null, 2))
 
   } catch (error) {
     console.log('Error saving history data', error)
@@ -198,14 +222,28 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
   // regexes[0] matches content that is exactly a file:// url
   // regexes[1] matches content that is a file:// embedded in markdown ("(file://....)"
   // regexes[2] matches content that is a file:// url in an img or video tag
-  let imagesPathUrl = encodeURI(`file://${imagesPath}`)
-  imagesPathUrl = imagesPathUrl.replace(/%20/g, '(?:%20|\\s)')
-  const imagesPathUri = imagesPath.replace(/ /g, '(?:%20|\\s)')
+  //
+  // The folder is a path of this machine: on Windows it holds backslashes, and the urls of the
+  // history are written either with them (file://C:\Users\...), url encoded (%5C) or as real
+  // file urls (file:///C:/Users/...). Everything is compared with forward slashes, and the path
+  // is escaped: it is data, not a pattern (C:\Users\name would otherwise read as \U, \n...).
+  const toSlashes = (text: string): string => text.replace(/%5C/gi, '/').replace(/\\/g, '/').replace(/file:\/\/\/(?=[A-Za-z]:)/g, 'file://')
+  const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const imagesFolder = toSlashes(imagesPath).replace(/\/+$/, '')
+  const imagesPathUrl = escapeRegExp(encodeURI(`file://${imagesFolder}`)).replace(/%20/g, '(?:%20|\\s)')
+  const imagesPathUri = escapeRegExp(imagesFolder).replace(/ /g, '(?:%20|\\s)')
+  const flags = process.platform === 'win32' ? 'gi' : 'g'
   const regexes = [
-    new RegExp(`^file://${imagesPathUri}/([^()\\/]+)$`, 'g'),
-    new RegExp(`\\(${imagesPathUrl}/([^()\\/]+)\\)`, 'g'),
-    new RegExp(`<(?:img|video)[^>]*?src="${imagesPathUrl}/([^"]+)"`, 'g')
+    new RegExp(`^file://${imagesPathUri}/([^()\\/]+)$`, flags),
+    new RegExp(`\\(${imagesPathUrl}/([^()\\/]+)\\)`, flags),
+    new RegExp(`<(?:img|video)[^>]*?src="${imagesPathUrl}/([^"]+)"`, flags)
   ]
+  const attachmentPrefix = `file://${imagesFolder}`
+  const hasPrefix = (url: string): boolean => {
+    return process.platform === 'win32'
+      ? url.toLowerCase().startsWith(attachmentPrefix.toLowerCase())
+      : url.startsWith(attachmentPrefix)
+  }
 
   // now extract all the attachments in the chat
   const attachments = []
@@ -214,7 +252,8 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
       
       // extract all attachments from message.content
       for (const regex of regexes) {
-        const matches = message.content?.matchAll(regex)
+        const content = typeof message.content === 'string' ? toSlashes(message.content) : null
+        const matches = content?.matchAll(regex)
         for (const match of matches || []) {
           const filename = match[1]
           attachments.push(filename)
@@ -223,9 +262,10 @@ export const extractAttachmentsFromHistory = (chats: Chat[], imagesPath: string)
 
       // now check if the message has an attachment
       for (const attachment of message.attachments ?? []) {
-        const url = attachment.url
-        if (url.startsWith(`file://${imagesPath}`)) {
-          let filename = path.basename(url)
+        if (typeof attachment.url !== 'string') continue
+        const url = toSlashes(attachment.url)
+        if (hasPrefix(url)) {
+          let filename = path.posix.basename(url)
           // Remove possible ending parenthesis
           filename = filename.replace(/\)$/, '')
           attachments.push(filename)

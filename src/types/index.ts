@@ -16,6 +16,14 @@ import { YoutubeVideoInfo } from '../main/youtube'
 export type strDict = Record<string, string>
 export type anyDict = Record<string, any>
 
+// state of the API key store, see getApiKeyStorageStatus in main/config.ts
+export type ApiKeyStorageStatus = {
+  encryptionAvailable: boolean
+  weak: boolean
+  undecryptable: string[]
+  notStored: string[]
+}
+
 export type MainWindowMode = 'none' | 'chat' | 'studio' | 'scratchpad' | 'booth' | 'agents' | 'voice-mode' | 'docrepos' | 'mcp' | 'settings' | `webapp-${string}`
 
 export type ScratchpadHeader = {
@@ -436,6 +444,7 @@ declare global {
         getI18nMessages(): anyDict
         load(): Configuration
         save(config: Configuration): void
+        keyStorageStatus(): ApiKeyStorageStatus
       }
       history: {
         load(workspaceId: string): History

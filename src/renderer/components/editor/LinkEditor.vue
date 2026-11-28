@@ -5,13 +5,13 @@
     </template>
     <template #body>
       <div class="form-field">
-        <label>Text</label>
+        <label>{{ t('linkEditor.text') }}</label>
         <input
           ref="textInput"
           type="text"
           name="text"
           v-model="text"
-          placeholder="Link text"
+          :placeholder="t('linkEditor.placeholder')"
           spellcheck="false"
           autocapitalize="false"
           autocomplete="false"
@@ -19,7 +19,7 @@
         />
       </div>
       <div class="form-field">
-        <label>URL</label>
+        <label>{{ t('common.url') }}</label>
         <input
           type="text"
           name="url"
@@ -35,9 +35,9 @@
     </template>
     <template #footer>
       <div class="buttons">
-        <button name="cancel" @click="onCancel" class="tertiary" formnovalidate>Cancel</button>
-        <button name="remove" @click="onRemove" class="secondary" v-if="initialUrl">Remove Link</button>
-        <button name="save" @click="onSave" class="primary">{{ initialUrl ? 'Update' : 'Insert' }}</button>
+        <button name="cancel" @click="onCancel" class="tertiary" formnovalidate>{{ t('common.cancel') }}</button>
+        <button name="remove" @click="onRemove" class="secondary" v-if="initialUrl">{{ t('linkEditor.remove') }}</button>
+        <button name="save" @click="onSave" class="primary">{{ initialUrl ? t('linkEditor.update') : t('common.insert') }}</button>
       </div>
     </template>
   </ModalDialog>
@@ -46,6 +46,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import ModalDialog from '@components/ModalDialog.vue'
+import { t } from '@services/i18n'
 
 const dialog = ref(null)
 const textInput = ref<HTMLInputElement | null>(null)
@@ -55,13 +56,13 @@ const initialUrl = ref('')
 
 const emit = defineEmits(['save', 'remove'])
 
-const title = ref('Insert Link')
+const title = ref(t('linkEditor.insert'))
 
 const show = async (currentText?: string, currentUrl?: string) => {
   text.value = currentText || ''
   url.value = currentUrl || ''
   initialUrl.value = currentUrl || ''
-  title.value = currentUrl ? 'Edit Link' : 'Insert Link'
+  title.value = currentUrl ? t('linkEditor.edit') : t('linkEditor.insert')
 
   await nextTick()
   dialog.value?.show()

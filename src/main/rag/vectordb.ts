@@ -34,16 +34,29 @@ export default class VectorDB {
     await this.cancelTransaction()
   }
 
-  beginTransaction(): Promise<void> {
-    return this.index.beginUpdate()
+  async beginTransaction(): Promise<void> {
+    await this.index.beginUpdate()
+    // vectra shares the items array between the live index and the pending update, so a
+    // cancelled update would keep its changes: give the update its own copy
+    const update = (this.index as any)._update
+    if (update && Array.isArray(update.items)) {
+      update.items = [...update.items]
+    }
   }
 
   cancelTransaction(): void {
     return this.index.cancelUpdate()
   }
 
-  commitTransaction(): Promise<void> {
-    return this.index.endUpdate()
+  async commitTransaction(): Promise<void> {
+    try {
+      await this.index.endUpdate()
+    } catch (error) {
+      // vectra keeps the update open when the write fails: every later
+      // beginUpdate would then throw "Update already in progress"
+      this.index.cancelUpdate()
+      throw error
+    }
   }
 
   async insert(docid: string, content: string, vector: number[], metadata: DocumentMetadata): Promise<string> {

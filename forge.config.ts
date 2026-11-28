@@ -78,6 +78,7 @@ const config: ForgeConfig = {
       'assets/trayUpdateWhite.png',
       'assets/trayUpdateWhite@2x.png',
       'assets/icon.ico',
+      'assets/icon.png',
       'assets/gladia.png',
       'assets/speechmatics.png',
       'assets/apple-speechanalyzer-cli',

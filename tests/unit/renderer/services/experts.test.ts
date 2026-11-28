@@ -13,11 +13,21 @@ vi.mock('electron', async() => {
   }
 })
 
+// the file is written through the atomic helper: route it to the mocked fs so that fixtures are never modified
+vi.mock('@main/atomic', async () => {
+  const fs = (await import('fs')).default
+  return {
+    writeFileAtomicSync: (file: string, data: string) => fs.writeFileSync(file, data),
+    backupCorruptFile: vi.fn(() => null),
+  }
+})
+
 vi.mock('fs', async (importOriginal) => {
   const mod: any = await importOriginal()
   return { default: {
     ...mod,
     writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
   }}
 })
 

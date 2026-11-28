@@ -98,7 +98,8 @@ test('fixPath should handle basic shell PATH on macOS', async () => {
   await fixPath()
   
   expect(execSync).toHaveBeenCalledWith(
-    '/bin/bash -l -c \'echo -n "_SHELL_ENV_DELIMITER_"; printenv PATH; echo -n "_SHELL_ENV_DELIMITER_";\''
+    '/bin/bash -l -c \'echo -n "_SHELL_ENV_DELIMITER_"; printenv PATH; echo -n "_SHELL_ENV_DELIMITER_";\'',
+    expect.objectContaining({ timeout: expect.any(Number) })
   )
   expect(process.env.PATH).toBe('/usr/bin:/bin')
   
@@ -139,7 +140,8 @@ test('fixPath should handle nu shell', async () => {
   await fixPath()
   
   expect(execSync).toHaveBeenCalledWith(
-    '/usr/bin/nu -l -c \'print "_SHELL_ENV_DELIMITER_"; printenv PATH; print "_SHELL_ENV_DELIMITER_";\''
+    '/usr/bin/nu -l -c \'print "_SHELL_ENV_DELIMITER_"; printenv PATH; print "_SHELL_ENV_DELIMITER_";\'',
+    expect.objectContaining({ timeout: expect.any(Number) })
   )
   
   consoleSpy.mockRestore()
@@ -226,6 +228,109 @@ test('fixPath should handle missing shell env delimiter', async () => {
   expect(consoleSpy).toHaveBeenCalledWith('Failed to fix PATH:', expect.any(Error))
   
   consoleSpy.mockRestore()
+})
+
+const shellTimeoutError = () => Object.assign(new Error('spawnSync /bin/sh ETIMEDOUT'), { code: 'ETIMEDOUT', signal: 'SIGKILL', stdout: Buffer.from('_SHELL_ENV_DELIMITER_/partial') })
+
+test('fixPath runs every login shell with a timeout that cannot be ignored', async () => {
+  const { execSync } = await import('node:child_process')
+  const fs = await import('fs')
+
+  vi.mocked(execSync).mockReturnValue(Buffer.from('_SHELL_ENV_DELIMITER_/usr/bin:/bin_SHELL_ENV_DELIMITER_'))
+  vi.mocked(fs.default.existsSync).mockReturnValue(false)
+
+  process.env.SHELL = '/bin/zsh'
+  const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+  await fixPath()
+
+  expect(execSync).toHaveBeenCalledTimes(2)
+  for (const call of vi.mocked(execSync).mock.calls) {
+    const options = call[1] as { timeout: number, killSignal: string }
+    expect(options.timeout).toBeGreaterThan(0)
+    expect(options.timeout).toBeLessThanOrEqual(10000)
+    expect(options.killSignal).toBe('SIGKILL')
+  }
+
+  consoleSpy.mockRestore()
+})
+
+test('fixPath keeps the existing PATH when the login shell times out', async () => {
+  const { execSync } = await import('node:child_process')
+
+  vi.mocked(execSync).mockImplementation(() => { throw shellTimeoutError() })
+
+  process.env.SHELL = '/bin/bash'
+  process.env.PATH = '/original/bin'
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  await expect(fixPath()).resolves.toBeUndefined()
+
+  // the nvm shell is not tried after the first one timed out
+  expect(execSync).toHaveBeenCalledTimes(1)
+  expect(process.env.PATH).toBe('/original/bin')
+  expect(errorSpy).toHaveBeenCalledWith('Failed to fix PATH:', expect.objectContaining({ code: 'ETIMEDOUT' }))
+  expect(logSpy).not.toHaveBeenCalledWith('Fixing PATH:', expect.anything())
+
+  logSpy.mockRestore()
+  errorSpy.mockRestore()
+})
+
+test('fixPath still applies the shell PATH and the nvm files when the nvm shell times out', async () => {
+  const { execSync } = await import('node:child_process')
+  const fs = await import('fs')
+
+  vi.mocked(execSync)
+    .mockReturnValueOnce(Buffer.from('_SHELL_ENV_DELIMITER_/usr/bin:/bin_SHELL_ENV_DELIMITER_'))
+    .mockImplementationOnce(() => { throw shellTimeoutError() })
+
+  process.env.HOME = '/home/user'
+
+  vi.mocked(fs.default.existsSync)
+    .mockImplementation((path) => {
+      const pathStr = path.toString()
+      return pathStr === '/home/user/.nvm/alias/default' || pathStr === '/home/user/.nvm/versions/node'
+    })
+
+  vi.mocked(fs.default.readFileSync).mockReturnValue('18')
+  vi.mocked(fs.default.readdirSync).mockReturnValue(['v16.20.0', 'v18.17.0', 'v20.5.0'] as any)
+
+  process.env.SHELL = '/bin/bash'
+  process.env.PATH = '/original/bin'
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  await fixPath()
+
+  expect(process.env.PATH).toBe('/usr/bin:/bin:/home/user/.nvm/versions/node/v18.17.0/bin')
+  expect(warnSpy).toHaveBeenCalledTimes(1)
+  expect(warnSpy.mock.calls[0][0]).toMatch(/timeout/i)
+
+  logSpy.mockRestore()
+  warnSpy.mockRestore()
+})
+
+test('fixPath does not warn when nvm is simply not installed', async () => {
+  const { execSync } = await import('node:child_process')
+  const fs = await import('fs')
+
+  vi.mocked(execSync)
+    .mockReturnValueOnce(Buffer.from('_SHELL_ENV_DELIMITER_/usr/bin:/bin_SHELL_ENV_DELIMITER_'))
+    .mockImplementationOnce(() => { throw Object.assign(new Error('Command failed'), { status: 127 }) })
+  vi.mocked(fs.default.existsSync).mockReturnValue(false)
+
+  process.env.SHELL = '/bin/bash'
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  await fixPath()
+
+  expect(process.env.PATH).toBe('/usr/bin:/bin')
+  expect(warnSpy).not.toHaveBeenCalled()
+
+  logSpy.mockRestore()
+  warnSpy.mockRestore()
 })
 
 // Tests for wait function

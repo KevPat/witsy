@@ -5,6 +5,7 @@ import MacosAutomator from './macos'
 import WindowsAutomator from './windows'
 import NutAutomator from './nut'
 import Automation from './automation';
+import { ClipboardSnapshot, restoreClipboard, saveClipboard } from './clipboard_snapshot';
 
 export default class Automator {
   
@@ -47,25 +48,28 @@ export default class Automator {
 
   async getSelectedText(): Promise<string> {
 
+    // what the user had on the clipboard (text, image...) is put back whatever happens
+    let snapshot: ClipboardSnapshot|null = null;
+
     try {
 
       // save and set
-      const clipboardText = clipboard.readText();
+      snapshot = saveClipboard();
       clipboard.writeText('');
 
       // get it
       await this.automator.copySelectedText();
-      const selectedText = clipboard.readText();
-
-      // restore and done
-      clipboard.writeText(clipboardText);
-      return selectedText;
+      return clipboard.readText();
 
     } catch (error) {
       console.error(error);
       return null;
+    } finally {
+      if (snapshot) {
+        restoreClipboard(snapshot);
+      }
     }
-  
+
   }
 
   async deleteSelectedText(): Promise<void> {
@@ -86,10 +90,13 @@ export default class Automator {
 
   async pasteText(textToPaste: string): Promise<boolean> {
 
+    // what the user had on the clipboard (text, image...) is put back whatever happens
+    let snapshot: ClipboardSnapshot|null = null;
+
     try {
 
       // save and set
-      const clipboardText = clipboard.readText();
+      snapshot = saveClipboard();
 
       // try to write text to clipboard
       const copied = await Automation.writeTextToClipboard(textToPaste);
@@ -99,14 +106,15 @@ export default class Automator {
 
       // paste it
       await this.pasteClipboard();
-
-      // restore
-      await Automation.writeTextToClipboard(clipboardText);
       return true;
-    
+
     } catch (error) {
       console.error(error);
       return false;
+    } finally {
+      if (snapshot) {
+        restoreClipboard(snapshot);
+      }
     }
 
   }

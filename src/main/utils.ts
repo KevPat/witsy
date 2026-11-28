@@ -17,6 +17,9 @@ export const wait = async (millis = 200) => {
   }
 }
 
+// a login shell with a slow or blocking profile must not hang the application start
+const shellExecOptions = { timeout: 5000, killSignal: 'SIGKILL' } as const
+
 export const fixPath = async (): Promise<void> => {
 
   try {
@@ -34,7 +37,7 @@ export const fixPath = async (): Promise<void> => {
 
     // macOS and Linux need to fix the PATH
     const command = `${shell} -l -c '${echo} "_SHELL_ENV_DELIMITER_"; printenv PATH; ${echo} "_SHELL_ENV_DELIMITER_";'`
-    const output = execSync(command).toString();
+    const output = execSync(command, shellExecOptions).toString();
     let path = output.split('_SHELL_ENV_DELIMITER_')[1].trim();
     const paths = path.split(':')
 
@@ -54,7 +57,7 @@ export const fixPath = async (): Promise<void> => {
     let nvmFixed = false
     try {
       const command = `${shell} -l -c '${echo} "_SHELL_NVM_DELIMITER_"; nvm which current; ${echo} "_SHELL_NVM_DELIMITER_";'`
-      const output = execSync(command).toString();
+      const output = execSync(command, shellExecOptions).toString();
       let nbp = output.split('_SHELL_NVM_DELIMITER_')[1].trim()
       if (fs.existsSync(nbp)) {
         nvmFixed = true
@@ -63,7 +66,11 @@ export const fixPath = async (): Promise<void> => {
           paths.push(nbp)
         }
       }
-    } catch { /* empty */ }
+    } catch (e) {
+      if (e?.code === 'ETIMEDOUT') {
+        console.warn('Timeout while asking the shell for nvm: falling back to nvm files')
+      }
+    }
 
     // try to deal with nvm using files
     if (!nvmFixed) {

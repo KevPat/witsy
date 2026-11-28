@@ -1,6 +1,7 @@
 // CLI Plugin - Main process filesystem and shell plugin for CLI
 // Uses Node.js fs/path directly (not window.api)
 
+import { createHash } from 'crypto'
 import * as fs from 'fs'
 import { Plugin, PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import * as path from 'path'
@@ -9,6 +10,66 @@ import { analyzeCommand, executeCommand as shellExecuteCommand } from './shell'
 
 // Maximum file size for AI read operations (10,000 tokens × 4 characters per token)
 const MAX_READ_FILE_CHARACTERS = 40000
+
+// A `lastModified` value is only proof that a file is unchanged together with the content it was
+// handed out for: two writes within one clock tick leave the same mtime. So every time a
+// `lastModified` is returned, the plugin remembers what the file contained at that moment.
+// Kept at module level (a plugin is created for each request), keyed by absolute path, and
+// bounded: the least recently used entry goes first.
+type FileSnapshot = { mtimeMs: number, size: number, hash: string }
+export const MAX_FILE_SNAPSHOTS = 1000
+const fileSnapshots = new Map<string, FileSnapshot>()
+export const fileSnapshotCount = (): number => fileSnapshots.size
+
+const hashContent = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex')
+
+const rememberFile = (filePath: string, mtimeMs: number, data: Buffer | string): void => {
+  const key = path.resolve(filePath)
+  fileSnapshots.delete(key)
+  fileSnapshots.set(key, { mtimeMs, size: Buffer.byteLength(data), hash: hashContent(data) })
+  if (fileSnapshots.size > MAX_FILE_SNAPSHOTS) {
+    fileSnapshots.delete(fileSnapshots.keys().next().value)
+  }
+}
+
+// Drops what is known about a file or a directory tree; a rename keeps content and mtime, so
+// with `movedTo` the snapshots follow the files to their new location
+const forgetFiles = (targetPath: string, movedTo?: string): void => {
+  const from = path.resolve(targetPath)
+  for (const [key, snapshot] of [...fileSnapshots]) {
+    if (key === from || key.startsWith(from + path.sep)) {
+      fileSnapshots.delete(key)
+      if (movedTo) {
+        fileSnapshots.set(path.resolve(movedTo) + key.slice(from.length), snapshot)
+      }
+    }
+  }
+}
+
+const formatTime = (ms: number): string => {
+  const date = new Date(ms)
+  return isNaN(date.getTime()) ? String(ms) : date.toISOString()
+}
+
+// Returns why an edit that relies on `lastModified` must be refused, or null when the file is
+// still exactly what that value was handed out for. `data` is the current content when the
+// caller has already read it.
+const checkLastModified = (filePath: string, lastModified: number | string, data?: Buffer): string | null => {
+  // models sometimes send a number parameter as a string
+  const expected = typeof lastModified === 'string' ? Number(lastModified || NaN) : lastModified
+  const stats = fs.statSync(filePath)
+  if (stats.mtimeMs !== expected) {
+    return `File was modified since last read. Expected: ${formatTime(expected)}, Actual: ${formatTime(stats.mtimeMs)}`
+  }
+  const snapshot = fileSnapshots.get(path.resolve(filePath))
+  if (snapshot && snapshot.mtimeMs === expected && snapshot.size === stats.size) {
+    const current = data ?? fs.readFileSync(filePath)
+    if (current.length === snapshot.size && hashContent(current) === snapshot.hash) {
+      return null
+    }
+  }
+  return 'File was modified since last read, or was not read with read_file. Read the file again to get its current content and lastModified.'
+}
 
 export type WorkDirAccess = 'none' | 'ro' | 'rw'
 
@@ -117,7 +178,7 @@ export default class CliPlugin extends Plugin {
     }, {
       name: 'lastModified',
       type: 'number',
-      description: 'File lastModified timestamp in milliseconds (for edit_file/write_file - validates file hasn\'t changed)',
+      description: 'File lastModified timestamp in milliseconds, as returned by read_file/edit_file/write_file (for edit_file/write_file - validates file hasn\'t changed)',
       required: false,
     }, {
       name: 'newPath',
@@ -414,7 +475,10 @@ export default class CliPlugin extends Plugin {
             success: true,
             content,
             matchCount: result.matches.filter(m => m.isMatch).length,
-            fileCount: result.filesSearched
+            fileCount: result.filesSearched,
+            ...(result.truncated ? { truncated: true } : {}),
+            // not every file was searched: the model must not conclude that there is no other match
+            ...(result.incomplete ? { incomplete: true, note: 'Not every file was searched (file limit reached or unreadable files). Narrow the path or the glob to search the rest.' } : {}),
           }
         }
 
@@ -506,7 +570,8 @@ export default class CliPlugin extends Plugin {
       return { success: false, error: `Path is a directory: ${targetPath}. Use list_files action to list directory contents.` }
     }
 
-    const fileContent = fs.readFileSync(filePath, 'utf-8')
+    const fileData = fs.readFileSync(filePath)
+    const fileContent = fileData.toString('utf-8')
     const allLines = fileContent.split('\n')
     const lastModified = stats.mtimeMs
 
@@ -521,6 +586,7 @@ export default class CliPlugin extends Plugin {
 
       const selectedLines = allLines.slice(actualStart - 1, actualEnd)
       const content = this.formatLineNumbered(selectedLines, actualStart)
+      rememberFile(filePath, lastModified, fileData)
 
       return {
         success: true,
@@ -543,6 +609,7 @@ export default class CliPlugin extends Plugin {
 
     // Return full file
     const content = this.formatLineNumbered(allLines)
+    rememberFile(filePath, lastModified, fileData)
 
     return {
       success: true,
@@ -624,18 +691,18 @@ export default class CliPlugin extends Plugin {
       return { success: false, error: `File not found: ${targetPath}` }
     }
 
+    // The content is read once: what gets edited is exactly what gets checked
+    const fileData = fs.readFileSync(filePath)
+
     // Check lastModified if provided
     if (lastModified !== undefined) {
-      const stats = fs.statSync(filePath)
-      if (stats.mtimeMs !== lastModified) {
-        return {
-          success: false,
-          error: `File was modified since last read. Expected: ${new Date(lastModified).toISOString()}, Actual: ${new Date(stats.mtimeMs).toISOString()}`
-        }
+      const refusal = checkLastModified(filePath, lastModified, fileData)
+      if (refusal) {
+        return { success: false, error: refusal }
       }
     }
 
-    const fileContent = fs.readFileSync(filePath, 'utf-8')
+    const fileContent = fileData.toString('utf-8')
     const allLines = fileContent.split('\n')
 
     if (start < 1 || start > allLines.length) {
@@ -649,10 +716,27 @@ export default class CliPlugin extends Plugin {
     // If newContent is empty, delete the lines
     const newLines = newContent ? newContent.split('\n') : []
     const linesRemoved = end - start + 1
-    allLines.splice(start - 1, linesRemoved, ...newLines)
 
-    fs.writeFileSync(filePath, allLines.join('\n'), 'utf-8')
+    // Lines of a CRLF file still carry their '\r' (the split is on '\n'): give the new lines the
+    // same ending instead of mixing both styles. The last line of a file has no line break after it.
+    const crlfCount = (fileContent.match(/\r\n/g) || []).length
+    const useCrlf = crlfCount > allLines.length - 1 - crlfCount
+    const editsLastLine = end === allLines.length
+    if (useCrlf) {
+      for (let i = 0; i < newLines.length; i++) {
+        newLines[i] = newLines[i].replace(/\r$/, '') + '\r'
+      }
+    }
+
+    allLines.splice(start - 1, linesRemoved, ...newLines)
+    if (useCrlf && editsLastLine && allLines.length > 0) {
+      allLines[allLines.length - 1] = allLines[allLines.length - 1].replace(/\r$/, '')
+    }
+
+    const newFileContent = allLines.join('\n')
+    fs.writeFileSync(filePath, newFileContent, 'utf-8')
     const newStats = fs.statSync(filePath)
+    rememberFile(filePath, newStats.mtimeMs, newFileContent)
 
     return {
       success: true,
@@ -670,12 +754,9 @@ export default class CliPlugin extends Plugin {
 
     // Check lastModified if provided and file exists
     if (lastModified !== undefined && fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath)
-      if (stats.mtimeMs !== lastModified) {
-        return {
-          success: false,
-          error: `File was modified since last read. Expected: ${new Date(lastModified).toISOString()}, Actual: ${new Date(stats.mtimeMs).toISOString()}`
-        }
+      const refusal = checkLastModified(filePath, lastModified)
+      if (refusal) {
+        return { success: false, error: refusal }
       }
     }
 
@@ -688,6 +769,7 @@ export default class CliPlugin extends Plugin {
     fs.writeFileSync(filePath, content, 'utf-8')
     const lines = content.split('\n')
     const newStats = fs.statSync(filePath)
+    rememberFile(filePath, newStats.mtimeMs, content)
 
     return {
       success: true,
@@ -717,10 +799,18 @@ export default class CliPlugin extends Plugin {
     return { success: true }
   }
 
+  private isWorkDir(fullPath: string): boolean {
+    return path.relative(path.resolve(this.config.workDirPath), path.resolve(fullPath)) === ''
+  }
+
   private deleteFile(targetPath: string): CliResponse {
     const filePath = this.validatePath(targetPath)
     if (!filePath) {
       return { success: false, error: `Path not allowed: ${targetPath}` }
+    }
+
+    if (this.isWorkDir(filePath)) {
+      return { success: false, error: 'Cannot delete the working directory itself' }
     }
 
     if (!fs.existsSync(filePath)) {
@@ -733,6 +823,7 @@ export default class CliPlugin extends Plugin {
     } else {
       fs.unlinkSync(filePath)
     }
+    forgetFiles(filePath)
 
     return { success: true }
   }
@@ -748,12 +839,22 @@ export default class CliPlugin extends Plugin {
       return { success: false, error: `Path not allowed: ${newTargetPath}` }
     }
 
+    if (this.isWorkDir(filePath)) {
+      return { success: false, error: 'Cannot move the working directory itself' }
+    }
+
     if (!fs.existsSync(filePath)) {
       return { success: false, error: `File not found: ${targetPath}` }
     }
 
     if (fs.existsSync(newFilePath)) {
       return { success: false, error: `File already exists: ${newTargetPath}` }
+    }
+
+    // Nothing can be moved below itself: refuse before any destination directory is created
+    const relative = path.relative(path.resolve(filePath), path.resolve(newFilePath))
+    if (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
+      return { success: false, error: `Cannot move ${targetPath} into itself: ${newTargetPath}` }
     }
 
     // Create parent directories for destination if needed
@@ -763,6 +864,7 @@ export default class CliPlugin extends Plugin {
     }
 
     fs.renameSync(filePath, newFilePath)
+    forgetFiles(filePath, newFilePath)
 
     return { success: true }
   }
