@@ -36,8 +36,8 @@ const botMessageText: Message = new Message('assistant', '**Hi**\n\n1. One \n\n2
 botMessageText.usage = { prompt_tokens: 0, completion_tokens: 0 }
 const botMessageImage: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '![image](https://example.com/image.jpg)' })
 const botMessageImage2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<img src="https://example.com/image.jpg" alt="description">' })
-const botMessageImageLink1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '[![image](https://example.com/image.jpg)](url)' })
-const botMessageImageLink2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![image](https://example.com/image.jpg)](url). neat?' })
+const botMessageImageLink1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '[![image](https://example.com/image.jpg)](https://example.com/page)' })
+const botMessageImageLink2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![image](https://example.com/image.jpg)](https://example.com/page). neat?' })
 const botMessageImageCode1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '`image`: `<img src="https://example.com/image.jpg" alt="description">`' })
 const botMessageImageCode3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'image:\n```<img src="https://example.com/image.jpg" alt="description">```' })
 const botMessageVideoMd: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '![video](file:///data/video.mp4)' })
@@ -207,7 +207,7 @@ test('Assistant image markdown link at beginning message', async () => {
   expect(wrapper.find('.message-body .media-container').exists()).toBe(false)
   expect(wrapper.find('.message-body .download').exists()).toBe(false)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body a').attributes('href')).toBe('url')
+  expect(wrapper.find('.message-body a').attributes('href')).toBe('https://example.com/page')
   expect(wrapper.find('.message-body a img').attributes('src')).toBe('https://example.com/image.jpg')
 })
 
@@ -217,7 +217,7 @@ test('Assistant image markdown link at middle message', async () => {
   expect(wrapper.find('.message-body .media-container').exists()).toBe(false)
   expect(wrapper.find('.message-body .download').exists()).toBe(false)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body a').attributes('href')).toBe('url')
+  expect(wrapper.find('.message-body a').attributes('href')).toBe('https://example.com/page')
   expect(wrapper.find('.message-body a img').attributes('src')).toBe('https://example.com/image.jpg')
 })
 

@@ -1,4 +1,5 @@
-import { session, shell, webContents } from 'electron'
+import { session, webContents } from 'electron'
+import { openExternalUrl } from './external_links'
 import { getCleanUserAgent } from './utils'
 
 /**
@@ -31,7 +32,7 @@ export function setWebviewLinkBehavior(webviewId: number, isExternal: boolean): 
 
   webview.setWindowOpenHandler(({ url }) => {
     if (isExternal) {
-      shell.openExternal(url)
+      openExternalUrl(url)
       return { action: 'deny' }
     } else {
       return { action: 'allow' }

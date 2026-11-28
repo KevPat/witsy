@@ -1,6 +1,7 @@
 
-import { BrowserWindow, Menu } from 'electron'
-import { beforeAll, beforeEach, expect, Mock, test, vi } from 'vitest'
+import { BrowserWindow, Menu, shell } from 'electron'
+import { pathToFileURL } from 'node:url'
+import { afterEach, beforeAll, beforeEach, expect, Mock, test, vi } from 'vitest'
 import * as window from '@main/window'
 import { store } from '@services/store'
 import { Application } from '@/types/automation'
@@ -143,6 +144,36 @@ beforeEach(async () => {
   //try { await window.closeWaitingPanel() } catch { /* empty */ }
   vi.clearAllMocks()
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+const kUrlsNotForTheSystem = [
+  'file:///C:/Windows/System32/calc.exe',
+  'file:///etc/passwd',
+  'file://evil.example/share/invoice.exe',
+  'smb://evil.example/share',
+  'ms-msdt:/id PCWDiagnostic /skip force',
+  'search-ms:query=invoice&crumb=location:\\\\evil.example\\share',
+  'vscode://vscode.git/clone?url=https://evil.example/repo.git',
+  'javascript:alert(1)',
+  'data:text/html,<script>alert(1)</script>',
+  'not a url',
+  '',
+]
+
+const lastWebContentsListener = (name: string): (...args: any[]) => void => {
+  const calls = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.filter((call) => call[0] === name)
+  expect(calls.length).toBeGreaterThan(0)
+  return calls[calls.length - 1][1]
+}
+
+const navigate = (url: string) => {
+  const event = { preventDefault: vi.fn(), url, isMainFrame: true, isSameDocument: false }
+  lastWebContentsListener('will-navigate')(event, url)
+  return event.preventDefault.mock.calls.length > 0 ? 'cancelled' : 'allowed'
+}
 
 test('All windows are null', async () => {
   expect(window.mainWindow).toBeNull()
@@ -355,6 +386,90 @@ test('Open Debug window', async () => {
   expect(BrowserWindow.prototype.loadURL).toHaveBeenLastCalledWith('http://localhost:3000/#/debug')
   const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
   expectCreateWebPreferences(callParams)
+})
+
+test('Links that open a new window only reach the system as web or mail links', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+  const handler = (BrowserWindow.prototype.webContents.setWindowOpenHandler as Mock).mock.calls[0][0]
+
+  for (const url of ['https://example.com/docs?q=1#top', 'http://example.com/', 'HTTPS://EXAMPLE.COM/', 'mailto:someone@example.com?subject=Hello']) {
+    expect(handler({ url })).toEqual({ action: 'deny' })
+    expect(shell.openExternal).toHaveBeenLastCalledWith(url)
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(4)
+
+  for (const url of kUrlsNotForTheSystem) {
+    expect(handler({ url })).toEqual({ action: 'deny' })
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(4)
+})
+
+test('The app window only navigates to the dev server', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+
+  expect(navigate('http://localhost:3000/')).toBe('allowed')
+  expect(navigate('http://localhost:3000/?view=settings#/chat')).toBe('allowed')
+  expect(shell.openExternal).not.toHaveBeenCalled()
+
+  const elsewhere = ['https://evil.example/', 'http://localhost:3001/', 'https://localhost:3000/', 'http://localhost.evil.example:3000/', 'http://localhost:3000@evil.example/', 'mailto:someone@example.com']
+  for (const url of elsewhere) {
+    expect(navigate(url), url).toBe('cancelled')
+    expect(shell.openExternal).toHaveBeenLastCalledWith(url)
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(elsewhere.length)
+
+  for (const url of kUrlsNotForTheSystem) {
+    expect(navigate(url), url).toBe('cancelled')
+  }
+  expect(shell.openExternal).toHaveBeenCalledTimes(elsewhere.length)
+})
+
+test('The packaged app window only navigates to its own page', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined)
+  window.createWindow({ hash: '/chat', queryParams: { view: 'chat' } })
+  expect(BrowserWindow.prototype.loadURL).not.toHaveBeenCalled()
+  const [pagePath, options] = (BrowserWindow.prototype.loadFile as Mock).mock.calls[0]
+  expect(pagePath).toMatch(/renderer[\\/]vite[\\/]index\.html$/)
+  expect(options).toEqual({ hash: '/chat', query: { view: 'chat' } })
+  const pageUrl = pathToFileURL(pagePath).href
+
+  expect(navigate(pageUrl)).toBe('allowed')
+  expect(navigate(`${pageUrl}?view=chat#/chat`)).toBe('allowed')
+  expect(navigate(`${pageUrl}#/settings`)).toBe('allowed')
+  expect(navigate(pageUrl.replace('/vite/', '/v%69te/'))).toBe('allowed')
+
+  for (const url of [
+    pageUrl.replace('index.html', 'other.html'),
+    pageUrl.replace('index.html', ''),
+    pageUrl.replace('file:///', 'file://evil.example/'),
+    `${pageUrl}/../../../../etc/passwd`,
+    `file:///tmp/index.html`,
+    ...kUrlsNotForTheSystem,
+  ]) {
+    expect(navigate(url), url).toBe('cancelled')
+  }
+  expect(shell.openExternal).not.toHaveBeenCalled()
+
+  expect(navigate('http://localhost:3000/')).toBe('cancelled')
+  expect(shell.openExternal).toHaveBeenLastCalledWith('http://localhost:3000/')
+  expect(navigate('https://evil.example/')).toBe('cancelled')
+  expect(shell.openExternal).toHaveBeenLastCalledWith('https://evil.example/')
+  expect(shell.openExternal).toHaveBeenCalledTimes(2)
+})
+
+test('Every app window is guarded', async () => {
+  window.openMainWindow()
+  window.createWindow({ hash: '/computer' })
+  window.createWindow({ hash: '/readaloud', keepHidden: true })
+  const windows = (BrowserWindow as unknown as Mock).mock.calls.length
+  expect(windows).toBe(3)
+  const listeners = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.map((call) => call[0])
+  expect(listeners.filter((name) => name === 'will-navigate')).toHaveLength(windows)
+  expect(BrowserWindow.prototype.webContents.setWindowOpenHandler).toHaveBeenCalledTimes(windows)
 })
 
 test('Utilities', async () => {

@@ -26,10 +26,14 @@ test('does not create javascript links', () => {
   expect(html).not.toContain('href=')
 })
 
-const mermaidBlock = (markdown: string): HTMLElement => {
+const parseHtml = (markdown: string): DocumentFragment => {
   const template = document.createElement('template')
   template.innerHTML = renderMarkdown(markdown)
-  return template.content.querySelector<HTMLElement>('pre.mermaid')
+  return template.content
+}
+
+const mermaidBlock = (markdown: string): HTMLElement => {
+  return parseHtml(markdown).querySelector<HTMLElement>('pre.mermaid')
 }
 
 test('escapes the body of a mermaid fence', () => {
@@ -74,34 +78,64 @@ test('leaves other fences to their renderers', () => {
 //   expect(html).toContain('<p>Click <a href="#section">here</a></p>')
 // })
 
-test('renders local links', () => {
-  const markdown = '[link](file://README.md)'
-  const html = renderMarkdown(markdown)
-  expect(html).toBe('<p><a href="file://README.md">link</a></p>\n')
-})
-
-test('renders file:// links with spaces', () => {
-  const markdown = '[link](file:///Users/test/Application Support/file.md)'
-  const html = renderMarkdown(markdown)
-  expect(html).toBe('<p><a href="file:///Users/test/Application%20Support/file.md">link</a></p>\n')
-})
-
-test('renders Windows file:// links with backslashes', () => {
-  const markdown = '[link](file://C:\\Users\\name\\file.md)'
-  const html = renderMarkdown(markdown)
-  expect(html).toBe('<p><a href="file://C:/Users/name/file.md">link</a></p>\n')
-})
-
-test('renders file:// links with spaces and backslashes', () => {
-  const markdown = '[link](file://C:\\Users\\My Documents\\file.md)'
-  const html = renderMarkdown(markdown)
-  expect(html).toBe('<p><a href="file://C:/Users/My%20Documents/file.md">link</a></p>\n')
-})
-
-test('renders external links', () => {
+test('renders external links that open outside of the app page', () => {
   const markdown = '[link](https://example.com)'
   const html = renderMarkdown(markdown)
-  expect(html).toBe('<p><a href="https://example.com">link</a></p>\n')
+  expect(html).toBe('<p><a href="https://example.com" target="_blank" rel="noopener noreferrer">link</a></p>\n')
+})
+
+test('renders http, https and mailto links only', () => {
+  const root = parseHtml([
+    '[a](http://example.com/a) [b](HTTPS://example.com/b?x=1&y=2 "title") <mailto:someone@example.com> <https://example.com/c>',
+    '[ref][1] [![logo](https://example.com/logo.png)](https://example.com/d)',
+    '[1]: https://example.com/ref',
+  ].join('\n\n'))
+  const links = Array.from(root.querySelectorAll('a'))
+  expect(links.map((a) => a.getAttribute('href'))).toEqual([
+    'http://example.com/a', 'HTTPS://example.com/b?x=1&y=2', 'mailto:someone@example.com', 'https://example.com/c',
+    'https://example.com/ref', 'https://example.com/d',
+  ])
+  for (const link of links) {
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  }
+  expect(links[1].getAttribute('title')).toBe('title')
+  expect(links[5].querySelector('img').getAttribute('src')).toBe('https://example.com/logo.png')
+})
+
+test.each([
+  ['[link](file://README.md)', '<p>[link](file://README.md)</p>\n'],
+  ['[link](file:///Users/test/Application Support/file.md)', '<p>[link](file:///Users/test/Application%20Support/file.md)</p>\n'],
+  ['[link](file://C:\\Users\\name\\file.md)', '<p>[link](file://C:/Users/name/file.md)</p>\n'],
+  ['[link](file://evil.example/share/invoice.exe)', '<p>[link](file://evil.example/share/invoice.exe)</p>\n'],
+  ['[link](search-ms:query=x "title")', '<p>[link](search-ms:query=x)</p>\n'],
+  ['<file:///Applications/Calculator.app>', '<p>&lt;file:///Applications/Calculator.app&gt;</p>\n'],
+  ['[share](smb://evil.example/share)', '<p>[share](smb://evil.example/share)</p>\n'],
+  ['[help](ms-msdt:/id%20PCWDiagnostic)', '<p>[help](ms-msdt:/id%20PCWDiagnostic)</p>\n'],
+  ['[open](vscode://file/etc/passwd)', '<p>[open](vscode://file/etc/passwd)</p>\n'],
+  ['[x](//evil.example/share/invoice.exe)', '<p>[x](//evil.example/share/invoice.exe)</p>\n'],
+  ['[x](/etc/passwd)', '<p>[x](/etc/passwd)</p>\n'],
+  ['[x](../other.html)', '<p>[x](../other.html)</p>\n'],
+  ['[x](#/settings)', '<p>[x](#/settings)</p>\n'],
+  ['[**bold** `code`](file:///etc/passwd)', '<p>[<strong>bold</strong> <code>code</code>](file:///etc/passwd)</p>\n'],
+  ['[x][r]\n\n[r]: file:///etc/passwd', '<p>[x](file:///etc/passwd)</p>\n'],
+  ['[<b>x</b>](file:///a"onmouseover="alert(1))', '<p>[&lt;b&gt;x&lt;/b&gt;](file:///a%22onmouseover=%22alert(1))</p>\n'],
+])('does not make a link of %s', (markdown, expected) => {
+  const html = renderMarkdown(markdown)
+  expect(html).toBe(expected)
+  expect(parseHtml(markdown).querySelector('a')).toBeNull()
+})
+
+test('keeps a refused link next to a rendered one as text', () => {
+  const root = parseHtml('[a](file:///etc/passwd) [b](https://example.com/) <smb://evil.example/share> <https://example.com/c>')
+  expect(Array.from(root.querySelectorAll('a')).map((a) => a.getAttribute('href'))).toEqual(['https://example.com/', 'https://example.com/c'])
+  expect(root.textContent).toBe('[a](file:///etc/passwd) b <smb://evil.example/share> https://example.com/c\n')
+})
+
+test('still renders local images', () => {
+  const root = parseHtml('[![logo](file:///data/My Images/logo.png)](https://example.com/)')
+  expect(root.querySelector('a').getAttribute('href')).toBe('https://example.com/')
+  expect(root.querySelector('a img').getAttribute('src')).toBe('file:///data/My%20Images/logo.png')
 })
 
 test('renders inline code', () => {
@@ -173,12 +207,6 @@ test('render tool with index', () => {
   expect(html).toContain('<p><tool index="0"></tool></p>')
 })
 
-const parseHtml = (markdown: string): DocumentFragment => {
-  const template = document.createElement('template')
-  template.innerHTML = renderMarkdown(markdown)
-  return template.content
-}
-
 const codeTexts = (markdown: string): string[] => {
   return Array.from(parseHtml(markdown).querySelectorAll('code')).map((code) => code.textContent.replace(/\n$/, ''))
 }
@@ -199,7 +227,7 @@ test('does not restore tool and think tags inside attributes', () => {
     const root = parseHtml(markdown)
     expect(root.querySelector('tool, think')).toBeNull()
     for (const el of root.querySelectorAll('a, img')) {
-      expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title'].includes(name))).toEqual([])
+      expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title', 'target', 'rel'].includes(name))).toEqual([])
       expect(el.getAttribute('title')).toBe(title)
     }
     expect(root.querySelectorAll('a')).toHaveLength(1)

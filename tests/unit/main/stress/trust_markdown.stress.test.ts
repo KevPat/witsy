@@ -1,7 +1,6 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { renderMarkdown } from '@main/markdown'
-import { bug } from './bug'
 
 // The html returned by renderMarkdown is assigned with v-html in windows that expose window.api
 // (MessageItemBodyBlock, MessageItemTableBlock) and nothing sanitizes it afterwards. Whatever a
@@ -162,7 +161,10 @@ describe('renderMarkdown: content that is neutralized today', () => {
     expect(violations(markdown), markdown).toEqual([])
     const links = Array.from(parse(markdown).querySelectorAll('a'))
     for (const link of links) {
-      expect(link.getAttributeNames().sort()).toEqual(link.hasAttribute('title') ? ['href', 'title'] : ['href'])
+      // target and rel are set by the renderer itself so that a link never replaces the app page
+      expect(link.getAttributeNames().sort()).toEqual(link.hasAttribute('title') ? ['href', 'rel', 'target', 'title'] : ['href', 'rel', 'target'])
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer')
     }
   })
 
@@ -279,7 +281,8 @@ describe('renderMarkdown: tool tags inside attributes', () => {
     // the tool tag used to be turned back into markup wherever it was, here inside title="..."
     expect(eventHandlers(parse(markdown)), markdown).toEqual([])
     const el = parse(markdown).querySelector('a, img')
-    expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title'].includes(name))).toEqual([])
+    expect(el.getAttributeNames().filter((name) => !['href', 'src', 'alt', 'title', 'target', 'rel'].includes(name))).toEqual([])
+    if (el.matches('a')) expect([el.getAttribute('target'), el.getAttribute('rel')]).toEqual(['_blank', 'noopener noreferrer'])
   })
 
   test('a tool tag in a link title cannot restyle the link', () => {
@@ -292,7 +295,7 @@ describe('renderMarkdown: tool tags inside attributes', () => {
 
 describe('renderMarkdown: link schemes', () => {
 
-  bug.each([
+  test.each([
     ['a local executable', '[report](file:///C:/Windows/System32/calc.exe)'],
     ['a local file', '[notes](file:///etc/passwd)'],
     ['a file on a remote share', '[invoice](file://evil.example/share/invoice.exe)'],
@@ -305,8 +308,8 @@ describe('renderMarkdown: link schemes', () => {
     ['ssh', '[connect](ssh://-oProxyCommand=calc@evil.example)'],
     ['a scheme relative url', '[invoice](//evil.example/share/invoice.exe)'],
   ])('a link to %s is not rendered as a link', (_, markdown) => {
-    // validateLink only rejects javascript:, vbscript: and data:, and file: is explicitly allowed;
-    // the href then reaches shell.openExternal through the window open handler
+    // validateLink only rejects javascript:, vbscript: and data:, and file: is accepted for images;
+    // as a link, the href would reach the window open handler
     expect(unsafeLinks(parse(markdown)), markdown).toEqual([])
   })
 
@@ -394,8 +397,7 @@ describe('renderMarkdown: fuzz', () => {
     }
   })
 
-  bug('200 random documents with exotic schemes are neutralized', () => {
-    // fails on the first file:, smb:, ms-msdt: or scheme relative link (see above)
+  test('200 random documents with exotic schemes are neutralized', () => {
     const rand = mulberry32(44)
     for (let i = 0; i < 200; i++) {
       const markdown = generate(rand, kPayloads, kSafeLanguages, [...kSafeUrls, ...kUnsafeUrls])

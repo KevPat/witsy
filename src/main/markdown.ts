@@ -5,6 +5,7 @@ import MarkdownItKatex from '@iktakahiro/markdown-it-katex'
 import MarkdownItMark from 'markdown-it-mark'
 import MarkdownItDiagram from 'markdown-it-diagram'
 import hljs from 'highlight.js'
+import { isSafeExternalUrl } from './external_links'
 
 const mdOptions: MarkdownIt.Options = {
   html: false,
@@ -199,6 +200,41 @@ const escapeMermaidFences = (md: MarkdownIt) => {
   }
 }
 
+// A link is clicked in a window that has the preload api. It must leave that window
+// through the window-open handler (target=_blank) and never replace the page, and only
+// the urls that handler gives to the system are links at all: anything else (file:,
+// smb:, custom schemes, relative urls) keeps its markdown source as text.
+const restrictLinks = (md: MarkdownIt) => {
+  const toText = (token: Token, content: string) => {
+    token.type = 'text'
+    token.tag = ''
+    token.nesting = 0
+    token.attrs = null
+    token.content = content
+  }
+  md.core.ruler.push('restrict_links', (state) => {
+    for (const block of state.tokens) {
+      if (block.type !== 'inline' || !block.children) continue
+      let refused: Token | null = null
+      for (const token of block.children) {
+        if (token.type === 'link_open') {
+          if (isSafeExternalUrl(token.attrGet('href'))) {
+            token.attrSet('target', '_blank')
+            token.attrSet('rel', 'noopener noreferrer')
+          } else {
+            refused = token
+          }
+        } else if (token.type === 'link_close' && refused) {
+          const autolink = token.markup === 'autolink'
+          toText(token, autolink ? '>' : `](${refused.attrGet('href') ?? ''})`)
+          toText(refused, autolink ? '<' : '[')
+          refused = null
+        }
+      }
+    }
+  })
+}
+
 let md: MarkdownIt | null = null
 
 export const renderMarkdown = (markdown: string): string => {
@@ -208,7 +244,7 @@ export const renderMarkdown = (markdown: string): string => {
 
     md = new MarkdownIt(mdOptions)
 
-    // add support for file:// links
+    // add support for file:// urls: images only, links are restricted below
     const validateLink = md.validateLink
     md.validateLink = (url) =>  url.startsWith('file://') ? true : validateLink(url)
 
@@ -218,6 +254,7 @@ export const renderMarkdown = (markdown: string): string => {
     md.use(MarkdownItDiagram)
     escapeMermaidFences(md)
     preserveKnownTags(md)
+    restrictLinks(md)
     // addSourceOffsets(md)
   
   }
