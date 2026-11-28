@@ -8,10 +8,17 @@ import Attachment from '@models/attachment'
 import Chat, { DEFAULT_TITLE } from '@models/chat'
 import Message from '@models/message'
 import { pickFile } from './file'
-import { loadHistory, saveHistory } from './history'
+import { attachmentsFilePath, loadHistory, saveHistory } from './history'
 import { useI18n } from './i18n'
 
 const DEFAULT_FOLDER_NAME = 'ChatGPT'
+
+// what an import did: conversations already up to date in the history are in neither count
+export type OpenAIImportReport = {
+  imported: number
+  skippedConversations: number
+  skippedAttachments: number
+}
 
 export const importOpenAI = async (app: App, workspaceId: string): Promise<boolean> => {
 
@@ -30,8 +37,21 @@ export const importOpenAI = async (app: App, workspaceId: string): Promise<boole
 
   const t = useI18n(app)
 
-  const rc = await processOpenAI(app, workspaceId, file as string)
-  if (rc) {
+  const report: OpenAIImportReport = { imported: 0, skippedConversations: 0, skippedAttachments: 0 }
+  const rc = await processOpenAI(app, workspaceId, file as string, report)
+  if (rc && (report.skippedConversations > 0 || report.skippedAttachments > 0)) {
+    await dialog.showMessageBox({
+      type: 'warning',
+      message: t('import.openai.partial.title'),
+      detail: t('import.openai.partial.message', {
+        imported: report.imported,
+        conversations: report.skippedConversations,
+        attachments: report.skippedAttachments,
+      }),
+      buttons: [t('common.ok')],
+      defaultId: 0,
+    })
+  } else if (rc) {
     await dialog.showMessageBox({
       type: 'info',
       message: t('import.openai.success.title'),
@@ -49,9 +69,11 @@ export const importOpenAI = async (app: App, workspaceId: string): Promise<boole
     })    
   }
 
+  return rc
+
 }
 
-const processOpenAI = async (app: App, workspaceId: string, file: string): Promise<boolean> => {
+const processOpenAI = async (app: App, workspaceId: string, file: string, report: OpenAIImportReport): Promise<boolean> => {
 
   try {
   
@@ -85,8 +107,9 @@ const processOpenAI = async (app: App, workspaceId: string, file: string): Promi
 
     // import
     const history = await loadHistory(app, workspaceId)
-    const attachmentPath = path.join(app.getPath('userData'), 'images')
-    const rc = await importOpenAIConversations(userData.id, data, history, sourcePath, attachmentPath)
+    const attachmentPath = attachmentsFilePath(app, workspaceId)
+    fs.mkdirSync(attachmentPath, { recursive: true })
+    const rc = await importOpenAIConversations(userData.id, data, history, sourcePath, attachmentPath, report)
 
     // save
     if (rc) {
@@ -102,7 +125,10 @@ const processOpenAI = async (app: App, workspaceId: string, file: string): Promi
   }
 }
 
-export const importOpenAIConversations = async (userId: string, data: any, history: History, sourcePath: string, attachmentPath: string): Promise<boolean> => {
+export const importOpenAIConversations = async (userId: string, data: any, history: History, sourcePath: string, attachmentPath: string, report?: OpenAIImportReport): Promise<boolean> => {
+
+  // counts are reported to the caller when it asks for them
+  const stats: OpenAIImportReport = report ?? { imported: 0, skippedConversations: 0, skippedAttachments: 0 }
 
   // do some checks on the data
   if (!Array.isArray(data)) {
@@ -159,18 +185,21 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
       const conversation = data[index]
       if (typeof conversation !== 'object') {
         console.error(`Invalid conversation at index ${index}`, conversation)
+        stats.skippedConversations++
         continue
       }
 
       // check if it an ephemeral conversation
       if (conversation.is_do_not_remember) {
         console.warn(`Skipping ephemeral conversation at index ${index}`, conversation)
+        stats.skippedConversations++
         continue
       }
 
       // check if it has an ID
       if (!conversation.id && !conversation.conversation_id) {
         console.error(`Conversation ID is missing at index ${index}`, conversation)
+        stats.skippedConversations++
         continue
       }
 
@@ -186,8 +215,6 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
           continue
         } else {
           console.log(`Chat with ID ${uuid} already exists but ChatGPT version is newer, updating it`)
-          history.chats = history.chats.filter(chat => chat.uuid !== uuid)
-          folder.chats = folder.chats.filter(chatId => chatId !== uuid)
         }
       }
 
@@ -219,6 +246,7 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
       // still not found?
       if (!childId) {
         console.error(`No messages found in conversation at index ${index}`, conversation)
+        stats.skippedConversations++
         continue
       }
 
@@ -321,10 +349,13 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
             const attachment = createAttachment(openaiAttachment.name, filepath, mimeType, attachmentPath)
             if (attachment) {
               message.attach(attachment)
-            } 
+            } else {
+              stats.skippedAttachments++
+            }
 
           } catch (error) {
             console.error(`Error processing attachment ${openaiAttachment.id} at index ${index}`, error)
+            stats.skippedAttachments++
           }
 
         }
@@ -351,14 +382,21 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
             // if role is 'user' then this is a new attachment
             // but we do not know the full filename so we need to find it
             if (role === 'user') {
+              let attachment: Attachment|null = null
               const candidates = rootFiles.filter((file) => file.includes(id))
               if (candidates.length === 1) {
-                const filepath = path.join(sourcePath, candidates[0])
-                const mimeType = extensionToMimeType(path.extname(filepath))
-                const attachment = createAttachment(id, filepath, mimeType, attachmentPath)
-                if (attachment) {
-                  message.attach(attachment)
+                try {
+                  const filepath = path.join(sourcePath, candidates[0])
+                  const mimeType = extensionToMimeType(path.extname(filepath))
+                  attachment = createAttachment(id, filepath, mimeType, attachmentPath)
+                } catch (error) {
+                  console.error(`Error processing image asset pointer "${id}" at index ${index}`, error)
                 }
+              }
+              if (attachment) {
+                message.attach(attachment)
+              } else {
+                stats.skippedAttachments++
               }
               continue
             }
@@ -366,6 +404,7 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
             // this should be an assistant message
             if (message.role !== 'assistant') {
               console.error(`Image asset pointer found in message with role "${message.role}" at index ${index}`, openaiEnvelope)
+              stats.skippedAttachments++
               continue
             }
 
@@ -382,12 +421,19 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
             }
             if (!filename) {
               console.error(`Image asset pointer "${id}" not found in dalle or user files at index ${index}`, openaiEnvelope)
+              stats.skippedAttachments++
               continue
             }
 
-            // copy the file
+            // copy the file: a failure loses this image, not the conversation
             const targetPath = path.join(attachmentPath, filename)
-            copyFile(filepath, targetPath)
+            try {
+              copyFile(filepath, targetPath)
+            } catch (error) {
+              console.error(`Error copying image asset pointer "${id}" at index ${index}`, error)
+              stats.skippedAttachments++
+              continue
+            }
 
             // try to find a prompt
             const prompt = part.metadata?.dalle?.prompt
@@ -484,12 +530,20 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
 
       // only add if we have enough messages
       if (chat.messages.length >= 3) {
+        if (existingChat) {
+          history.chats = history.chats.filter(c => c.uuid !== uuid)
+          folder.chats = folder.chats.filter(chatId => chatId !== uuid)
+        }
         history.chats.push(chat)
         folder.chats.push(chat.uuid)
+        stats.imported++
+      } else {
+        stats.skippedConversations++
       }
 
     } catch (error) {
       console.error(`Error processing conversation at index ${index}`, error)
+      stats.skippedConversations++
       continue
     }
 

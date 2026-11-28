@@ -1949,6 +1949,10 @@
         "title": "Error during import",
         "unknown": "Please select a valid ChatGPT conversations.json data file."
       },
+      "partial": {
+        "message": "{imported} conversation(s) were imported. {conversations} conversation(s) and {attachments} image(s) or file(s) could not be imported and were skipped.",
+        "title": "Import completed with skipped items"
+      },
       "success": {
         "message": "You can find your ChatGPT conversations in the folder view of chats.",
         "title": "Import successful!"

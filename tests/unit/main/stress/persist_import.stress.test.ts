@@ -6,6 +6,7 @@ import os from 'os'
 import path from 'path'
 import { History } from '@/types/index'
 import { kHistoryVersion } from '@/consts'
+import en from '@root/locales/en.json'
 import * as file from '@main/file'
 import { importMarkdown, parseMarkdownChat } from '@main/import_md'
 import { importOpenAI, importOpenAIConversations } from '@main/import_oai'
@@ -55,9 +56,10 @@ vi.mock('@main/file', async () => {
 })
 
 // real locale messages (the role names of every language), but translations that echo their key
+const { translate } = vi.hoisted(() => ({ translate: vi.fn<(key: string, params?: Record<string, unknown>) => string>((key) => key) }))
 vi.mock('@main/i18n', async (importOriginal) => {
   const mod: any = await importOriginal()
-  return { ...mod, useI18n: () => (key: string) => key }
+  return { ...mod, useI18n: () => translate }
 })
 
 // deterministic PRNG so a failing fuzz case can be replayed
@@ -473,11 +475,11 @@ describe('ChatGPT import', () => {
       expect(history.chats[0].messages[1].attachments).toEqual([])
     })
 
-    bug.each([
+    test.each([
       ['an uploaded image referenced from the text', pointerConversation, 'openai-pointer'],
       ['a generated image', dalleConversation, 'openai-dalle'],
     ])('a conversation with %s is not lost when the image cannot be copied', async (_, build, uuid) => {
-      // the copy error (here: target folder missing) is thrown up to the per-conversation catch, which skips the conversation and still returns true
+      // a copy error (here: target folder missing) loses the image only: it used to be thrown up to the per-conversation catch, which skipped the conversation and still returned true
       writeExport([])
       const history = emptyHistory()
       const rc = await importOpenAIConversations(userId, [build()], history, exportDir(), path.join(root, 'missing', 'images'))
@@ -485,30 +487,143 @@ describe('ChatGPT import', () => {
       expect(rc === false || history.chats[0].uuid === uuid).toBe(true)
     })
 
-    bug.each([
+    test.each([
       ['an uploaded image referenced from the text', pointerConversation, 'openai-pointer'],
       ['a generated image', dalleConversation, 'openai-dalle'],
     ])('importOpenAI on a current install keeps a conversation with %s', async (_, build, uuid) => {
-      // images are written to <userData>/images, the pre-workspace folder that no longer exists: ENOENT, conversation skipped, success dialog shown
+      // images used to be written to <userData>/images, the pre-workspace folder that no longer exists: ENOENT, conversation skipped, success dialog shown
       const history = await runImport([textConversation('c1', 'question', 'answer'), build()])
       expect(dialogMessages()).toEqual(['import.openai.success.title'])
       expect(history.chats.map(chat => chat.uuid)).toEqual(['openai-c1', uuid])
     })
 
-    bug('importOpenAI on a current install keeps the attachments of a message', async () => {
-      // same ENOENT on <userData>/images, swallowed per attachment: the conversation is imported without its image
+    test('importOpenAI on a current install keeps the attachments of a message', async () => {
+      // same ENOENT on <userData>/images, swallowed per attachment: the conversation was imported without its image
       const history = await runImport([attachmentConversation()])
       expect(history.chats).toHaveLength(1)
       expect(history.chats[0].messages[1].attachments).toHaveLength(1)
     })
 
-    bug('importOpenAI stores images in the images folder of the workspace', async () => {
+    test('importOpenAI stores images in the images folder of the workspace', async () => {
       // even when the legacy <userData>/images folder is still there, it is not the folder of the workspace (not listed with its attachments, not removed with it)
       fs.mkdirSync(legacyImages(), { recursive: true })
       fs.mkdirSync(workspaceImages(), { recursive: true })
       const history = await runImport([attachmentConversation(), pointerConversation(), dalleConversation()])
       expect(history.chats).toHaveLength(3)
       expect({ legacy: filesUnder(legacyImages()).length, workspace: filesUnder(workspaceImages()).length }).toEqual({ legacy: 0, workspace: 3 })
+    })
+
+  })
+
+  describe('report of what was skipped', () => {
+
+    const newReport = () => ({ imported: 0, skippedConversations: 0, skippedAttachments: 0 })
+
+    const missingImages = () => conversation('missing', [
+      { role: 'system' },
+      { role: 'user', contentType: 'multimodal_text', parts: [imagePointer('file-nowhere'), 'what is this?'], attachments: [{ id: 'file-gone', name: 'gone.png', mime_type: 'image/png' }] },
+      { role: 'assistant', parts: ['no idea'] },
+      { role: 'tool', contentType: 'multimodal_text', parts: [imagePointer('file-not-generated', 'a dog')] },
+    ])
+
+    test('an import where nothing is skipped reports only what was imported', async () => {
+      writeExport([])
+      fs.mkdirSync(workspaceImages(), { recursive: true })
+      const report = newReport()
+      const data = [textConversation('c1', 'question', 'answer'), attachmentConversation(), pointerConversation(), dalleConversation()]
+      expect(await importOpenAIConversations(userId, data, emptyHistory(), exportDir(), workspaceImages(), report)).toBe(true)
+      expect(report).toEqual({ imported: 4, skippedConversations: 0, skippedAttachments: 0 })
+    })
+
+    test('every conversation that is not imported is counted, whatever the reason', async () => {
+      const data: any[] = [
+        textConversation('ok', 'question', 'answer'),
+        42,
+        null,
+        { title: 'no id', mapping: {} },
+        { id: 'no-messages', title: 'x', mapping: {} },
+        { id: 'ephemeral', title: 'x', is_do_not_remember: true, mapping: textConversation('e', 'q', 'a').mapping },
+        conversation('too-short', [{ role: 'system' }, { role: 'user', parts: ['anyone?'] }]),
+        { id: 'bad-pointer', title: 'x', mapping: { 'client-created-root': { children: ['a'] }, a: { id: 'a', message: { author: { role: 'user' }, content: { parts: [{ content_type: 'image_asset_pointer' }] } } } } },
+      ]
+      const history = emptyHistory()
+      const report = newReport()
+      expect(await importOpenAIConversations(userId, data, history, exportDir(), workspaceImages(), report)).toBe(true)
+      expect(history.chats.map(chat => chat.uuid)).toEqual(['openai-ok'])
+      expect(report).toEqual({ imported: 1, skippedConversations: 7, skippedAttachments: 0 })
+    })
+
+    test('images and files the export does not contain are counted, their conversation is imported', async () => {
+      writeExport([])
+      fs.mkdirSync(workspaceImages(), { recursive: true })
+      const history = emptyHistory()
+      const report = newReport()
+      expect(await importOpenAIConversations(userId, [missingImages()], history, exportDir(), workspaceImages(), report)).toBe(true)
+      expect(history.chats.map(chat => chat.uuid)).toEqual(['openai-missing'])
+      expect(history.chats[0].messages.map(message => message.content)).toEqual(['', 'what is this?', 'no idea'])
+      expect(report).toEqual({ imported: 1, skippedConversations: 0, skippedAttachments: 3 })
+    })
+
+    test('images that cannot be copied are counted and leave no dangling link in the conversation', async () => {
+      writeExport([])
+      // a file where the images folder should be: every copy fails
+      const blocked = writeText(path.join(root, 'blocked'), 'not a folder')
+      const history = emptyHistory()
+      const report = newReport()
+      const data = [attachmentConversation(), pointerConversation(), dalleConversation()]
+      expect(await importOpenAIConversations(userId, data, history, exportDir(), blocked, report)).toBe(true)
+      expect(history.chats.map(chat => chat.uuid)).toEqual(['openai-attachment', 'openai-pointer', 'openai-dalle'])
+      expect(history.chats.flatMap(chat => chat.messages.flatMap(message => message.attachments))).toEqual([])
+      expect(history.chats[2].messages[2].content).toBe('here you go')
+      expect(report).toEqual({ imported: 3, skippedConversations: 0, skippedAttachments: 3 })
+    })
+
+    test('conversations that are already up to date are neither imported nor skipped', async () => {
+      const data = [textConversation('c1', 'question 1', 'answer 1'), textConversation('c2', 'question 2', 'answer 2')]
+      const history = emptyHistory()
+      await importOpenAIConversations(userId, data, history, exportDir(), workspaceImages())
+      const report = newReport()
+      data[1] = textConversation('c2', 'question 2', 'a better answer', 1700009999)
+      expect(await importOpenAIConversations(userId, data, history, exportDir(), workspaceImages(), report)).toBe(true)
+      expect(report).toEqual({ imported: 1, skippedConversations: 0, skippedAttachments: 0 })
+    })
+
+    test('a newer version of a conversation that cannot be imported does not remove the one already in the history', async () => {
+      const history = emptyHistory()
+      await importOpenAIConversations(userId, [textConversation('c1', 'question', 'answer')], history, exportDir(), workspaceImages())
+      const broken = textConversation('c1', 'question', 'a better answer', 1700009999)
+      broken.mapping['c1-2'].message.content.parts = 42
+      const tooShort = conversation('c1', [{ role: 'system' }, { role: 'user', parts: ['question'] }], 1700019999)
+      const report = newReport()
+      expect(await importOpenAIConversations(userId, [broken, tooShort], history, exportDir(), workspaceImages(), report)).toBe(true)
+      expect(report).toEqual({ imported: 0, skippedConversations: 2, skippedAttachments: 0 })
+      expect(history.chats.map(chat => chat.uuid)).toEqual(['openai-c1'])
+      expect(history.chats[0].messages[2].content).toBe('answer')
+      expect(history.folders[0].chats).toEqual(['openai-c1'])
+    })
+
+    test('importOpenAI tells how many conversations and images were skipped', async () => {
+      vi.mocked(file.pickFile).mockReturnValue(writeExport([textConversation('c1', 'question', 'answer'), missingImages(), { title: 'no id', mapping: {} }]))
+      expect(await importOpenAI(app, workspaceId)).toBe(true)
+      expect(readHistory().chats.map(chat => chat.uuid)).toEqual(['openai-c1', 'openai-missing'])
+      expect(vi.mocked(dialog.showMessageBox).mock.calls.map(call => call[0])).toMatchObject([{ type: 'warning', message: 'import.openai.partial.title', detail: 'import.openai.partial.message' }])
+      expect(translate).toHaveBeenCalledWith('import.openai.partial.message', { imported: 2, conversations: 1, attachments: 3 })
+    })
+
+    test('the skipped items message of the English locale shows the three counts', () => {
+      const message: string = en.import.openai.partial.message
+      for (const placeholder of ['{imported}', '{conversations}', '{attachments}']) expect(message).toContain(placeholder)
+      expect(en.import.openai.partial.title.length).toBeGreaterThan(0)
+    })
+
+    test('importOpenAI returns whether the import was done', async () => {
+      vi.mocked(file.pickFile).mockReturnValue(writeExport([textConversation('c1', 'question', 'answer')]))
+      expect(await importOpenAI(app, workspaceId)).toBe(true)
+      vi.mocked(file.pickFile).mockReturnValue(writeExport({ conversations: [] } as any))
+      expect(await importOpenAI(app, workspaceId)).toBe(false)
+      vi.mocked(file.pickFile).mockReturnValue(null)
+      expect(await importOpenAI(app, workspaceId)).toBe(false)
+      expect(dialogMessages()).toEqual(['import.openai.success.title', 'import.openai.error.title'])
     })
 
   })
