@@ -12,7 +12,9 @@ let base: string
 let outside: string
 
 beforeEach(() => {
-  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'witsy-containment-')))
+  // the native version, like the code under test: on Windows the temp folder can be an 8.3 short
+  // name (C:\Users\LONGNA~1\...) that only the native version expands
+  root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'witsy-containment-')))
   base = path.join(root, 'work')
   outside = path.join(root, 'work-secret')
   fs.mkdirSync(base)

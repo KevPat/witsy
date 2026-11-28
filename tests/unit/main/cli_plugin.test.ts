@@ -1065,11 +1065,14 @@ describe('CliPlugin', () => {
       expect(cat.success).toBe(true)
       expect(cat.stdout).toContain('formatted')
 
+      // PowerShell (the shell on Windows) prints each argument of echo on its own line
       const echo = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'echo rm mv del sudo' })
       expect(echo.success).toBe(true)
-      expect(echo.stdout).toContain('rm mv del sudo')
+      expect(echo.stdout.split(/\s+/).filter(Boolean)).toEqual(['rm', 'mv', 'del', 'sudo'])
 
-      const grep = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'ls | grep dd' })
+      // grep is not a Windows command: findstr is the one that is always there
+      const filter = process.platform === 'win32' ? 'findstr' : 'grep'
+      const grep = await plugin.execute({ model: 'test' }, { action: 'run_command', command: `ls | ${filter} dd` })
       expect(grep.success).toBe(true)
       expect(grep.stdout).toContain('dd.txt')
     })

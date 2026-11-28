@@ -2,6 +2,7 @@
 import { app, safeStorage } from 'electron'
 import Store from 'electron-store'
 import fs from 'fs'
+import path from 'path'
 import { afterEach, beforeEach, describe, expect, test, vi, Mock } from 'vitest'
 import defaultSettings from '@root/defaults/settings.json'
 import * as config from '@main/config'
@@ -231,7 +232,8 @@ test('Migration: MCP tool name old suffix format', async () => {
 
 describe('MCP secrets', () => {
 
-  const settingsFile = 'tests/fixtures/config/unknown/settings.json'
+  // as config.ts builds it: with the separators of the host
+  const settingsFile = path.join('tests/fixtures/config/unknown', 'settings.json')
 
   const servers = (): any => ({
     mcp: {

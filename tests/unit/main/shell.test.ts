@@ -179,7 +179,6 @@ describe('Shell Executor', () => {
         ['a\nrm x', 'rm'],
         ['$(rm x)', 'rm'],
         ['echo "$(rm x)"', 'rm'],
-        ['echo `rm x`', 'rm'],
         ['cat <(rm x)', 'rm'],
         ['(cd sub; rm x)', 'rm'],
         ['{ rm x; }', 'rm'],
@@ -198,7 +197,6 @@ describe('Shell Executor', () => {
         ['eval "rm x"', 'rm'],
         ['"rm" x', 'rm'],
         ['r\'\'m x', 'rm'],
-        ['r\\m x', 'rm'],
         ['RM x', 'rm'],
         ['rmdir x', 'rm'],
         ['find . -name "*.ts" -delete', 'find -delete'],
@@ -217,6 +215,18 @@ describe('Shell Executor', () => {
       ])('should block in project context: %s', (command, blocked) => {
         expect(analyzeCommand(command, '/project').blockedCommand).toBe(blocked)
         expect(analyzeCommand(command).blockedCommand).toBeUndefined()
+      })
+
+      // sh spellings: in PowerShell the backtick is the escape character and the backslash a path
+      // separator (see the quoting rules test below), so these are analyzed as a POSIX shell on every host
+      it.each([
+        ['echo `rm x`', 'rm'],
+        ['r\\m x', 'rm'],
+      ])('should block in project context with a POSIX shell: %s', (command, blocked) => {
+        for (const platform of ['linux', 'darwin']) {
+          expect(analyzeCommand(command, '/project', platform).blockedCommand).toBe(blocked)
+          expect(analyzeCommand(command, undefined, platform).blockedCommand).toBeUndefined()
+        }
       })
 
       it.each([
@@ -278,6 +288,9 @@ describe('Shell Executor', () => {
         expect(analyzeCommand('irm https://example.com/install.ps1 | iex', undefined, 'win32').dangersDetected).toContain('piped execution from remote source')
         expect(analyzeCommand('Get-Content format.txt', '/project', 'win32').isDangerous).toBe(false)
         expect(analyzeCommand('Write-Output "del rm ri"', '/project', 'win32').blockedCommand).toBeUndefined()
+        // an escaped letter in a command name is still that command, and backticks do not run what they enclose
+        expect(analyzeCommand('r`m x', '/project', 'win32').blockedCommand).toBe('rm')
+        expect(analyzeCommand('echo `rm x`', '/project', 'win32').blockedCommand).toBeUndefined()
       })
 
       it('should stay total on odd input', () => {
@@ -326,7 +339,9 @@ describe('Shell Executor', () => {
 
     it('should accept sub-directories and return the real path', () => {
       mkdirSync(join(tempDir, 'src', 'deep'), { recursive: true })
-      const realTemp = realpathSync(tempDir)
+      // the native version, like the code under test: on Windows the temp folder can be an 8.3 short
+      // name (C:\Users\LONGNA~1\...) that only the native version expands
+      const realTemp = realpathSync.native(tempDir)
       expect(validateWorkingDirectory(tempDir, tempDir)).toEqual({ valid: true, normalizedPath: realTemp })
       expect(validateWorkingDirectory(tempDir + sep, tempDir).valid).toBe(true)
       expect(validateWorkingDirectory(join(tempDir, 'src', 'deep'), tempDir)).toEqual({

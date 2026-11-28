@@ -54,7 +54,8 @@ describe('CliPlugin path confinement', () => {
         expect(isInside(workDir, validated), `"${candidate}" resolved to ${validated}`).toBe(true)
       }
     }
-  })
+  // 2,000 real path resolutions: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('fuzz: absolute paths outside the root are rejected', () => {
     const rand = mulberry32(42)
@@ -204,7 +205,8 @@ describe('CliPlugin edits', () => {
         expect(after).toEqual(lines)
       }
     }
-  })
+  // 300 files written, edited and read back: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('read_file tolerates out-of-range and non-integer bounds', async () => {
     fs.writeFileSync(path.join(workDir, 'a.txt'), 'one\ntwo\nthree')

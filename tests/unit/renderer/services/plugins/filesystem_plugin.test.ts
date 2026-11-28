@@ -21,7 +21,7 @@ const workspaceId = 'workspace1'
 
 // files next to the allowed folders, none inside: like fs.existsSync, `..` segments are resolved
 const kOutsideFiles = ['/tmp-evil/file.txt', '/tmpfile', '/home/user/Documents-private/tax.txt', '/home/user/.ssh/id_rsa', '/home/user/.bashrc', '/etc/passwd']
-const existsOutside = (filePath: string) => kOutsideFiles.includes(path.resolve(filePath))
+const existsOutside = (filePath: string) => kOutsideFiles.includes(path.posix.resolve(filePath))
 
 // like the main process: entries are reported with the path they have in the folder that is listed
 const listingOf = (dirPath: string, names: string[]): ListDirectoryResponse => ({
@@ -33,6 +33,16 @@ beforeEach(() => {
 
   vi.clearAllMocks()
   useWindowMock()
+
+  // the paths of these tests are POSIX paths, on every host: the real mapping with the POSIX rules,
+  // where home is /home/user, `exists` decides what exists and nothing is a link
+  // (with the rules of a Windows host, /tmp is C:\tmp)
+  window.api.file.resolveAllowedPath = vi.fn((targetPath: string, allowedPaths: string[]) => resolveAllowedPath(targetPath, allowedPaths, {
+    pathImpl: path.posix,
+    home: '/home/user',
+    exists: (filePath: string) => window.api.file.exists(filePath),
+    realPath: (filePath: string) => path.posix.resolve(filePath),
+  }))
 
   window.api.file.exists = vi.fn((path: string) => {
     return path.startsWith('/home/user/Documents/test')

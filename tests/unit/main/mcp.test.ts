@@ -596,13 +596,20 @@ test('Reload', async () => {
 })
 
 test('Install smithery', async () => {
-  const mcp = new Mcp(app)
-  expect(await mcp.getInstallCommand('smithery', 'server', 'key')).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
-  expect(await mcp.installServer('smithery', 'server', 'key')).toBe('success')
-  expect(spawnCalls).toHaveLength(1)
-  expect(spawnCalls[0].file).toBe('npx')
-  expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', 'server', '--client', 'witsy', '--key', 'key'])
-  expect(spawnCalls[0].options.shell).toBe(false)
+  // npx is started directly, except on Windows (see "starts npx through cmd.exe" below)
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  try {
+    const mcp = new Mcp(app)
+    expect(await mcp.getInstallCommand('smithery', 'server', 'key')).toBe('npx -y @smithery/cli@latest install server --client witsy --key key')
+    expect(await mcp.installServer('smithery', 'server', 'key')).toBe('success')
+    expect(spawnCalls).toHaveLength(1)
+    expect(spawnCalls[0].file).toBe('npx')
+    expect(spawnCalls[0].args).toStrictEqual(['-y', '@smithery/cli@latest', 'install', 'server', '--client', 'witsy', '--key', 'key'])
+    expect(spawnCalls[0].options.shell).toBe(false)
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
 })
 
 describe('Install server', () => {
@@ -693,6 +700,7 @@ describe('Install server', () => {
   })
 
   test('omits the key option without an API key', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
     installerOutput = 'successfully installed'
     const mcp = new Mcp(app)
     expect(await mcp.installServer('smithery', '@owner/server', '')).toBe('success')

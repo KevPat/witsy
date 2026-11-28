@@ -133,7 +133,8 @@ describe('creating skills', () => {
     }
     // nothing was written anywhere else
     expect(tree(nested).filter(entry => !entry.startsWith('userData/skills'))).toEqual(before)
-  })
+  // 120 folders created and listed: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('the same name used 30 times gives 30 different skills', () => {
     const roots = Array.from({ length: 30 }, () => createSkill(app, workspaceId, { name: 'My Skill', instructions: 'x' }).rootPath)
@@ -215,7 +216,8 @@ describe('reading skill files', () => {
       expect(result.content ?? '', candidate).not.toContain('TOP SECRET')
     }
     expect(getSkillFile(app, workspaceId, skillId, 'docs/./guide.md', 2, 2)).toMatchObject({ success: true, content: 'line 2' })
-  })
+  // 400 lookups on the real file system: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test.runIf(isPosix)('a file of the skill that is a link to a file outside of it is not returned', () => {
     // the containment check compares path strings only, and readFileSync follows the link

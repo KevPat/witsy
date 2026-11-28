@@ -90,7 +90,8 @@ describe('API key storage', () => {
       expect(loaded.engines[engine].apiKey).toMatch(new RegExp(`^key-${engine}-\\d+$`))
     }
     expect(readSettingsText()).not.toContain('key-')
-  })
+  // about 2,600 file writes and as many reads: more than the default 5 seconds on Windows
+  }, 60000)
 
   test('keys stay in settings.json when the user turned safe storage off', () => {
     const loaded = config.loadSettings(app)

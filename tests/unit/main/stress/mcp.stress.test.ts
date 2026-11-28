@@ -296,7 +296,9 @@ describe('installServer', () => {
     installer!.stdout.emit('data', Buffer.from('server successfully installed'))
     expect(await pending).toBe('success')
     expect(spawnCalls).toHaveLength(1)
-    expect([spawnCalls[0].file, ...spawnCalls[0].args]).toEqual(['npx', '-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy', '--key', 'key-123'])
+    // on Windows npx is a .cmd shim that only cmd.exe can start: the same arguments follow "cmd.exe /d /s /c"
+    const launcher = process.platform === 'win32' ? [process.env.comspec || 'cmd.exe', '/d', '/s', '/c'] : []
+    expect([spawnCalls[0].file, ...spawnCalls[0].args]).toEqual([...launcher, 'npx', '-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy', '--key', 'key-123'])
     expect(unquotedOperators(mcp.getInstallCommand('smithery', '@owner/server', 'key-123')!)).toBe(0)
   })
 
