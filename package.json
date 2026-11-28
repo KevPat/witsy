@@ -214,5 +214,18 @@
       "target": "portable"
     }
   },
-  "overrides": {}
+  "overrides": {
+    "@huggingface/transformers": {
+      "sharp": "^0.35.5"
+    },
+    "@mdit/plugin-katex": {
+      "katex": "$katex"
+    },
+    "exceljs": {
+      "uuid": "$uuid"
+    },
+    "pptxgenjs": {
+      "image-size": "^2.2.0"
+    }
+  }
 }
