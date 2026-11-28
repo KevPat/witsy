@@ -214,8 +214,8 @@ describe('markdown import', () => {
     expect(dialogMessages()).toHaveLength(1)
   })
 
-  bug('an export saved with a UTF-8 byte order mark is imported', async () => {
-    // the BOM stays in front of the "# " of the title line, which is then not recognised
+  test('an export saved with a UTF-8 byte order mark is imported', async () => {
+    // the BOM used to stay in front of the "# " of the title line, which was then not recognised
     pick('\uFEFF' + validChat(1))
     const chat = await importMarkdown(app).catch((error: Error) => error)
     expect(chat).toMatchObject({ title: 'Chat 1' })
@@ -409,7 +409,7 @@ describe('ChatGPT import', () => {
       expect(altered).toEqual([])
     })
 
-    bug.each([
+    test.each([
       ['a fullwidth comma', '你好，世界', 0xFF0C],
       ['a fullwidth exclamation mark', '太好了！', 0xFF01],
       ['a fullwidth question mark', '本当ですか？', 0xFF1F],
@@ -427,14 +427,14 @@ describe('ChatGPT import', () => {
       ['a vertical form', '︵a︶', 0xFE35],
       ['a replacement character', 'bad byte \uFFFD here', 0xFFFD],
     ])('text with %s is imported unchanged', async (_, text, cp) => {
-      // the filter keeps charCode < 57344 (0xE000): it removes the private use area and every assigned character above it
+      // the filter used to keep charCode < 57344 (0xE000): it removed the private use area and every assigned character above it
       expect(cp).toBeGreaterThan(0xF8FF)
       expect(text).toContain(String.fromCodePoint(cp))
       expect(await importText(text)).toBe(text)
     })
 
-    bug('fuzz: no code point outside U+E000-U+F8FF is dropped', async () => {
-      // everything from U+F900 to U+FFFF is dropped as well: CJK compatibility, presentation forms, half and full width forms
+    test('fuzz: no code point outside U+E000-U+F8FF is dropped', async () => {
+      // everything from U+F900 to U+FFFF used to be dropped as well: CJK compatibility, presentation forms, half and full width forms
       const rand = mulberry32(63744)
       const codePoints = [0xF900, 0xFAFF, 0xFB00, 0xFE0F, 0xFE30, 0xFF01, 0xFF0C, 0xFFEE, 0xFFFD]
       while (codePoints.length < 300) codePoints.push(0xF900 + Math.floor(rand() * (0xFFFE - 0xF900)))

@@ -512,8 +512,8 @@ export const importOpenAIConversations = async (userId: string, data: any, histo
               }
             }
 
-            // now remove all private use area characters
-            part = part.split('').filter((c: string) => c.charCodeAt(0) < 57344).join('')
+            // now remove all private use area characters (U+E000-U+F8FF, the citation markers of ChatGPT)
+            part = part.replace(/[\uE000-\uF8FF]/g, '')
 
             // now add it
             message.appendText({

@@ -139,8 +139,8 @@ describe('migrateHistoryImagePaths', () => {
     expect(failingCases(windows, 'win32', 2000, 100, 6)).toEqual([])
   })
 
-  bug.each(['darwin', 'linux'])('fuzz: a message with several images has all of them migrated on %s', (platform) => {
-    // the posix pattern starts with a greedy "file://(.*)" so only the last URL of a line is rewritten
+  test.each(['darwin', 'linux'])('fuzz: a message with several images has all of them migrated on %s', (platform) => {
+    // the posix pattern used to start with a greedy "file://(.*)" so only the last URL of a line was rewritten
     expect(failingCases(posix, platform, 3000, 100, 6)).toEqual([])
   })
 
@@ -281,8 +281,8 @@ describe('initializeWorkspace', () => {
     expect(readJson(docrepoFile()).map((repo: any) => repo.workspaceId)).toEqual([kDefaultWorkspaceId, otherWorkspaceId])
   })
 
-  bug.each(['darwin', 'linux'])('the first run on %s migrates every image of a message that holds several', (platform) => {
-    // greedy pattern of migrateHistoryImagePaths: the first image keeps pointing to the folder that was just moved away
+  test.each(['darwin', 'linux'])('the first run on %s migrates every image of a message that holds several', (platform) => {
+    // greedy pattern of migrateHistoryImagePaths: the first image used to keep pointing to the folder that was just moved away
     setPlatform(platform)
     const legacyDir = 'file:///Users/me/Library/Application Support/Witsy/images'
     writeText(path.join(userData, 'history.json'), legacyHistory(`![one](${legacyDir}/one.png) ![two](${legacyDir}/two.png)`))

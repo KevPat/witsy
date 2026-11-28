@@ -339,4 +339,19 @@ describe('migrateHistoryImagePaths', () => {
 
   })
 
+  test.each(['darwin', 'linux'])('should migrate every url of a line on %s', (platform) => {
+    const dir = 'file:///Users/user name/Library/Application Support/Witsy'
+    const input = `"content": "![one](${dir}/images/one.png) and ![two](${dir}/images/two.png)\\n![three](${dir}/images/three.png)",`
+    const output = `"content": "![one](${dir}/workspaces/$1-0000/images/one.png) and ![two](${dir}/workspaces/$1-0000/images/two.png)\\n![three](${dir}/workspaces/$1-0000/images/three.png)",`
+    const migrated = workspace.migrateHistoryImagePaths(input, '$1-0000', platform)
+    expect(migrated).toBe(output)
+    expect(workspace.migrateHistoryImagePaths(migrated, '$1-0000', platform)).toBe(migrated)
+  })
+
+  test.each(['darwin', 'linux'])('should leave other urls of the line alone on %s', (platform) => {
+    const input = '"content": "file:///tmp/photo.png file:///home/me/.config/Witsy/images/b.png file:///tmp/Witsy/other.png https://example.com/Witsy/images/a.png",'
+    const output = '"content": "file:///tmp/photo.png file:///home/me/.config/Witsy/workspaces/0000-0000/images/b.png file:///tmp/Witsy/other.png https://example.com/Witsy/images/a.png",'
+    expect(workspace.migrateHistoryImagePaths(input, '0000-0000', platform)).toBe(output)
+  })
+
 })

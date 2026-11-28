@@ -175,6 +175,21 @@ Assistant line 3
   expect(chat.messages[2].content).toBe('Assistant line 1\nAssistant line 2\nAssistant line 3')
 })
 
+test('parseMarkdownChat should ignore a UTF-8 byte order mark before the title', () => {
+  const chat = parseMarkdownChat(app, '\uFEFF# BOM Chat\n\n## You\n\nHello\n\n## Assistant\n\nHi\n')
+
+  expect(chat.title).toBe('BOM Chat')
+  expect(chat.messages.map(m => m.role)).toEqual(['user', 'assistant'])
+  expect(chat.messages[0].content).toBe('Hello')
+})
+
+test('parseMarkdownChat should only strip a byte order mark at the very start', () => {
+  const chat = parseMarkdownChat(app, '# Chat\n\n## You\n\nzero\uFEFFwidth\n')
+
+  expect(chat.messages[0].content).toBe('zero\uFEFFwidth')
+  expect(() => parseMarkdownChat(app, '\uFEFF## System\n\nTest message\n')).toThrow('No title found')
+})
+
 test('parseMarkdownChat should throw error for missing title', () => {
   const markdown = `## System
 
@@ -395,6 +410,17 @@ Hi there!
 
   expect(result).not.toBeNull()
   expect(result?.title).toBe('Base64 Chat')
+})
+
+test('importMarkdown imports a file saved with a byte order mark', async () => {
+  const markdown = '# BOM Chat\n\n## You\n\nHello!\n\n## Assistant\n\nHi there!\n'
+  ;(pickFile as Mock).mockReturnValue(['/test/file.md'])
+
+  ;(fs.readFileSync as Mock).mockReturnValue('\uFEFF' + markdown)
+  expect((await importMarkdown(app))?.title).toBe('BOM Chat')
+
+  ;(fs.readFileSync as Mock).mockReturnValue(Buffer.from('\uFEFF' + markdown).toString('base64'))
+  expect((await importMarkdown(app))?.title).toBe('BOM Chat')
 })
 
 test('importMarkdown imports multiple files with workspaceId', async () => {
