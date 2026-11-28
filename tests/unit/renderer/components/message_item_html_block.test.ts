@@ -8,9 +8,12 @@ import { withChatCallbacks } from '@root/vitest.setup'
 import { store } from '@services/store'
 import { stubTeleport } from '@tests/mocks/stubs'
 import { useWindowMock } from '@tests/mocks/window'
+import { artifactMessagesOf, artifactPageOf } from '@tests/mocks/artifact'
+import { kArtifactFrameUrl } from '@/consts'
 
 // The preview frame has no allow-same-origin: the app cannot read the document of the artifact
-// and only talks to it with messages. The first part checks what the app does with the messages
+// and only talks to it with messages. The frame loads the artifact page of the app, which is sent
+// the html of the artifact when it says it is loaded (see @tests/mocks/artifact). The first part checks what the app does with the messages
 // it receives, the second part runs the script injected in the artifact in a window of its own.
 
 enableAutoUnmount(afterEach)
@@ -26,7 +29,7 @@ const mountBlock = async (content = kContent, transient = false): Promise<VueWra
 
 const frameOf = (wrapper: VueWrapper<any>): HTMLIFrameElement => wrapper.find('iframe').element as HTMLIFrameElement
 
-const idOf = (wrapper: VueWrapper<any>): string => wrapper.find('iframe').attributes('srcdoc').match(/const id = '([^']+)'/)[1]
+const idOf = async (wrapper: VueWrapper<any>): Promise<string> => (await artifactPageOf(wrapper)).match(/const id = '([^']+)'/)[1]
 
 const send = async (source: Window | null, data: unknown) => {
   window.dispatchEvent(new MessageEvent('message', { data, source }))
@@ -65,7 +68,44 @@ describe('html preview: the frame', () => {
   test('scripts run in the frame but not in the origin of the app', async () => {
     const wrapper = await mountBlock()
     expect(wrapper.find('iframe').attributes('sandbox').split(/\s+/).sort()).toEqual(['allow-forms', 'allow-scripts'])
-    expect(wrapper.find('iframe').attributes('srcdoc')).toContain('<script>document.body.dataset.ran = "yes"</script>')
+    expect(await artifactPageOf(wrapper)).toContain('<script>document.body.dataset.ran = "yes"</script>')
+  })
+
+  test('the frame loads the artifact page of the app: the html is not in the markup', async () => {
+    // a srcdoc frame would get the content security policy of the app, which forbids inline scripts
+    const wrapper = await mountBlock()
+    const iframe = wrapper.find('iframe')
+    expect(iframe.attributes('src')).toBe(kArtifactFrameUrl)
+    expect(iframe.attributes('srcdoc')).toBeUndefined()
+    expect(wrapper.html()).not.toContain('Quarterly report</h1>')
+  })
+
+  test('the page is sent each time the frame says it is loaded', async () => {
+    // an artifact that reloads itself asks again
+    const wrapper = await mountBlock()
+    const first = await artifactMessagesOf(wrapper)
+    const second = await artifactMessagesOf(wrapper)
+    expect(first).toHaveLength(1)
+    expect(first[0]).toEqual({ type: 'witsy-artifact-content', html: expect.stringContaining('<h1>Quarterly report</h1>') })
+    expect(second).toEqual(first)
+  })
+
+  test('the page is only sent to the frame of the preview', async () => {
+    const wrapper = await mountBlock()
+    const other = await mountBlock()
+    expect(await artifactMessagesOf(wrapper, window)).toEqual([])
+    expect(await artifactMessagesOf(wrapper, null)).toEqual([])
+    expect(await artifactMessagesOf(wrapper, (other.find('iframe').element as HTMLIFrameElement).contentWindow)).toEqual([])
+  })
+
+  test('other html means another frame', async () => {
+    const wrapper = await mountBlock()
+    const before = frameOf(wrapper)
+    await wrapper.setProps({ content: kContent.replace('Quarterly report', 'Yearly report') })
+    const after = frameOf(wrapper)
+    expect(after).not.toBe(before)
+    expect(after.getAttribute('src')).toBe(kArtifactFrameUrl)
+    expect(await artifactPageOf(wrapper)).toContain('<h1>Yearly report</h1>')
   })
 
   test('the frame of a streaming message has the same sandbox', async () => {
@@ -73,14 +113,43 @@ describe('html preview: the frame', () => {
     expect(wrapper.find('iframe').exists()).toBe(false)
     await wrapper.setProps({ content: '```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Report</title>\n</head>\n<body>\n<h1>Quarter\n```' })
     expect(wrapper.find('iframe').attributes('sandbox').split(/\s+/).sort()).toEqual(['allow-forms', 'allow-scripts'])
-    expect(wrapper.find('iframe').attributes('srcdoc')).toContain('witsy-artifact-height')
+    const messages = await artifactMessagesOf(wrapper)
+    expect(messages[0].html).toContain('witsy-artifact-height')
+    expect(messages[0].html).toContain('<title>Report</title>')
+    expect(messages[0].html).not.toContain('Quarter')
+    // the body received so far follows the page
+    expect(messages[1]).toEqual({ type: 'update', body: '\n<h1>Quarter' })
+    expect(messages).toHaveLength(2)
+  })
+
+  test('the frame of a streaming message is replaced by the one of the complete page', async () => {
+    const wrapper = await mountBlock('```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Report</title>\n```', true)
+    await wrapper.setProps({ content: '```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Report</title>\n</head>\n<body>\n<h1>Quarter\n```' })
+    const streaming = frameOf(wrapper)
+    await wrapper.setProps({ content: kContent, transient: false })
+    expect(frameOf(wrapper)).not.toBe(streaming)
+    const messages = await artifactMessagesOf(wrapper)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].html).toContain('<script>document.body.dataset.ran = "yes"</script>')
+  })
+
+  test('the frame of the complete page starts with the height of the streaming one', async () => {
+    // no jump of the message when the stream ends: the new frame reports its own height soon after
+    const wrapper = await mountBlock('```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Report</title>\n```', true)
+    await wrapper.setProps({ content: '```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Report</title>\n</head>\n<body>\n<h1>Quarter\n```' })
+    await send(frameOf(wrapper).contentWindow, { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 432 })
+    expect(frameOf(wrapper).style.height).toBe('432px')
+    await wrapper.setProps({ content: kContent, transient: false })
+    expect(frameOf(wrapper).style.height).toBe('432px')
+    await send(frameOf(wrapper).contentWindow, { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 640 })
+    expect(frameOf(wrapper).style.height).toBe('640px')
   })
 
   test('each preview has its own channel id', async () => {
     const first = await mountBlock()
     const second = await mountBlock()
-    expect(idOf(first)).toMatch(/^[0-9a-f-]{36}$/)
-    expect(idOf(first)).not.toBe(idOf(second))
+    expect(await idOf(first)).toMatch(/^[0-9a-f-]{36}$/)
+    expect(await idOf(first)).not.toBe(await idOf(second))
   })
 
   test.each([
@@ -89,9 +158,9 @@ describe('html preview: the frame', () => {
     ['a page with an uppercase head', '<!DOCTYPE html>\n<HTML><HEAD><TITLE>T</TITLE></HEAD><BODY><p>Hello</p></BODY></HTML>', /<TITLE>T<\/TITLE>\s*<script data-witsy-bridge>[^]*<\/script>\s*<\/HEAD>/],
   ])('%s gets the channel script without losing its doctype', async (_, page, expected) => {
     const wrapper = await mountBlock(page)
-    const srcdoc = wrapper.find('iframe').attributes('srcdoc')
-    expect(srcdoc).toMatch(expected)
-    expect(srcdoc).toContain('<p>Hello</p>')
+    const sent = await artifactPageOf(wrapper)
+    expect(sent).toMatch(expected)
+    expect(sent).toContain('<p>Hello</p>')
   })
 
 })
@@ -101,9 +170,9 @@ describe('html preview: the height reported by the frame', () => {
   test('a report of the frame sets its height', async () => {
     const wrapper = await mountBlock()
     const iframe = frameOf(wrapper)
-    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: idOf(wrapper), height: 432 })
+    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 432 })
     expect(iframe.style.height).toBe('432px')
-    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: idOf(wrapper), height: 120.4 })
+    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 120.4 })
     expect(iframe.style.height).toBe('121px')
   })
 
@@ -111,7 +180,7 @@ describe('html preview: the height reported by the frame', () => {
     const wrapper = await mountBlock()
     const other = await mountBlock()
     const iframe = frameOf(wrapper)
-    const message = { type: 'witsy-artifact-height', id: idOf(wrapper), height: 432 }
+    const message = { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 432 }
     await send(window, message)
     await send(null, message)
     await send(frameOf(other).contentWindow, message)
@@ -135,14 +204,14 @@ describe('html preview: the height reported by the frame', () => {
   ])('a report with %s is ignored', async (_, build) => {
     const wrapper = await mountBlock()
     const iframe = frameOf(wrapper)
-    await send(iframe.contentWindow, build(idOf(wrapper)))
+    await send(iframe.contentWindow, build(await idOf(wrapper)))
     expect(iframe.style.height).toBe('')
   })
 
   test('a page cannot make its frame taller than the limit', async () => {
     const wrapper = await mountBlock()
     const iframe = frameOf(wrapper)
-    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: idOf(wrapper), height: 1e12 })
+    await send(iframe.contentWindow, { type: 'witsy-artifact-height', id: await idOf(wrapper), height: 1e12 })
     expect(iframe.style.height).toBe('20000px')
   })
 
@@ -150,7 +219,7 @@ describe('html preview: the height reported by the frame', () => {
     const wrapper = await mountBlock()
     const iframe = frameOf(wrapper)
     const source = iframe.contentWindow
-    const id = idOf(wrapper)
+    const id = await idOf(wrapper)
     const removed = vi.spyOn(window, 'removeEventListener')
     wrapper.unmount()
     expect(removed.mock.calls.some(([event]) => event === 'message')).toBe(true)
@@ -181,10 +250,10 @@ describe('html preview: pdf export', () => {
     const iframe = frameOf(wrapper)
     const posted = vi.spyOn(iframe.contentWindow, 'postMessage')
     await askForPdf(wrapper)
-    expect(posted).toHaveBeenCalledWith({ type: 'witsy-artifact-snapshot-request', id: idOf(wrapper) }, '*')
+    expect(posted).toHaveBeenCalledWith({ type: 'witsy-artifact-snapshot-request', id: await idOf(wrapper) }, '*')
     expect(window.api.app.printToPdf).not.toHaveBeenCalled()
 
-    await send(iframe.contentWindow, { type: 'witsy-artifact-snapshot', id: idOf(wrapper), html: kSnapshot })
+    await send(iframe.contentWindow, { type: 'witsy-artifact-snapshot', id: await idOf(wrapper), html: kSnapshot })
     expect(window.api.app.printToPdf).toHaveBeenCalledOnce()
     expect(printedHtml()).toContain('<p id="rendered">rendered by the page</p>')
     expect(printedHtml()).not.toContain('data-witsy-bridge')
@@ -220,7 +289,7 @@ describe('html preview: pdf export', () => {
     vi.useFakeTimers()
     const wrapper = await mountBlock()
     await askForPdf(wrapper)
-    await send(fromFrame ? frameOf(wrapper).contentWindow : window, build(idOf(wrapper)))
+    await send(fromFrame ? frameOf(wrapper).contentWindow : window, build(await idOf(wrapper)))
     expect(window.api.app.printToPdf).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(2000)
     expect(window.api.app.printToPdf).toHaveBeenCalledOnce()
@@ -230,7 +299,7 @@ describe('html preview: pdf export', () => {
 
   test('an answer nobody asked for exports nothing', async () => {
     const wrapper = await mountBlock()
-    await send(frameOf(wrapper).contentWindow, { type: 'witsy-artifact-snapshot', id: idOf(wrapper), html: kSnapshot })
+    await send(frameOf(wrapper).contentWindow, { type: 'witsy-artifact-snapshot', id: await idOf(wrapper), html: kSnapshot })
     expect(window.api.app.printToPdf).not.toHaveBeenCalled()
     expect(window.api.file.save).not.toHaveBeenCalled()
   })
@@ -243,7 +312,7 @@ describe('html preview: pdf export', () => {
     await askForPdf(wrapper)
     await askForPdf(wrapper)
     expect(posted).toHaveBeenCalledOnce()
-    await send(iframe.contentWindow, { type: 'witsy-artifact-snapshot', id: idOf(wrapper), html: kSnapshot })
+    await send(iframe.contentWindow, { type: 'witsy-artifact-snapshot', id: await idOf(wrapper), html: kSnapshot })
     expect(window.api.app.printToPdf).toHaveBeenCalledTimes(2)
   })
 
@@ -256,7 +325,7 @@ describe('html preview: the script injected in the page', () => {
   const loadPage = async (content = kContent, height = 432) => {
     const wrapper = await mountBlock(content)
     const posted = vi.fn()
-    const dom = new JSDOM(wrapper.find('iframe').attributes('srcdoc'), {
+    const dom = new JSDOM(await artifactPageOf(wrapper), {
       runScripts: 'dangerously',
       beforeParse: (frame) => {
         frame.postMessage = posted
@@ -267,7 +336,7 @@ describe('html preview: the script injected in the page', () => {
     const receive = (data: unknown, source: unknown = dom.window) => {
       dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data, source: source as any }))
     }
-    return { id: idOf(wrapper), dom, posted, receive }
+    return { id: await idOf(wrapper), dom, posted, receive }
   }
 
   test('the page reports its height when it is loaded', async () => {

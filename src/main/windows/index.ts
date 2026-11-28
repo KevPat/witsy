@@ -155,7 +155,12 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: false,
+      // on for the packaged app, whose page is a file: Electron lets such a page reach other origins
+      // (the model providers, local images drawn in a canvas) whatever this setting is, and the frames
+      // that are not the app no longer get that access. The page of the dev server is an http page:
+      // with web security it could neither call the providers nor show a local image.
+      // See src/main/web_security.ts.
+      webSecurity: !MAIN_WINDOW_VITE_DEV_SERVER_URL,
       defaultEncoding: 'UTF-8',
       devTools: process.env.DEBUG ? true : false,
       sandbox: true,

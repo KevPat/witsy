@@ -19,8 +19,9 @@ const mdOptions: MarkdownIt.Options = {
         code += hljs.highlightAuto(str).value;
       }
       code += '</code></pre>';
-      code += '<p><a onclick="navigator.clipboard.writeText(window.api.base64.decode(\'' + Buffer.from(str).toString('base64') + '\'));';
-      code += 'this.innerHTML = \'Copied!\'; setTimeout(() => this.innerHTML = \'Copy code\', 1000); return false;" class="copy-code">Copy code</a></p>';
+      // no inline handler: the content security policy of the app forbids them. The click is handled
+      // by the renderer (src/renderer/services/copy_code.ts), which reads the code from the attribute
+      code += '<p><a class="copy-code" data-copy-code="' + Buffer.from(str).toString('base64') + '">Copy code</a></p>';
       return code;
     } catch (error) {
       console.log(error)

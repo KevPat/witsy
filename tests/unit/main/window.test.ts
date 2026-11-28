@@ -127,6 +127,8 @@ vi.mock('@main/utils', async () => {
 const expectCreateWebPreferences = (callParams: any) => {
   expect(callParams.webPreferences.nodeIntegration).toBe(false)
   expect(callParams.webPreferences.contextIsolation).toBe(true)
+  // these tests run with the dev server (MAIN_WINDOW_VITE_DEV_SERVER_URL above): an http page.
+  // The packaged app has web security on: see 'The packaged app window has web security on'
   expect(callParams.webPreferences.webSecurity).toBe(false)
   expect(callParams.webPreferences.defaultEncoding).toBe('UTF-8')
   expect(callParams.webPreferences.sandbox).toBe(true)
@@ -424,6 +426,26 @@ test('The app window only navigates to the dev server', async () => {
     expect(navigate(url), url).toBe('cancelled')
   }
   expect(shell.openExternal).toHaveBeenCalledTimes(elsewhere.length)
+})
+
+test('The packaged app window has web security on', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined)
+  window.createWindow()
+  const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
+  expect(callParams.webPreferences.webSecurity).toBe(true)
+  // nothing gives it back what web security takes away
+  expect(callParams.webPreferences.allowRunningInsecureContent).toBeUndefined()
+  expect(callParams.webPreferences.nodeIntegration).toBe(false)
+  expect(callParams.webPreferences.contextIsolation).toBe(true)
+  expect(callParams.webPreferences.sandbox).toBe(true)
+})
+
+test('The dev server window has web security off', async () => {
+  // an http page: with web security it could not call the model providers nor show a local image
+  window.createWindow()
+  const callParams = (BrowserWindow as unknown as Mock).mock.calls[0][0]
+  expect(callParams.webPreferences.webSecurity).toBe(false)
 })
 
 test('The packaged app window only navigates to its own page', async () => {

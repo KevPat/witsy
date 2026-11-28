@@ -9,12 +9,16 @@ import { withChatCallbacks } from '@root/vitest.setup'
 import { computeBlocks } from '@services/message_block_parser'
 import { store } from '@services/store'
 import { useWindowMock } from '@tests/mocks/window'
+import { artifactPageOf } from '@tests/mocks/artifact'
+import { kArtifactFrameUrl } from '@/consts'
 
 // An assistant message can contain <artifact>...html...</artifact>. The page is written by the
 // model, so by whoever controls what the model has read, and it is previewed in an iframe inside
 // the chat window without a click. The chat window has the preload api (files, shell, python),
 // so the frame must not be able to reach its parent. jsdom does not run the scripts of the frame:
 // these tests only look at the attributes that decide what a real browser would allow.
+// The frame loads the artifact page of the app and is sent the html by message (@tests/mocks/artifact):
+// tools/web_security_probe.cjs runs that in a real Electron.
 
 enableAutoUnmount(afterEach)
 
@@ -36,14 +40,14 @@ const sandboxTokens = (wrapper: VueWrapper<any>): string[] | null => {
 }
 
 const mountBlock = async (content: string, transient = false): Promise<VueWrapper<any>> => {
-  const wrapper = mount(MessageItemHtmlBlock, withChatCallbacks({ props: { title: 'Report', content, transient } }))
+  const wrapper = mount(MessageItemHtmlBlock, withChatCallbacks({ attachTo: document.body, props: { title: 'Report', content, transient } }))
   await nextTick()
   return wrapper
 }
 
 const mountMessage = async (content: string): Promise<VueWrapper<any>> => {
   const message = new Message('assistant', content)
-  const wrapper = mount(MessageItemBody, withChatCallbacks({ props: { message, toolCallsDisplay: 'none' } }))
+  const wrapper = mount(MessageItemBody, withChatCallbacks({ attachTo: document.body, props: { message, toolCallsDisplay: 'none' } }))
   await nextTick()
   return wrapper
 }
@@ -87,14 +91,18 @@ describe('html artifacts: how they reach the preview', () => {
     const wrapper = await mountMessage(`Here you go:\n\n${kArtifacts[0][1]}`)
     const iframe = wrapper.find('iframe')
     expect(iframe.exists()).toBe(true)
-    expect(iframe.attributes('srcdoc')).toContain(kPayload)
+    expect(await artifactPageOf(wrapper)).toContain(kPayload)
   })
 
-  test('the page is passed with srcdoc and never with src', async () => {
+  test('the page is passed by message to the artifact page of the app, never in a url or in the markup', async () => {
+    // a srcdoc, data: or blob: frame would get the content security policy of the app; a url made of the
+    // page would be chosen by the artifact. The frame always loads the same fixed page of the app
     const wrapper = await mountBlock(kContents[0][1])
     const iframe = wrapper.find('iframe')
-    expect(iframe.attributes('srcdoc')).toContain('<h1>Quarterly report</h1>')
-    expect(iframe.attributes('src')).toBeUndefined()
+    expect(iframe.attributes('src')).toBe(kArtifactFrameUrl)
+    expect(iframe.attributes('srcdoc')).toBeUndefined()
+    expect(wrapper.html()).not.toContain('Quarterly report</h1>')
+    expect(await artifactPageOf(wrapper)).toContain('<h1>Quarterly report</h1>')
   })
 
   test('the user can switch the preview off and sees the source as text', async () => {
@@ -149,7 +157,8 @@ describe('html artifacts: the sandbox of the preview', () => {
     const wrapper = await mountMessage(`Here you go:\n\n${content}`)
     const tokens = sandboxTokens(wrapper)
     expect(tokens).not.toBeNull()
-    expect(wrapper.find('iframe').attributes('srcdoc')).toContain(kPayload)
+    expect(wrapper.find('iframe').attributes('src')).toBe(kArtifactFrameUrl)
+    expect(await artifactPageOf(wrapper)).toContain(kPayload)
     expect(tokens.includes('allow-scripts') && tokens.includes('allow-same-origin'), `sandbox="${tokens.join(' ')}"`).toBe(false)
   })
 

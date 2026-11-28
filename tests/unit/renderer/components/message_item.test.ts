@@ -420,8 +420,11 @@ test('Assistant artifact with HTML preview', async () => {
   let iframe = artifact.find('iframe')
   expect(iframe.exists()).toBe(true)
   expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
-  expect(iframe.attributes('srcdoc')).toContain('<body></body>')
-  expect(iframe.attributes('srcdoc')).toContain('window.addEventListener')
+  // the frame loads the artifact page of the app, which is sent the html when it is loaded
+  expect(iframe.attributes('src')).toBe('witsy-artifact://frame/')
+  expect(iframe.attributes('srcdoc')).toBeUndefined()
+  expect(artifactComponent.vm.html).toContain('<body></body>')
+  expect(artifactComponent.vm.html).toContain('window.addEventListener')
   expect(artifact.find('.html-loading').exists()).toBe(false)
 
   // Check for preview controls
@@ -459,9 +462,12 @@ test('Assistant artifact with HTML preview (non-transient)', async () => {
   if (iframe.exists()) {
     // Non-transient message should show HTML immediately (no loading message)
     expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
-    expect(iframe.attributes('srcdoc')).toContain('<!DOCTYPE html>')
-    expect(iframe.attributes('srcdoc')).toContain('<h1>Hello from DOCTYPE</h1>')
-    expect(iframe.attributes('srcdoc')).not.toContain('common.htmlGeneration')
+    expect(iframe.attributes('src')).toBe('witsy-artifact://frame/')
+    expect(iframe.attributes('srcdoc')).toBeUndefined()
+    const page = wrapper.findComponent(MessageItemHtmlBlock).vm.html
+    expect(page).toContain('<!DOCTYPE html>')
+    expect(page).toContain('<h1>Hello from DOCTYPE</h1>')
+    expect(page).not.toContain('common.htmlGeneration')
   }
 
 })

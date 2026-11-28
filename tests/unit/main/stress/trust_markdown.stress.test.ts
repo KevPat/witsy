@@ -18,8 +18,9 @@ const mulberry32 = (seed: number) => () => {
 const kAppUrl = 'file:///app/renderer/main_window/index.html'
 const kAllowedProtocols = ['http:', 'https:', 'mailto:']
 
-// the only inline handler the renderer adds itself: the "Copy code" link below a code block
-const kCopyCodeHandler = /^navigator\.clipboard\.writeText\(window\.api\.base64\.decode\('[A-Za-z0-9+/=]*'\)\);this\.innerHTML = 'Copied!'; setTimeout\(\(\) => this\.innerHTML = 'Copy code', 1000\); return false;$/
+// the renderer adds no inline handler itself: the content security policy of the app forbids them.
+// The "Copy code" link below a code block carries the code, base64 encoded, in an attribute
+const kCopyCodeAttribute = 'data-copy-code'
 
 // elements that markdown has no syntax for
 const kActiveElements = 'script, iframe, frame, object, embed, form, input, button, textarea, select, base, meta, link, style, video, audio, svg, math:not(.katex math), img'
@@ -37,7 +38,6 @@ const eventHandlers = (root: DocumentFragment): string[] => {
   for (const el of root.querySelectorAll('*')) {
     for (const attr of Array.from(el.attributes)) {
       if (!attr.name.toLowerCase().startsWith('on')) continue
-      if (el.matches('a.copy-code') && attr.name === 'onclick' && kCopyCodeHandler.test(attr.value)) continue
       found.push(`${attr.name} on ${describeElement(el)}`)
     }
   }
@@ -207,8 +207,9 @@ describe('renderMarkdown: content that is neutralized today', () => {
     const code = `'); alert(1); ('\n</a><img src=x onerror=alert(1)>\n\\'); alert(2); //`
     const root = parse(`\`\`\`js\n${code}\n\`\`\``)
     const link = root.querySelector('a.copy-code')
-    expect(link.getAttribute('onclick')).toMatch(kCopyCodeHandler)
-    const base64 = link.getAttribute('onclick').match(/decode\('([^']*)'\)/)[1]
+    expect(link.getAttributeNames().sort()).toEqual(['class', kCopyCodeAttribute])
+    const base64 = link.getAttribute(kCopyCodeAttribute)
+    expect(base64).toMatch(/^[A-Za-z0-9+/=]*$/)
     expect(Buffer.from(base64, 'base64').toString()).toBe(`${code}\n`)
     expect(violations(`\`\`\`js\n${code}\n\`\`\``)).toEqual([])
   })

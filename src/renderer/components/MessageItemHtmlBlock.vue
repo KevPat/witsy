@@ -23,7 +23,7 @@
     </div>
     <div class="panel-body variable-font-size" ref="panelBody">
       <MessageItemBody v-if="!previewHtml" :message="message" tool-calls-display="none" />
-      <iframe ref="htmlIframe" sandbox="allow-scripts allow-forms" v-else-if="!transient || headComplete" :srcdoc="html" style="width: 100%; border: none;" />
+      <iframe ref="htmlIframe" :key="frameGeneration" sandbox="allow-scripts allow-forms" v-else-if="!transient || headComplete" :src="kArtifactFrameUrl" :style="{ width: '100%', border: 'none', height: frameHeight }" />
       <div v-else class="html-loading">{{ t('common.htmlGeneration') }}</div>
     </div>
 
@@ -34,9 +34,11 @@
 
 import { useArtifactCopy } from '@composables/artifact_copy'
 import useEventListener from '@composables/event_listener'
+import { kArtifactContentMessage, kArtifactFrameUrl, kArtifactReadyMessage } from '@/consts'
 import Message from '@models/message'
 import { togglePanel } from '@renderer/utils/panel'
 import { t } from '@services/i18n'
+import { buildFrameBridge, injectFrameBridge, kFrameHeightMessage, kFrameSnapshotMessage, kFrameSnapshotRequestMessage } from '@services/artifact_frame'
 import { addExtension, extractCodeBlockContent, extractHtmlContent as extractHtml } from '@services/markdown'
 import { exportToPdf } from '@services/pdf'
 import { store } from '@services/store'
@@ -64,57 +66,13 @@ const kSnapshotTimeout = 2000
 
 const frameId = crypto.randomUUID()
 
-// The artifact runs in an opaque origin (no allow-same-origin), so the app cannot read its document
-// and it cannot read the app's: the two only exchange messages. An opaque origin cannot be named
-// as a postMessage target, hence '*' on both sides; each side checks event.source instead.
-// The height is reported at fixed moments and not from a ResizeObserver: the app sets the frame
-// height from these reports, and a page sized in vh would then grow on every report, without end.
-// For the same reason a resize is only reported when the width changed.
-const frameBridge = `
-<script data-witsy-bridge>
-(() => {
-  const id = '${frameId}';
-  const post = (message) => window.parent.postMessage(message, '*');
-  const reportHeight = () => post({ type: 'witsy-artifact-height', id, height: document.documentElement.offsetHeight });
-  const snapshot = () => {
-    const root = document.documentElement.cloneNode(true);
-    const canvases = document.querySelectorAll('canvas');
-    root.querySelectorAll('canvas').forEach((canvas, index) => {
-      try {
-        const image = document.createElement('img');
-        image.src = canvases[index].toDataURL('image/png');
-        image.style.cssText = canvas.style.cssText;
-        if (!image.style.width) image.style.width = canvases[index].width + 'px';
-        if (!image.style.height) image.style.height = canvases[index].height + 'px';
-        canvas.replaceWith(image);
-      } catch (e) { /* tainted canvas */ }
-    });
-    return root.outerHTML;
-  };
-  let width = window.innerWidth;
-  window.addEventListener('message', (event) => {
-    if (event.source !== window.parent || !event.data) return;
-    if (event.data.type === 'update' && document.body) {
-      document.body.innerHTML = event.data.body;
-      reportHeight();
-    } else if (event.data.type === 'witsy-artifact-snapshot-request' && event.data.id === id) {
-      post({ type: 'witsy-artifact-snapshot', id, html: snapshot() });
-    }
-  });
-  window.addEventListener('load', () => {
-    reportHeight();
-    setTimeout(reportHeight, 100); // what the page renders in its own load handlers
-  });
-  let resizeTimeout;
-  window.addEventListener('resize', () => {
-    if (window.innerWidth === width) return;
-    width = window.innerWidth;
-    clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(reportHeight, 100);
-  });
-})();
-<\/script>
-`
+// The artifact is not a srcdoc frame: such a frame gets the content security policy of the app, which
+// forbids the inline scripts an artifact is made of. The frame loads a fixed page of the app instead
+// (kArtifactFrameUrl, served by the main process without that policy), which asks for its content when
+// it is loaded and becomes the page it is sent.
+// The artifact runs in an opaque origin (no allow-same-origin) and only exchanges messages with the app:
+// the script that does it on the side of the artifact is in @services/artifact_frame.
+const frameBridge = buildFrameBridge(frameId)
 
 const props = defineProps({
   title: {
@@ -182,21 +140,10 @@ const injectDarkModeCSS = (htmlContent: string) => {
   return darkModeCSS + htmlContent
 }
 
-const injectFrameBridge = (htmlContent: string) => {
-  const headEndIndex = htmlContent.search(/<\/head\s*>/i)
-  if (headEndIndex !== -1) {
-    return htmlContent.substring(0, headEndIndex) + frameBridge + htmlContent.substring(headEndIndex)
-  }
-
-  // no head: stay behind the doctype and the html tag so the page keeps its rendering mode
-  const prefix = htmlContent.match(/^\s*(<!doctype[^>]*>)?\s*(<html[^>]*>)?/i)?.[0] ?? ''
-  return prefix + frameBridge + htmlContent.substring(prefix.length)
-}
-
 const html = computed(() => {
   // Non-transient: return full HTML content with dark mode CSS injected
   if (!props.transient) {
-    return injectFrameBridge(injectDarkModeCSS(extractHtmlContent()))
+    return injectFrameBridge(injectDarkModeCSS(extractHtmlContent()), frameBridge)
   }
 
   // Transient: wait for head to complete
@@ -208,6 +155,27 @@ const html = computed(() => {
   return initialHtmlWithListener.value
 })
 
+// the frame is a page of its own that is written once: other html means another frame.
+// The new frame starts with the height of the previous one, until it reports its own:
+// the message does not jump when the page of a streaming message is complete
+const frameGeneration = ref(0)
+const frameHeight = ref('')
+watch(html, () => {
+  frameGeneration.value++
+})
+
+// the frame asked for its page: it gets the html of this artifact
+const sendPageToFrame = () => {
+  const frame = htmlIframe.value?.contentWindow
+  if (!frame) return
+  frame.postMessage({ type: kArtifactContentMessage, html: html.value }, '*')
+
+  // a message that is still streaming: the body received so far comes after the head
+  if (props.transient && headComplete.value) {
+    updateIframeContent()
+  }
+}
+
 let resolveSnapshot: ((html: string|null) => void)|null = null
 let snapshotRequest: Promise<string|null>|null = null
 
@@ -217,13 +185,21 @@ const onFrameMessage = (event: Event) => {
   const { source, data } = event as MessageEvent
   const iframe = htmlIframe.value
   if (!iframe?.contentWindow || source !== iframe.contentWindow) return
-  if (!data || typeof data !== 'object' || data.id !== frameId) return
+  if (!data || typeof data !== 'object') return
 
-  if (data.type === 'witsy-artifact-height') {
+  // sent by the page of the frame each time it is loaded (the artifact may reload itself): it has no id yet
+  if (data.type === kArtifactReadyMessage) {
+    sendPageToFrame()
+    return
+  }
+
+  if (data.id !== frameId) return
+
+  if (data.type === kFrameHeightMessage) {
     const height = data.height
     if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return
-    iframe.style.height = Math.min(Math.ceil(height), kMaxFrameHeight) + 'px'
-  } else if (data.type === 'witsy-artifact-snapshot') {
+    frameHeight.value = Math.min(Math.ceil(height), kMaxFrameHeight) + 'px'
+  } else if (data.type === kFrameSnapshotMessage) {
     if (typeof data.html !== 'string' || data.html.length > kMaxSnapshotLength) return
     resolveSnapshot?.(data.html)
   }
@@ -240,7 +216,7 @@ const requestSnapshot = (frame: Window): Promise<string|null> => {
       }
       const timeout = setTimeout(() => done(null), kSnapshotTimeout)
       resolveSnapshot = done
-      frame.postMessage({ type: 'witsy-artifact-snapshot-request', id: frameId }, '*')
+      frame.postMessage({ type: kFrameSnapshotRequestMessage, id: frameId }, '*')
     })
   }
   return snapshotRequest
