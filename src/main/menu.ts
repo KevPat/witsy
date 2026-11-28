@@ -187,19 +187,19 @@ const template = (app: App, callbacks: MenuCallbacks, shortcuts: ShortcutsConfig
           { type: 'separator' },
           {
             label: t('menu.edit.find'),
-            accelerator: shortcutAccelerator({ type: 'electron', key: 'F', meta: true }),
+            accelerator: shortcutAccelerator({ type: 'electron', key: 'F', [isMac ? 'meta' : 'ctrl']: true }),
             click: () => window.emitIpcEventToFocused('search-chat')
           },
           {
             label: t('menu.edit.findAll'),
-            accelerator: shortcutAccelerator({ type: 'electron', key: 'F', meta: true, shift: true }),
+            accelerator: shortcutAccelerator({ type: 'electron', key: 'F', [isMac ? 'meta' : 'ctrl']: true, shift: true }),
             click: () => window.emitIpcEventToFocused('search-chats')
           },
           ...(hasDictation ? [
             { type: 'separator' },
             {
               label: t('menu.edit.startDictation'),
-              accelerator: shortcutAccelerator({ type: 'electron', key: 'T', meta: true }),
+              accelerator: shortcutAccelerator({ type: 'electron', key: 'T', [isMac ? 'meta' : 'ctrl']: true }),
               click: () => window.emitIpcEventToFocused('start-dictation')
             }]: []
           ),

@@ -1,12 +1,19 @@
 import { session, shell, webContents } from 'electron'
 import { getCleanUserAgent } from './utils'
 
+const initializedPartitions = new Set<string>()
+
 /**
  * Initialize the webview session with custom user agent
  * Removes "Witsy" and "Electron" from the user agent to avoid detection
  */
-export function initWebviewSession(): void {
-  const wvSession = session.fromPartition('persist:webview')
+export function initWebviewSession(partition = 'persist:webview'): void {
+  if (partition !== 'persist:webview' && !partition.startsWith('persist:webapp_')) {
+    throw new Error(`Invalid webview partition: ${partition}`)
+  }
+  if (initializedPartitions.has(partition)) return
+
+  const wvSession = session.fromPartition(partition)
   const originUA = wvSession.getUserAgent()
   const newUA = getCleanUserAgent(originUA)
 
@@ -18,6 +25,7 @@ export function initWebviewSession(): void {
     }
     cb({ requestHeaders: headers })
   })
+  initializedPartitions.add(partition)
 }
 
 /**
