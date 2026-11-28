@@ -2,6 +2,7 @@
 import { describe, expect, test } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { runAsNodeFuse } from '@root/build/cli_runtime'
 import { bug } from './bug'
 
 // Static checks of the build and packaging configuration. Nothing is built or executed.
@@ -92,10 +93,22 @@ describe('forge configuration', () => {
     expect(forgeConfig).not.toMatch(/buildVersion:\s*`\$\{process\.env\.BUILD_NUMBER\}`/)
   })
 
-  bug('the packaged binary cannot be run as a plain Node.js interpreter', () => {
+  test('the packaged binary is a Node.js interpreter only where the CLI launcher needs it', () => {
     // ELECTRON_RUN_AS_NODE lets any local process run code as the signed app (on macOS with its permissions).
-    // Still open: bin/witsy starts the CLI with ELECTRON_RUN_AS_NODE=1, so the fuse stays on until the CLI has another launcher.
+    // The fuse follows build/cli_runtime.ts: off for Windows, and off for a macOS or Linux build made with
+    // WITSY_CLI_RUNTIME=node, whose CLI runs on the Node.js of the user (tests/unit/main/build/cli_runtime.test.ts).
     expect(forgeConfig).not.toMatch(/\[FuseV1Options\.RunAsNode\]:\s*true/)
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.RunAsNode\]:\s*runAsNodeFuse\(targetPlatform\)/)
+    expect(runAsNodeFuse('win32', {})).toBe(false)
+    expect(runAsNodeFuse('darwin', { WITSY_CLI_RUNTIME: 'node' })).toBe(false)
+    expect(runAsNodeFuse('linux', { WITSY_CLI_RUNTIME: 'node' })).toBe(false)
+  })
+
+  bug('a default macOS or Linux build cannot be run as a plain Node.js interpreter', () => {
+    // Still open: bin/witsy starts the CLI with ELECTRON_RUN_AS_NODE=1 on these platforms, so their default
+    // build keeps the fuse on. Turning it off by default makes Node.js a requirement of the CLI: a product decision.
+    expect(runAsNodeFuse('darwin', {})).toBe(false)
+    expect(runAsNodeFuse('linux', {})).toBe(false)
   })
 
   test('release builds cannot be debugged from the command line', () => {

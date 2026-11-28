@@ -9,6 +9,7 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { execSync } from 'child_process';
+import { cliRuntime, runAsNodeFuse, writeCliRuntime } from './build/cli_runtime';
 import prePackage from './build/prepackage';
 import { purgeAutolib, purgeLibnut, purgeOnnxRuntime } from './build/purge_native';
 import { signDarwinBinaries, signWindowsBinaries } from './build/sign_binaries';
@@ -157,8 +158,10 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
-      // bin/witsy runs the CLI with ELECTRON_RUN_AS_NODE=1: this stays on until the CLI has its own launcher
-      [FuseV1Options.RunAsNode]: true,
+      // With this fuse, ELECTRON_RUN_AS_NODE=1 turns the app binary into a Node.js runtime for any local
+      // process. Only the CLI launcher of macOS and Linux (bin/witsy) uses that: the fuse is off for Windows
+      // builds, and for the builds whose CLI runs on the Node.js of the user (see build/cli_runtime.ts).
+      [FuseV1Options.RunAsNode]: runAsNodeFuse(targetPlatform),
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       // Playwright drives the e2e build (TEST=1) through --inspect; release builds must not accept it
@@ -175,6 +178,8 @@ const config: ForgeConfig = {
     prePackage: async (_forgeConfig, platform, arch) => {
       // Build CLI before packaging
       execSync('npm run build:cli', { stdio: 'inherit' })
+      // and tell its launcher which Node.js this build runs it on (the RunAsNode fuse follows the same rule)
+      writeCliRuntime('dist/cli', cliRuntime(platform))
       prePackage(platform, arch)
     },
     
