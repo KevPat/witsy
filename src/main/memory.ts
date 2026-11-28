@@ -12,35 +12,51 @@ export default class MemoryManager {
 
   app: App
   db: VectorDB
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(app: App) {
     this.app = app
   }
 
+  // The index is one file that is read once and rewritten on each change: opening,
+  // creating or changing it from two calls at a time loses facts. Everything that
+  // touches it goes through this queue and runs one after the other.
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(operation)
+    this.queue = result.catch(() => {})
+    return result
+  }
+
   async isNotEmpty(): Promise<boolean> {
-    if (!this.db) {
-      await this.open()
-    }
-    if (!this.db) return false
-    const stats = await this.db.stats()
-    return stats.items > 0
+    return this.serialize(async () => {
+      if (!this.db) {
+        await this.open()
+      }
+      if (!this.db) return false
+      const stats = await this.db.stats()
+      return stats.items > 0
+    })
   }
 
   async list(): Promise<MemoryFact[]> {
-    if (!this.db) {
-      await this.open()
-    }
-    if (!this.db) return []
-    const results = await this.db.list()
-    return results.map((result) => ({
-      uuid: result.metadata.docId as string,
-      content: result.metadata.content as string
-    }))
+    return this.serialize(async () => {
+      if (!this.db) {
+        await this.open()
+      }
+      if (!this.db) return []
+      const results = await this.db.list()
+      return results.map((result) => ({
+        uuid: result.metadata.docId as string,
+        content: result.metadata.content as string
+      }))
+    })
   }
 
   async reset(): Promise<void> {
-    await this.destroy()
-    this.db = null
+    return this.serialize(async () => {
+      await this.destroy()
+      this.db = null
+    })
   }
 
   async store(contents: string | string[]): Promise<boolean> {
@@ -53,18 +69,22 @@ export default class MemoryManager {
       }
 
       // we need a connection and embedder
-      await this.connect()
+      await this.serialize(() => this.connect())
       const embedder = await this.embedder()
 
       // embed each content separately
+      // (only the insertion waits for its turn, not the call to the embedding model)
       for (const content of contents) {
         const embeddings = await embedder.embed([content])
         const uuid = crypto.randomUUID()
-        await this.db.insert(uuid, content, embeddings[0], {
-          uuid: uuid,
-          type: 'text',
-          title: '',
-          url: '',
+        await this.serialize(async () => {
+          await this.connect()
+          await this.db.insert(uuid, content, embeddings[0], {
+            uuid: uuid,
+            type: 'text',
+            title: '',
+            url: '',
+          })
         })
       }
 
@@ -83,14 +103,17 @@ export default class MemoryManager {
     const relevanceCutOff = defaultSettings.rag.relevanceCutOff
 
     // we need a connection
-    await this.connect()
+    await this.serialize(() => this.connect())
 
     // and embeddings
     const embedder = await this.embedder()
     const embeddings = await embedder.embed([query])
 
     // now query
-    const results = await this.db.query(query, embeddings[0], 10)
+    const results = await this.serialize(async () => {
+      await this.connect()
+      return this.db.query(query, embeddings[0], 10)
+    })
     return results
       .filter((result) => result.score > relevanceCutOff)
       .map((result) => result.item.metadata.content as string)
@@ -99,13 +122,17 @@ export default class MemoryManager {
 
   async delete(uuid: string): Promise<boolean> {
 
-    // we need a connection
-    await this.connect()
-    if (!this.db) return false
+    return this.serialize(async () => {
 
-    // delete
-    const count = await this.db.delete(uuid)
-    return count > 0
+      // we need a connection
+      await this.connect()
+      if (!this.db) return false
+
+      // delete
+      const count = await this.db.delete(uuid)
+      return count > 0
+
+    })
   }
 
   private async connect() {
@@ -119,7 +146,8 @@ export default class MemoryManager {
 
   private async open() {
     const dbPath = this.databasePath()
-    if (!fs.existsSync(dbPath)) return false;
+    // the folder alone is not enough: without its index file it has to be created again
+    if (!fs.existsSync(path.join(dbPath, 'index.json'))) return false;
     this.db = await VectorDB.connect(dbPath)
     return true;
   }

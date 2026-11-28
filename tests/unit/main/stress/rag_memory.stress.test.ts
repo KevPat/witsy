@@ -5,7 +5,6 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import MemoryManager from '@main/memory'
-import { bug } from './bug'
 
 let userData: string
 
@@ -79,9 +78,10 @@ describe('MemoryManager', () => {
     expect(await persistedFacts()).toEqual(facts)
   })
 
-  bug('a fact stored while another one is being written is persisted too', async () => {
-    // the second insert joins the update of the first one, whose file content is already serialised,
-    // and returns without writing: the fact only exists in memory until something else is stored
+  test('a fact stored while another one is being written is persisted too', async () => {
+    // the second insert used to join the update of the first one, whose file content was already serialised,
+    // and to return without writing: the fact only existed in memory until something else was stored.
+    // It now waits for the first write, so it can only complete once that write is released
     const memory = new MemoryManager(app)
     await memory.store('seed')
     const writeFile = fs.promises.writeFile
@@ -93,10 +93,10 @@ describe('MemoryManager', () => {
     })
     const first = memory.store('first fact')
     await vi.waitUntil(() => writes === 1, { timeout: 2000, interval: 2 })
-    const second = await memory.store('second fact')
+    const second = memory.store('second fact')
     gate.resolve()
     expect(await first).toBe(true)
-    expect(second).toBe(true)
+    expect(await second).toBe(true)
     expect(await persistedFacts()).toEqual(['first fact', 'second fact', 'seed'])
   })
 
