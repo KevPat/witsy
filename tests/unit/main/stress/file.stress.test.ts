@@ -128,6 +128,16 @@ describe('downloadFile', () => {
     expect(filesUnder(root)).toEqual([])
   })
 
+  test('a save dialog the user cancels is not reported as a failed download', async () => {
+    // null is a failure the renderer tells the user about; an empty string is a cancellation
+    vi.mocked(dialog.showSaveDialogSync).mockReturnValue(undefined)
+    vi.mocked(fetch).mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { status: 200 }))
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads', prompt: true } })
+    expect(url).toBe('')
+    expect(dialog.showSaveDialogSync).toHaveBeenCalled()
+    expect(filesUnder(root)).toEqual([])
+  })
+
   test('an HTTP error leaves a file that already has that name untouched', async () => {
     const existing = path.join(root, 'downloads', 'cat.png')
     fs.writeFileSync(existing, 'previous-image')

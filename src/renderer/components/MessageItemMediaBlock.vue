@@ -16,6 +16,7 @@
 import { ClipboardCheckIcon, ClipboardIcon, DownloadIcon, InfoIcon } from 'lucide-vue-next'
 import { ref } from 'vue'
 import Dialog from '@renderer/utils/dialog'
+import { downloadWithPrompt } from '@services/download'
 import useEventBus from '@composables/event_bus'
 import Message from '@models/message'
 const { emitBusEvent } = useEventBus()
@@ -61,14 +62,7 @@ const onCopy = () => {
 }
 
 const onDownload = () => {
-  window.api.file.download({
-    url: props.url,
-    properties: {
-      prompt: true,
-      directory: 'downloads',
-      filename: `${isVideo() ? 'video' : 'image'}.${props.url.split('.').pop()}`,
-    }
-  })
+  downloadWithPrompt(props.url, `${isVideo() ? 'video' : 'image'}.${props.url.split('.').pop()}`)
 }
 
 </script>

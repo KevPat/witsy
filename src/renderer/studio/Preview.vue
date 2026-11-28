@@ -57,6 +57,7 @@ import useEventListener from '@composables/event_listener'
 const { onDomEvent } = useEventListener()
 import Loader from '@components/Loader.vue'
 import Dialog from '@renderer/utils/dialog'
+import { downloadWithPrompt } from '@services/download'
 import Message from '@models/message'
 import { t } from '@services/i18n'
 
@@ -148,14 +149,7 @@ const onCopy = async () => {
 
 const onDownload = () => {
   const url = props.message.attachments[0].url
-  window.api.file.download({
-    url: url,
-    properties: {
-      prompt: true,
-      directory: 'downloads',
-      filename: `${props.message.isVideo() ? 'video' : 'image'}.${url.split('.').pop()}`,
-    }
-  })
+  downloadWithPrompt(url, `${props.message.isVideo() ? 'video' : 'image'}.${url.split('.').pop()}`)
 }
 
 const onDelete = () => {

@@ -51,6 +51,7 @@
     "done": "Done",
     "download": "Download",
     "downloadCsv": "CSV",
+    "downloadError": "The download failed. The file could not be retrieved or saved.",
     "downloadXlsx": "Excel",
     "edit": "Edit",
     "enabled": "Enabled",

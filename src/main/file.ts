@@ -411,6 +411,11 @@ export const findProgram = (app: App, program: string) => {
 }
 
 export const writeFileContents = (app: App, payload: FileSaveParams): string => {
+  return saveFileContents(app, payload).url
+}
+
+// same as writeFileContents, and tells a save dialog the user cancelled from a failure
+const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null, cancelled: boolean } => {
 
   // defaults
   const defaultPayload = {
@@ -461,21 +466,23 @@ export const writeFileContents = (app: App, payload: FileSaveParams): string => 
     destinationURL = dialog.showSaveDialogSync({
       defaultPath: destinationURL
     });
-    if (!destinationURL) return null;
+    if (!destinationURL) return { url: null, cancelled: true };
   }
 
   // try
   try {
     fs.writeFileSync(destinationURL, Buffer.from(payload.contents, 'base64'));
-    return `file://${destinationURL}`;
+    return { url: `file://${destinationURL}`, cancelled: false };
   } catch (error) {
     console.error('Error while writing file', error);
-    return null
+    return { url: null, cancelled: false }
   }
 
 }
 
-export const downloadFile = async (app: App, payload: FileDownloadParams) => {
+// returns the url of the saved file, null when the download or the save failed,
+// and an empty string when the user cancelled the save dialog (nothing to report)
+export const downloadFile = async (app: App, payload: FileDownloadParams): Promise<string|null> => {
 
   const savePayload: FileSaveParams = {
     contents: '',
@@ -518,7 +525,8 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     }
 
     // now just save
-    return writeFileContents(app, savePayload);
+    const saved = saveFileContents(app, savePayload);
+    return saved.cancelled ? '' : saved.url;
 
   } catch (error) {
     console.error('Error while downloading file', error);
