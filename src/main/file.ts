@@ -488,8 +488,12 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
     // get contents
     if (payload.url.startsWith('file://')) {
 
-      savePayload.contents = fs.readFileSync(payload.url.slice(7)).toString('base64');
-      //savePayload.properties.filename = payload.url.split('?')[0].split(path.sep).pop();
+      const source = payload.url.slice(7);
+      savePayload.contents = fs.readFileSync(source).toString('base64');
+      // the url is reset below: without a file name, the copy is named after its source
+      if (!payload.properties?.filename) {
+        savePayload.properties = { ...payload.properties, filename: path.basename(source) }
+      }
       savePayload.url = null
 
     } else {

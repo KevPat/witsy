@@ -146,12 +146,36 @@ describe('downloadFile', () => {
     expect(fs.readFileSync(path.join(root, 'downloads', 'cat.png'), 'utf-8')).toBe('image-bytes')
   })
 
-  bug('a local file can be copied without giving a file name', async () => {
-    // url is reset to null before the name is derived from it
+  test('a local file can be copied without giving a file name', async () => {
+    // url is reset to null, so the name has to be derived from it before
     const source = path.join(root, 'documents', 'source.png')
     fs.writeFileSync(source, 'image-bytes')
     const url = await file.downloadFile(app, { url: `file://${source}`, properties: { directory: 'downloads' } })
     expect(url).toBe(`file://${path.join(root, 'downloads', 'source.png')}`)
+    expect(fs.readFileSync(path.join(root, 'downloads', 'source.png'), 'utf-8')).toBe('image-bytes')
+  })
+
+  test('a local file can be copied without any properties', async () => {
+    const source = path.join(root, 'documents', 'source.png')
+    fs.writeFileSync(source, 'image-bytes')
+    const url = await file.downloadFile(app, { url: `file://${source}` })
+    expect(url).toBe(`file://${path.join(root, 'downloads', 'source.png')}`)
+    expect(filesUnder(root).sort()).toEqual([source, path.join(root, 'downloads', 'source.png')].sort())
+  })
+
+  test('a local file copied with a file name gets that name', async () => {
+    const source = path.join(root, 'documents', 'source.png')
+    fs.writeFileSync(source, 'image-bytes')
+    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'copy.png', directory: 'downloads' } })
+    expect(url).toBe(`file://${path.join(root, 'downloads', 'copy.png')}`)
+    expect(fs.readFileSync(path.join(root, 'downloads', 'copy.png'), 'utf-8')).toBe('image-bytes')
+  })
+
+  test('a local file that does not exist is reported as null and writes nothing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const url = await file.downloadFile(app, { url: `file://${path.join(root, 'documents', 'missing.png')}`, properties: { directory: 'downloads' } })
+    expect(url).toBeNull()
+    expect(filesUnder(root)).toEqual([])
   })
 
 })
