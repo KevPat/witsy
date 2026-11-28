@@ -56,6 +56,7 @@ class FakeWriteStream extends EventEmitter {
   write = vi.fn((chunk: Buffer) => { this.chunks.push(chunk); return true })
   close = vi.fn(() => { this.closed = true })
   end = vi.fn(() => { this.closed = true })
+  destroy = vi.fn(() => { this.closed = true; this.emit('close') })
   text = () => Buffer.concat(this.chunks).toString()
 }
 
@@ -173,16 +174,16 @@ describe('ollama download', () => {
     expect(events('ollama-download-error')).toHaveLength(0)
   })
 
-  bug('cancelling aborts the network request', () => {
-    // only a flag is set: the transfer of the full installer continues in the background
+  test('cancelling aborts the network request', () => {
     startDownload(dir)
     requests[0].emit('response', new FakeResponse(200, { 'content-length': '1000' }))
-    cancelDownload()
-    expect(requests[0].abort).toHaveBeenCalled()
+    expect(cancelDownload()).toBe(true)
+    expect(requests[0].abort).toHaveBeenCalledTimes(1)
+    expect(getDownloadStatus()).toBeNull()
+    expect(cancelDownload()).toBe(false)
   })
 
-  bug('a cancelled download does not report completion', () => {
-    // cancelDownload clears the state the end handler relies on to know it was cancelled
+  test('a cancelled download does not report completion', () => {
     startDownload(dir)
     const response = new FakeResponse(200, { 'content-length': '10' })
     requests[0].emit('response', response)
@@ -191,10 +192,93 @@ describe('ollama download', () => {
     response.emit('data', Buffer.from('56789'))
     response.emit('end')
     expect(events('ollama-download-complete')).toHaveLength(0)
+    expect(events('ollama-download-error')).toHaveLength(0)
+    expect(events('ollama-download-progress').map(e => e.progress)).toEqual([50])
+    expect(files[0].text()).toBe('01234')
   })
 
-  bug('data arriving for a cancelled download is not written into the next download', () => {
-    // the handlers of the first response use the module-level state, which now belongs to the second download
+  test('a cancel that comes before the response aborts the request and never creates a file', () => {
+    startDownload(dir)
+    cancelDownload()
+    expect(requests[0].abort).toHaveBeenCalledTimes(1)
+
+    // a response that was already on its way is ignored
+    const response = new FakeResponse(200, { 'content-length': '5' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('01234'))
+    response.emit('end')
+    expect(files).toHaveLength(0)
+    expect(emitIpcEvent).not.toHaveBeenCalled()
+  })
+
+  test('errors raised by the aborted transfer are not reported after a cancel', () => {
+    startDownload(dir)
+    const response = new FakeResponse(200, { 'content-length': '10' })
+    requests[0].emit('response', response)
+    cancelDownload()
+    response.emit('error', new Error('net::ERR_ABORTED'))
+    requests[0].emit('error', new Error('net::ERR_ABORTED'))
+    expect(events('ollama-download-error')).toHaveLength(0)
+  })
+
+  test('the partial file of a cancelled download is removed only once its stream is closed', () => {
+    // an open file cannot be deleted on Windows: the stream has to release it first
+    startDownload(dir)
+    const response = new FakeResponse(200, { 'content-length': '10' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('01234'))
+    const partial = getDownloadStatus()!.filePath
+    fs.writeFileSync(partial, '01234')
+    files[0].destroy.mockImplementation(() => { files[0].closed = true })
+
+    cancelDownload()
+    expect(files[0].destroy).toHaveBeenCalledTimes(1)
+    expect(fs.existsSync(partial)).toBe(true)
+
+    files[0].emit('close')
+    expect(fs.existsSync(partial)).toBe(false)
+    expect(console.error).not.toHaveBeenCalled()
+  })
+
+  test('cancelling a download whose file is really on disk closes it and removes it', async () => {
+    const actual = await vi.importActual<typeof import('fs')>('fs')
+    vi.mocked(fs.createWriteStream).mockImplementation(actual.createWriteStream as any)
+    startDownload(dir)
+    const response = new FakeResponse(200, { 'content-length': '1000' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('partial'))
+    const partial = getDownloadStatus()!.filePath
+    await vi.waitFor(() => expect(fs.existsSync(partial)).toBe(true))
+
+    cancelDownload()
+    await vi.waitFor(() => expect(fs.readdirSync(dir)).toEqual([]))
+    expect(events('ollama-download-complete')).toHaveLength(0)
+    expect(console.error).not.toHaveBeenCalled()
+  })
+
+  test('a download started after a cancel completes normally', () => {
+    startDownload(dir)
+    const first = new FakeResponse(200, { 'content-length': '10' })
+    requests[0].emit('response', first)
+    first.emit('data', Buffer.from('AAAAA'))
+    cancelDownload()
+
+    startDownload(dir)
+    const second = new FakeResponse(200, { 'content-length': '10' })
+    requests[1].emit('response', second)
+    second.emit('data', Buffer.from('01234'))
+    first.emit('end')
+    second.emit('data', Buffer.from('56789'))
+    second.emit('end')
+    expect(requests[1].abort).not.toHaveBeenCalled()
+    expect(files[1].text()).toBe('0123456789')
+    expect(files[1].destroy).not.toHaveBeenCalled()
+    expect(events('ollama-download-complete')).toHaveLength(1)
+    expect(events('ollama-download-error')).toHaveLength(0)
+    expect(getDownloadStatus()).toBeNull()
+  })
+
+  test('data arriving for a cancelled download is not written into the next download', () => {
     startDownload(dir)
     const first = new FakeResponse(200, { 'content-length': '10' })
     requests[0].emit('response', first)
@@ -210,6 +294,41 @@ describe('ollama download', () => {
     expect(getDownloadStatus()).not.toBeNull()
     expect(getDownloadStatus()!.downloadedBytes).toBe(5)
     expect(files[1].text()).toBe('01234')
+  })
+
+  test('the late cleanup of a cancelled download does not delete the file of the next download', () => {
+    startDownload(dir)
+    requests[0].emit('response', new FakeResponse(200, { 'content-length': '10' }))
+    files[0].destroy.mockImplementation(() => { files[0].closed = true })
+    cancelDownload()
+
+    // same folder, same file name
+    startDownload(dir)
+    requests[1].emit('response', new FakeResponse(200, { 'content-length': '10' }))
+    const file = getDownloadStatus()!.filePath
+    fs.writeFileSync(file, '01234')
+
+    files[0].emit('close')
+    expect(fs.existsSync(file)).toBe(true)
+  })
+
+  test('a transfer error closes the stream, removes the partial file and is reported once', () => {
+    const downloadId = startDownload(dir)
+    const response = new FakeResponse(200, { 'content-length': '10' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('01234'))
+    const partial = getDownloadStatus()!.filePath
+    fs.writeFileSync(partial, '01234')
+
+    // Electron reports a broken connection on the response and on the request
+    response.emit('error', new Error('net::ERR_CONNECTION_RESET'))
+    requests[0].emit('error', new Error('net::ERR_CONNECTION_RESET'))
+    response.emit('end')
+    expect(files[0].destroy).toHaveBeenCalledTimes(1)
+    expect(fs.existsSync(partial)).toBe(false)
+    expect(events('ollama-download-error')).toEqual([{ downloadId, error: 'net::ERR_CONNECTION_RESET' }])
+    expect(events('ollama-download-complete')).toHaveLength(0)
+    expect(getDownloadStatus()).toBeNull()
   })
 
   bug('a disk error while writing is reported instead of crashing the process', () => {

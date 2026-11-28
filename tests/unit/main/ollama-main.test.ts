@@ -50,6 +50,7 @@ vi.mock('@main/windows', () => ({
 class MockWriteStream extends EventEmitter {
   write = vi.fn()
   close = vi.fn()
+  destroy = vi.fn(() => { this.emit('close') })
 }
 
 // Mock request with end method
@@ -237,18 +238,47 @@ test('startDownload should handle download error', () => {
 
 test('cancelDownload should cancel ongoing download', () => {
   const mockRequest = new MockRequest()
+  const mockResponse = new EventEmitter() as any
+  const mockWriteStream = new MockWriteStream()
+
   vi.mocked(net.request).mockReturnValue(mockRequest as any)
+  vi.mocked(fs.createWriteStream).mockReturnValue(mockWriteStream as any)
   vi.mocked(path.join).mockReturnValue('/test/Ollama.dmg')
-  vi.mocked(fs.existsSync).mockReturnValue(true)
   
   // Start download
   startDownload('/test')
+  mockResponse.statusCode = 200
+  mockResponse.headers = { 'content-length': '1000' }
+  mockRequest.emit('response', mockResponse)
+  mockResponse.emit('data', Buffer.from('test data'))
   
   // Cancel download
   const result = cancelDownload()
   
   expect(result).toBe(true)
+  expect(mockRequest.abort).toHaveBeenCalled()
+  expect(mockWriteStream.destroy).toHaveBeenCalled()
   expect(fs.unlinkSync).toHaveBeenCalledWith('/test/Ollama.dmg')
+  expect(getDownloadStatus()).toBeNull()
+
+  // the end of the aborted transfer is not a completed download
+  mockResponse.emit('end')
+  expect(emitIpcEvent).not.toHaveBeenCalledWith(mainWindow, 'ollama-download-complete', expect.anything())
+})
+
+test('cancelDownload should not delete a file the download never created', () => {
+  const mockRequest = new MockRequest()
+  vi.mocked(net.request).mockReturnValue(mockRequest as any)
+  vi.mocked(path.join).mockReturnValue('/test/Ollama.dmg')
+  vi.mocked(fs.existsSync).mockReturnValue(true)
+
+  // no response yet: whatever is at that path is not ours
+  startDownload('/test')
+  const result = cancelDownload()
+
+  expect(result).toBe(true)
+  expect(mockRequest.abort).toHaveBeenCalled()
+  expect(fs.unlinkSync).not.toHaveBeenCalled()
 })
 
 test('cancelDownload should return false if no download in progress', () => {
