@@ -8,6 +8,7 @@ import { Command, Expert, ExpertCategory } from '@/types/index'
 import { McpInstallStatus, McpServerWithTools } from '@/types/mcp'
 import { DocRepoQueryResponseItem, DocumentBase } from '@/types/rag'
 import { renderMarkdown } from '@main/markdown'
+import { resolveMediaUrl } from '@main/media_url'
 import { resolveAllowedPath } from '@main/path_containment'
 import Agent from '@models/agent'
 import defaultSettings from '@root/defaults/settings.json'
@@ -37,6 +38,13 @@ const useWindowMock = (opts?: WindowMockOpts) => {
     },
     ...opts
   }
+
+  // the real media rules, in the world of this mock: posix paths whatever the host,
+  // the app data folder is window.api.userDataPath and there are no symlinks
+  const resolveMedia = (url: string) => resolveMediaUrl(url, [window.api.userDataPath], {
+    pathImpl: path.posix,
+    realPath: (target: string) => target,
+  })
 
   let runAtLogin = false
   window.api = {
@@ -571,7 +579,8 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       clearPyodideCache: vi.fn(async () => {}),
     },
     markdown: {
-      render: vi.fn(renderMarkdown),
+      render: vi.fn((markdown: string) => renderMarkdown(markdown, { resolveMedia })),
+      resolveMediaUrl: vi.fn(resolveMedia),
     },
     computer: {
       isAvailable: vi.fn(() => true),

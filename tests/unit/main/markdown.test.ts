@@ -1,5 +1,7 @@
 import { test, expect } from 'vitest'
-import { renderMarkdown } from '@main/markdown'
+import path from 'path'
+import { MediaResolver, renderMarkdown } from '@main/markdown'
+import { resolveMediaUrl } from '@main/media_url'
 import { addExtension, closeOpenMarkdownTags, extractCodeBlockContent, extractHtmlContent, getCodeBlocks, isHtmlContent } from '@services/markdown'
 
 test('renders markdown', () => {
@@ -140,10 +142,107 @@ test('keeps the links the app uses as actions in its own messages', () => {
   expect(root.textContent).toBe('Enter your key in Settings or try again.\n')
 })
 
-test('still renders local images', () => {
-  const root = parseHtml('[![logo](file:///data/My Images/logo.png)](https://example.com/)')
+// what the main process does for the renderer, with the app data folder in /data/witsy
+// or C:\Users\me\AppData\Roaming\Witsy and no filesystem behind
+const posixMedia: MediaResolver = (url) => resolveMediaUrl(url, ['/data/witsy'], { pathImpl: path.posix, realPath: (target) => target })
+const winMedia: MediaResolver = (url) => resolveMediaUrl(url, ['C:\\Users\\me\\AppData\\Roaming\\Witsy'], { pathImpl: path.win32, realPath: (target) => target })
+
+const parseMedia = (markdown: string, resolveMedia: MediaResolver = posixMedia): DocumentFragment => {
+  const template = document.createElement('template')
+  template.innerHTML = renderMarkdown(markdown, { resolveMedia })
+  return template.content
+}
+
+test('still renders the images of the app data folder', () => {
+  const root = parseMedia('[![logo](file:///data/witsy/images/My Images/logo.png)](https://example.com/)')
   expect(root.querySelector('a').getAttribute('href')).toBe('https://example.com/')
-  expect(root.querySelector('a img').getAttribute('src')).toBe('file:///data/My%20Images/logo.png')
+  expect(root.querySelector('a img').getAttribute('src')).toBe('file:///data/witsy/images/My%20Images/logo.png')
+  expect(root.querySelector('a img').getAttribute('alt')).toBe('logo')
+})
+
+test.each([
+  ['![chart](file:///data/witsy/images/chart.png)', 'file:///data/witsy/images/chart.png'],
+  ['![chart](file:///data/witsy/workspaces/0b5c/images/chart.png)', 'file:///data/witsy/workspaces/0b5c/images/chart.png'],
+  ['![chart](file:///data/witsy/images/../images/chart.png)', 'file:///data/witsy/images/chart.png'],
+  ['![chart](file:///data/witsy/images/%63hart.png)', 'file:///data/witsy/images/chart.png'],
+  ['![chart](/data/witsy/images/chart.png)', 'file:///data/witsy/images/chart.png'],
+  ['![chart][c]\n\n[c]: file:///data/witsy/images/chart.png', 'file:///data/witsy/images/chart.png'],
+  ['| a |\n|---|\n| ![chart](file:///data/witsy/images/chart.png) |', 'file:///data/witsy/images/chart.png'],
+])('renders the app data image of %s', (markdown, src) => {
+  const images = parseMedia(markdown).querySelectorAll('img')
+  expect(images).toHaveLength(1)
+  expect(images[0].getAttribute('src')).toBe(src)
+  expect(images[0].getAttribute('alt')).toBe('chart')
+})
+
+test.each([
+  ['![x](file:///Users/me/secret.png)', '<p>![x](file:///Users/me/secret.png)</p>\n'],
+  ['![x](/etc/passwd "title")', '<p>![x](/etc/passwd)</p>\n'],
+  ['![x](file:///data/witsy)', '<p>![x](file:///data/witsy)</p>\n'],
+  ['![x](file:///data/witsy-other/a.png)', '<p>![x](file:///data/witsy-other/a.png)</p>\n'],
+  ['![x](file:///data/witsy/../secret.png)', '<p>![x](file:///data/witsy/../secret.png)</p>\n'],
+  ['![x](file:///data/witsy/images/../../secret.png)', '<p>![x](file:///data/witsy/images/../../secret.png)</p>\n'],
+  ['![x](file:///data/witsy/images/%2e%2e/%2e%2e/secret.png)', '<p>![x](file:///data/witsy/images/%2e%2e/%2e%2e/secret.png)</p>\n'],
+  ['![x](file:///data/witsy/images/..%2F..%2Fsecret.png)', '<p>![x](file:///data/witsy/images/..%2F..%2Fsecret.png)</p>\n'],
+  ['![x](file:///data/witsy/images/a.png#/../../../secret.png)', '<p>![x](file:///data/witsy/images/a.png#/../../../secret.png)</p>\n'],
+  ['![x](file://evil.example/share/pixel.png)', '<p>![x](file://evil.example/share/pixel.png)</p>\n'],
+  ['![x](file://C:\\Users\\me\\secret.png)', '<p>![x](file://C:/Users/me/secret.png)</p>\n'],
+  ['![x](//evil.example/share/pixel.png)', '<p>![x](//evil.example/share/pixel.png)</p>\n'],
+  ['![x](/etc/passwd)', '<p>![x](/etc/passwd)</p>\n'],
+  ['![x](../../secret.png)', '<p>![x](../../secret.png)</p>\n'],
+  ['![x](images/a.png)', '<p>![x](images/a.png)</p>\n'],
+  ['![x](smb://evil.example/share/pixel.png)', '<p>![x](smb://evil.example/share/pixel.png)</p>\n'],
+  ['![x][r]\n\n[r]: file:///etc/passwd', '<p>![x](file:///etc/passwd)</p>\n'],
+  ['![**b** <i>i</i>](file:///etc/passwd)', '<p>![**b** &lt;i&gt;i&lt;/i&gt;](file:///etc/passwd)</p>\n'],
+  ['![x](file:///a"onerror="alert(1))', '<p>![x](file:///a%22onerror=%22alert(1))</p>\n'],
+])('does not make an image of %s', (markdown, expected) => {
+  expect(renderMarkdown(markdown, { resolveMedia: posixMedia })).toBe(expected)
+  expect(parseMedia(markdown).querySelector('img')).toBeNull()
+})
+
+test('does not make an image of a local file when the caller names no folder', () => {
+  const markdown = '![x](file:///data/witsy/images/chart.png)'
+  expect(renderMarkdown(markdown)).toBe(`<p>${markdown}</p>\n`)
+  expect(parseHtml('![x](file:///Users/me/secret.png) ![y](/etc/passwd)').querySelector('img')).toBeNull()
+})
+
+test('keeps a refused image as text next to a rendered one and inside a link', () => {
+  const root = parseMedia('![a](file:///etc/passwd) ![b](file:///data/witsy/images/b.png) [![c](file:///etc/hosts)](https://example.com/)')
+  expect(Array.from(root.querySelectorAll('img')).map((img) => img.getAttribute('src'))).toEqual(['file:///data/witsy/images/b.png'])
+  expect(root.querySelector('a').getAttribute('href')).toBe('https://example.com/')
+  expect(root.querySelector('a').textContent).toBe('![c](file:///etc/hosts)')
+  expect(root.textContent).toBe('![a](file:///etc/passwd)  ![c](file:///etc/hosts)\n')
+})
+
+test('renders the images of a Windows app data folder only', () => {
+  const src = 'file:///C:/Users/me/AppData/Roaming/Witsy/images/a.png'
+  for (const markdown of [
+    '![a](file://C:\\Users\\me\\AppData\\Roaming\\Witsy\\images\\a.png)',
+    '![a](file:///C:/Users/me/AppData/Roaming/Witsy/images/a.png)',
+    '![a](file:///c:/Users/me/AppData/Roaming/Witsy/workspaces/../images/a.png)',
+  ]) {
+    expect(parseMedia(markdown, winMedia).querySelector('img').getAttribute('src').toLowerCase()).toBe(src.toLowerCase())
+  }
+  for (const markdown of [
+    '![a](file://C:\\Users\\me\\secret.png)',
+    '![a](file://C:\\Users\\me\\AppData\\Roaming\\Witsy\\images\\..\\..\\..\\secret.png)',
+    '![a](file:///C:/Users/me/AppData/Roaming/Witsy/images/..%5C..%5C..%5Csecret.png)',
+    '![a](file://\\\\evil.example\\share\\pixel.png)',
+    '![a](file://evil.example/share/pixel.png)',
+    '![a](//evil.example/share/pixel.png)',
+    '![a](file:///D:/Users/me/AppData/Roaming/Witsy/images/a.png)',
+  ]) {
+    expect(parseMedia(markdown, winMedia).querySelector('img')).toBeNull()
+  }
+})
+
+test('does not change remote and inline images', () => {
+  const data = 'data:image/png;base64,iVBORw0KGgo='
+  const root = parseHtml(`![a](https://example.com/a.png?x=1&y=2 "title") ![b](http://example.com/b.png) ![c](${data})`)
+  const images = Array.from(root.querySelectorAll('img'))
+  expect(images.map((img) => img.getAttribute('src'))).toEqual(['https://example.com/a.png?x=1&y=2', 'http://example.com/b.png', data])
+  expect(images.map((img) => img.getAttribute('alt'))).toEqual(['a', 'b', 'c'])
+  expect(images[0].getAttribute('title')).toBe('title')
 })
 
 test('renders inline code', () => {

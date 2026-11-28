@@ -535,6 +535,7 @@ declare global {
       },
       markdown: {
         render(markdown: string): string
+        resolveMediaUrl(url: string): string | null
       }
       interpreter: {
         python(code: string): Promise<any>

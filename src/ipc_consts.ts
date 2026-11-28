@@ -186,6 +186,7 @@ export const TRANSCRIBE = {
 
 export const MARKDOWN = {
   RENDER: 'markdown-render',
+  RESOLVE_MEDIA_URL: 'markdown-resolve-media-url',
 } as const;
 
 export const INTERPRETER = {

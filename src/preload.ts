@@ -230,6 +230,7 @@ contextBridge.exposeInMainWorld(
     },
     markdown: {
       render: (markdown: string): string => { return ipcRenderer.sendSync(IPC.MARKDOWN.RENDER, markdown) },
+      resolveMediaUrl: (url: string): string | null => { return ipcRenderer.sendSync(IPC.MARKDOWN.RESOLVE_MEDIA_URL, url) },
     },
     interpreter: {
       python: (code: string): Promise<any> => { return ipcRenderer.invoke(IPC.INTERPRETER.PYTHON_RUN, code) },

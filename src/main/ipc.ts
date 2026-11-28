@@ -46,6 +46,7 @@ import * as history from './history';
 import * as i18n from './i18n';
 import * as interpreter from './interpreter';
 import * as markdown from './markdown';
+import { resolveMediaUrl } from './media_url';
 import * as debug from './network';
 import * as ollama from './ollama';
 import * as pdf from './pdf';
@@ -563,8 +564,22 @@ export const installIpc = (
     }
   });
 
+  // the only local files shown as images or videos are the ones of the app data folder (see media_url.ts)
+  const resolveMedia = (url: string): string | null => {
+    try {
+      return resolveMediaUrl(url, [app.getPath('userData')]);
+    } catch (error) {
+      console.error('Error while resolving media url', error);
+      return null;
+    }
+  };
+
   ipcMain.on(IPC.MARKDOWN.RENDER, (event, payload) => {
-    event.returnValue = markdown.renderMarkdown(payload);
+    event.returnValue = markdown.renderMarkdown(payload, { resolveMedia });
+  });
+
+  ipcMain.on(IPC.MARKDOWN.RESOLVE_MEDIA_URL, (event, url) => {
+    event.returnValue = resolveMedia(url);
   });
 
   ipcMain.handle(IPC.INTERPRETER.PYTHON_RUN, async (event, payload) => {

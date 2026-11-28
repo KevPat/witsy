@@ -6,6 +6,7 @@ import MarkdownItMark from 'markdown-it-mark'
 import MarkdownItDiagram from 'markdown-it-diagram'
 import hljs from 'highlight.js'
 import { isSafeExternalUrl } from './external_links'
+import { resolveMediaUrl } from './media_url'
 
 const mdOptions: MarkdownIt.Options = {
   html: false,
@@ -206,14 +207,15 @@ const escapeMermaidFences = (md: MarkdownIt) => {
 // smb:, custom schemes, relative urls) keeps its markdown source as text.
 // The fragments the app's own messages use as actions (handled in Chat.vue) stay links.
 const kActionLink = /^#(settings(_[A-Za-z0-9]+)*|retry_without_(plugins|params))$/
+const toText = (token: Token, content: string) => {
+  token.type = 'text'
+  token.tag = ''
+  token.nesting = 0
+  token.attrs = null
+  token.children = null
+  token.content = content
+}
 const restrictLinks = (md: MarkdownIt) => {
-  const toText = (token: Token, content: string) => {
-    token.type = 'text'
-    token.tag = ''
-    token.nesting = 0
-    token.attrs = null
-    token.content = content
-  }
   md.core.ruler.push('restrict_links', (state) => {
     for (const block of state.tokens) {
       if (block.type !== 'inline' || !block.children) continue
@@ -240,16 +242,46 @@ const restrictLinks = (md: MarkdownIt) => {
   })
 }
 
+// An image is loaded as soon as it is rendered, by a page that reads local files and
+// network shares as readily as web pages. Its source is the caller's decision
+// (see media_url.ts): the url to load instead, or null and the image keeps its markdown
+// source as text. Without a caller no local file is an image.
+export type MediaResolver = (url: string) => string | null
+const resolveRemoteMedia: MediaResolver = (url) => resolveMediaUrl(url, [])
+const restrictImages = (md: MarkdownIt) => {
+  md.core.ruler.push('restrict_images', (state) => {
+    const resolveMedia: MediaResolver = state.env?.resolveMedia ?? resolveRemoteMedia
+    for (const block of state.tokens) {
+      if (block.type !== 'inline' || !block.children) continue
+      for (const token of block.children) {
+        if (token.type !== 'image') continue
+        const src = token.attrGet('src') ?? ''
+        const resolved = resolveMedia(src)
+        if (resolved) {
+          token.attrSet('src', resolved)
+        } else {
+          toText(token, `![${token.content}](${src})`)
+        }
+      }
+    }
+  })
+}
+
+export type RenderMarkdownOptions = {
+  resolveMedia?: MediaResolver
+}
+
 let md: MarkdownIt | null = null
 
-export const renderMarkdown = (markdown: string): string => {
+export const renderMarkdown = (markdown: string, options: RenderMarkdownOptions = {}): string => {
   
   // init
   if (!md) {
 
     md = new MarkdownIt(mdOptions)
 
-    // add support for file:// urls: images only, links are restricted below
+    // add support for file:// urls: images only and as far as restrictImages
+    // lets them through, links are restricted below
     const validateLink = md.validateLink
     md.validateLink = (url) =>  url.startsWith('file://') ? true : validateLink(url)
 
@@ -260,10 +292,11 @@ export const renderMarkdown = (markdown: string): string => {
     escapeMermaidFences(md)
     preserveKnownTags(md)
     restrictLinks(md)
+    restrictImages(md)
     // addSourceOffsets(md)
   
   }
 
   // do it
-  return md.render(mdPreprocess(md, markdown))
+  return md.render(mdPreprocess(md, markdown), { resolveMedia: options.resolveMedia })
 }
