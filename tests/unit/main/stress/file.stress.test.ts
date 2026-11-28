@@ -61,7 +61,8 @@ describe('writeFileContents', () => {
       expect(fs.readFileSync(url.slice(7), 'utf-8')).toBe(`content ${i}`)
     }
     expect(fs.readdirSync(path.join(root, 'userData'))).toHaveLength(300)
-  })
+  // 300 files written and read back: a few seconds alone on Windows, more under the load of the whole suite
+  }, 60000)
 
   test.each([
     ['filename', { filename: path.join('..', 'outside.txt'), directory: 'temp' }],
