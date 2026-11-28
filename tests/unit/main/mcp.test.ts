@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import mcpConfig from '@tests/fixtures/mcp.json'
 import Mcp from '@main/mcp'
+import { HttpServer } from '@main/http_server'
 import { Configuration } from '@/types/config'
 
 vi.mock('electron', async() => {
@@ -1715,5 +1716,32 @@ test('The MCP SDK is not patched to start stdio servers through a shell', () => 
     const added = fs.readFileSync(path.join('patches', patch), 'utf8').split('\n')
       .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
     expect(added.filter((line) => /\bshell\b/.test(line) && !/\bshell:\s*false\b/.test(line)), patch).toStrictEqual([])
+  }
+})
+
+test('OAuth client information uses the redirect uri of the running callback server', async () => {
+  // the configured port (8090) was taken: the callback server listens on another one
+  const httpServer = HttpServer.getInstance()
+  const ensureServerRunning = vi.spyOn(httpServer, 'ensureServerRunning').mockResolvedValue()
+  const getBaseUrl = vi.spyOn(httpServer, 'getBaseUrl').mockReturnValue('http://localhost:8091')
+  try {
+    const mcp = new Mcp(app)
+    const transports = { http: StreamableHTTPClientTransport, sse: SSEClientTransport } as const
+    for (const type of ['http', 'sse'] as const) {
+      expect(await mcp.editServer({
+        uuid: null, registryId: null, state: 'enabled', type,
+        url: `http://localhost:3001/${type}`,
+        oauth: { clientId: 'client-id', clientSecret: 'client-secret' },
+        toolSelection: null,
+      })).toBe(true)
+      const calls = vi.mocked(transports[type]).mock.calls
+      const provider: any = calls[calls.length - 1][1]!.authProvider
+      expect(provider.redirectUrl).toBe('http://localhost:8091/mcp/callback')
+      expect(provider.clientInformation().client_id).toBe('client-id')
+      expect(provider.clientInformation().redirect_uris).toEqual(['http://localhost:8091/mcp/callback'])
+    }
+  } finally {
+    ensureServerRunning.mockRestore()
+    getBaseUrl.mockRestore()
   }
 })

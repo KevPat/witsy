@@ -4,7 +4,7 @@ import { IncomingMessage, ServerResponse } from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import { HttpServer } from '@main/http_server'
 import McpOAuthManager from '@main/mcp_auth'
 import { bug } from './bug'
@@ -161,20 +161,26 @@ describe('MCP OAuth callback page', () => {
     expect(res.body).not.toContain(payload)
   })
 
-  bug('flow identifiers are not derived from Math.random', async () => {
+  test('flow identifiers are not derived from Math.random', async () => {
     // the identifier doubles as the OAuth state parameter, i.e. the CSRF token of the flow
     newServer()
     const manager = new McpOAuthManager(app)
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.123456789)
     const now = vi.spyOn(Date, 'now').mockReturnValue(1700000000000)
-    const ids: string[] = []
-    ;(manager as any).attemptConnection = async (_: any, flowId: string) => { ids.push(flowId) }
+    // the state is now created when the browser is sent to the authorization server (one per request):
+    // the stubbed connection asks for that redirect and the state is read from the url the browser gets
+    ;(manager as any).attemptConnection = async (provider: any) => {
+      provider.redirectToAuthorization(new URL('https://auth.example.com/authorize'))
+    }
     const metadata = { client_name: 'x', redirect_uris: ['http://localhost:8090/mcp/callback'] }
     await HttpServer.getInstance().ensureServerRunning(8090)
     await manager.startOAuthFlow('http', 'https://mcp.example.com', metadata)
     await manager.startOAuthFlow('http', 'https://mcp.example.com', metadata)
     random.mockRestore()
     now.mockRestore()
+    const ids = vi.mocked(shell.openExternal).mock.calls.map(([url]) => new URL(url).searchParams.get('state'))
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).toMatch(/^[0-9a-f]{32,}$/)
     expect(ids[0]).not.toBe(ids[1])
   })
 

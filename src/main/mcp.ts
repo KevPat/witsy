@@ -919,7 +919,7 @@ export default class Mcp {
           const clientInformation = {
             client_id: server.oauth.clientId,
             client_secret: server.oauth.clientSecret,
-            redirect_uris: ['http://localhost:8090/callback'],
+            redirect_uris: clientMetadata.redirect_uris,
             token_endpoint_auth_method: 'client_secret_post',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],
@@ -1018,7 +1018,7 @@ export default class Mcp {
           const clientInformation = {
             client_id: server.oauth.clientId,
             client_secret: server.oauth.clientSecret,
-            redirect_uris: ['http://localhost:8090/callback'],
+            redirect_uris: clientMetadata.redirect_uris,
             token_endpoint_auth_method: 'client_secret_post',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],

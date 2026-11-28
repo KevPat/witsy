@@ -5,8 +5,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
-import { app, App, shell } from 'electron'
+import { app, App } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { loadSettings } from './config'
+import { openExternalUrl } from './external_links'
 import { HttpServer } from './http_server'
 import { useI18n } from './i18n'
 
@@ -95,11 +97,18 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
 
 }
 
+// what one authorization flow needs: flows can run at the same time, so nothing of this
+// may live on the manager
+type OAuthFlow = {
+  type: 'http' | 'sse'
+  url: string
+  client: Client
+  // state of the authorization request the browser was last sent to
+  state: string | null
+}
+
 export default class McpOAuthManager {
   private app: App
-  private client: Client | null = null
-  private serverUrl: string = ''
-  private serverType: 'http' | 'sse' = 'http'
   private httpServer: HttpServer
   private pendingCallbacks: Map<string, {
     resolve: (code: string) => void
@@ -139,12 +148,24 @@ export default class McpOAuthManager {
     const t = useI18n(app)
     const code = parsedUrl.searchParams.get('code')
     const error = parsedUrl.searchParams.get('error')
-    const state = parsedUrl.searchParams.get('state') || 'default'
+    const state = parsedUrl.searchParams.get('state')
 
-    const pendingCallback = this.pendingCallbacks.get(state)
-    
-    if (code && pendingCallback) {
-      console.log(`[oauth] Authorization code received for MCP flow ${state}: ${code.substring(0, 10)}...`)
+    // a callback only means something to the flow that is waiting for it: without a state,
+    // or with one that is unknown, already used or expired, nothing of the request is used
+    const pendingCallback = state ? this.pendingCallbacks.get(state) : undefined
+    if (!pendingCallback) {
+      console.log('[oauth] Refused MCP OAuth callback: no flow is waiting for this state')
+      res.writeHead(400)
+      res.end('Bad request')
+      return
+    }
+
+    // a state completes one callback
+    clearTimeout(pendingCallback.timeout)
+    this.pendingCallbacks.delete(state)
+
+    if (code) {
+      console.log('[oauth] Authorization code received for MCP flow')
       res.writeHead(200, kHtmlHeaders)
       res.end(`
         <!DOCTYPE html>
@@ -169,13 +190,10 @@ export default class McpOAuthManager {
         </html>
       `)
 
-      // Clean up this specific callback
-      clearTimeout(pendingCallback.timeout)
-      this.pendingCallbacks.delete(state)
       pendingCallback.resolve(code)
 
     } else if (error) {
-      console.log(`[oauth] Authorization error for MCP flow ${state}: ${error}`)
+      console.log(`[oauth] Authorization error for MCP flow: ${error}`)
       res.writeHead(400, { ...kHtmlHeaders, 'Content-Security-Policy': kErrorPageCsp })
       res.end(`
         <!DOCTYPE html>
@@ -199,26 +217,24 @@ export default class McpOAuthManager {
         </html>
       `)
 
-      if (pendingCallback) {
-        clearTimeout(pendingCallback.timeout)
-        this.pendingCallbacks.delete(state)
-        pendingCallback.reject(new Error(`OAuth authorization failed: ${error}`))
-      }
+      pendingCallback.reject(new Error(`OAuth authorization failed: ${error}`))
+
     } else {
-      console.log(`[oauth] Invalid MCP OAuth callback: missing code/error or callback not found`)
+      console.log(`[oauth] Invalid MCP OAuth callback: missing code/error`)
       res.writeHead(400)
       res.end('Bad request')
 
-      if (pendingCallback) {
-        clearTimeout(pendingCallback.timeout)
-        this.pendingCallbacks.delete(state)
-        pendingCallback.reject(new Error('No authorization code provided'))
-      }
+      pendingCallback.reject(new Error('No authorization code provided'))
     }
   }
 
+  // the state is what ties a callback to its flow, and what a forged callback has to guess
+  private createState(): string {
+    return randomBytes(32).toString('hex')
+  }
+
   /**
-   * Wait for OAuth callback with a specific flow ID
+   * Wait for the OAuth callback that carries this state (it expires after 5 minutes)
    */
   async waitForCallback(flowId: string): Promise<string> {
 
@@ -227,12 +243,11 @@ export default class McpOAuthManager {
     await this.httpServer.ensureServerRunning(settings?.general?.httpPort || kDefaultHttpPort)
     return new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        console.log(`[oauth] MCP OAuth callback timeout for flow ${flowId}`)
+        console.log('[oauth] MCP OAuth callback timeout')
         this.pendingCallbacks.delete(flowId)
         reject(new Error('OAuth callback timeout'))
       }, 300000) // 5 minute timeout
 
-      console.log(`[oauth] Storing pending MCP callback for flowId: ${flowId}`)
       this.pendingCallbacks.set(flowId, { resolve, reject, timeout })
     })
   }
@@ -348,11 +363,19 @@ export default class McpOAuthManager {
   /**
    * Opens the authorization URL in the user's default browser
    */
-  private async openBrowser(url: string): Promise<void> {
-    console.log(`[oauth] Opening browser for authorization: ${url}`);
+  private openBrowser(url: string): void {
 
-    // Use shell.openExternal for Electron instead of exec for cross-platform compatibility
-    shell.openExternal(url);
+    // the authorization endpoint is chosen by the remote server: only a web page may be opened
+    let protocol: string | null = null
+    try {
+      protocol = new URL(url).protocol
+    } catch { /* refused below */ }
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      throw new Error('OAuth authorization URL refused: only http and https URLs can be opened')
+    }
+
+    console.log(`[oauth] Opening browser for authorization`);
+    void openExternalUrl(url);
   }
 
   /**
@@ -365,25 +388,28 @@ export default class McpOAuthManager {
     clientCredentials?: { client_id: string; client_secret: string }
   ): Promise<string> {
     console.log(`[oauth] Attempting to connect to ${url}...`);
-    this.serverUrl = url;
-    this.serverType = type;
-    
-    // Generate unique flow ID for this OAuth attempt
-    const flowId = `oauth_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-    console.log(`[oauth] OAuth flow ID: ${flowId}`)
+
+    const flow: OAuthFlow = { type, url, client: null, state: null }
+
+    // the redirect URI is the port the callback server really listens on, which is not
+    // always the configured one: it is what gets registered and what the browser comes back to
+    const settings = loadSettings(this.app)
+    await this.httpServer.ensureServerRunning(settings?.general?.httpPort || kDefaultHttpPort)
+    const callbackUrl = `${this.httpServer.getBaseUrl()}/mcp/callback`
+    clientMetadata = { ...clientMetadata, redirect_uris: [callbackUrl] }
 
     console.log(`[oauth] Creating OAuth provider...`);
-    const callbackUrl = `${this.httpServer.getBaseUrl()}/mcp/callback`
     const oauthProvider = new McpOAuthClientProvider(
       callbackUrl,
       clientMetadata,
       (redirectUrl: URL) => {
-        // Add state parameter to identify this specific flow
+        // each authorization request gets its own unguessable state: the callback that
+        // brings it back completes this flow and no other
+        flow.state = this.createState()
         const urlWithState = new URL(redirectUrl.toString())
-        urlWithState.searchParams.set('state', flowId)
-        
+        urlWithState.searchParams.set('state', flow.state)
+
         console.log(`[oauth] OAuth redirect handler called - opening browser`);
-        console.log(`Opening browser to: ${urlWithState.toString()}`);
         this.openBrowser(urlWithState.toString());
       },
       () => {}
@@ -407,14 +433,14 @@ export default class McpOAuthManager {
     console.log('[oauth] OAuth provider created');
 
     console.log('[oauth] Creating MCP client...');
-    this.client = new Client({
+    flow.client = new Client({
       name: `${useI18n(app)('common.appName').toLowerCase()}-oauth-client`,
       version: '1.0.0',
     }, { capabilities: {} });
     console.log('[oauth] Client created');
 
     console.log('[oauth] Starting OAuth flow...');
-    await this.attemptConnection(oauthProvider, flowId);
+    await this.attemptConnection(oauthProvider, flow);
     
     // Return the OAuth configuration with tokens
     const tokens = oauthProvider.tokens();
@@ -428,13 +454,13 @@ export default class McpOAuthManager {
   /**
    * Attempt connection - matches reference implementation exactly
    */
-  private async attemptConnection(oauthProvider: McpOAuthClientProvider, flowId: string): Promise<void> {
+  private async attemptConnection(oauthProvider: McpOAuthClientProvider, flow: OAuthFlow): Promise<void> {
     console.log('[oauth] Creating transport with OAuth provider...');
-    const baseUrl = new URL(this.serverUrl);
+    const baseUrl = new URL(flow.url);
 
     // Create appropriate transport based on server type
     let transport: any
-    if (this.serverType === 'sse') {
+    if (flow.type === 'sse') {
       transport = new SSEClientTransport(baseUrl, {
         authProvider: oauthProvider
       })
@@ -447,16 +473,19 @@ export default class McpOAuthManager {
 
     try {
       console.log('[oauth] Attempting connection (this will trigger OAuth redirect)...');
-      await this.client!.connect(transport);
+      await flow.client.connect(transport);
       console.log('[oauth] Connected successfully');
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         console.log('[oauth] OAuth required - waiting for authorization...');
-        const authCode = await this.waitForCallback(flowId);
-        console.log('[oauth] Authorization code received:', authCode);
+        // the state of the request the browser was just sent to: a later request gets a new one
+        const state = flow.state ?? this.createState()
+        flow.state = null
+        const authCode = await this.waitForCallback(state);
+        console.log('[oauth] Authorization code received');
         await transport.finishAuth(authCode);
         console.log('[oauth] Reconnecting with authenticated transport...');
-        await this.attemptConnection(oauthProvider, flowId);
+        await this.attemptConnection(oauthProvider, flow);
       } else {
         console.error('[oauth] Connection failed with non-auth error:', error);
         throw error;
