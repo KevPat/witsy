@@ -23,7 +23,7 @@
     </div>
     <div class="panel-body variable-font-size" ref="panelBody">
       <MessageItemBody v-if="!previewHtml" :message="message" tool-calls-display="none" />
-      <iframe ref="htmlIframe" sandbox="allow-scripts allow-same-origin allow-forms" v-else-if="!transient || headComplete" :srcdoc="html" style="width: 100%; border: none;" />
+      <iframe ref="htmlIframe" :key="frameGeneration" sandbox="allow-scripts allow-forms" v-else-if="!transient || headComplete" :src="kArtifactFrameUrl" :style="{ width: '100%', border: 'none', height: frameHeight }" />
       <div v-else class="html-loading">{{ t('common.htmlGeneration') }}</div>
     </div>
 
@@ -34,9 +34,11 @@
 
 import { useArtifactCopy } from '@composables/artifact_copy'
 import useEventListener from '@composables/event_listener'
+import { kArtifactContentMessage, kArtifactFrameUrl, kArtifactReadyMessage } from '@/consts'
 import Message from '@models/message'
 import { togglePanel } from '@renderer/utils/panel'
 import { t } from '@services/i18n'
+import { buildFrameBridge, injectFrameBridge, kFrameHeightMessage, kFrameSnapshotMessage, kFrameSnapshotRequestMessage } from '@services/artifact_frame'
 import { addExtension, extractCodeBlockContent, extractHtmlContent as extractHtml } from '@services/markdown'
 import { exportToPdf } from '@services/pdf'
 import { store } from '@services/store'
@@ -57,6 +59,20 @@ const panelBody = ref<HTMLElement>()
 const htmlIframe = ref<HTMLIFrameElement>()
 const headComplete = ref(false)
 const initialHtmlWithListener = ref('')
+
+const kMaxFrameHeight = 20000
+const kMaxSnapshotLength = 20 * 1024 * 1024
+const kSnapshotTimeout = 2000
+
+const frameId = crypto.randomUUID()
+
+// The artifact is not a srcdoc frame: such a frame gets the content security policy of the app, which
+// forbids the inline scripts an artifact is made of. The frame loads a fixed page of the app instead
+// (kArtifactFrameUrl, served by the main process without that policy), which asks for its content when
+// it is loaded and becomes the page it is sent.
+// The artifact runs in an opaque origin (no allow-same-origin) and only exchanges messages with the app:
+// the script that does it on the side of the artifact is in @services/artifact_frame.
+const frameBridge = buildFrameBridge(frameId)
 
 const props = defineProps({
   title: {
@@ -127,7 +143,7 @@ const injectDarkModeCSS = (htmlContent: string) => {
 const html = computed(() => {
   // Non-transient: return full HTML content with dark mode CSS injected
   if (!props.transient) {
-    return injectDarkModeCSS(extractHtmlContent())
+    return injectFrameBridge(injectDarkModeCSS(extractHtmlContent()), frameBridge)
   }
 
   // Transient: wait for head to complete
@@ -139,13 +155,71 @@ const html = computed(() => {
   return initialHtmlWithListener.value
 })
 
-const adjustIframeHeight = () => {
-  if (!htmlIframe.value || !htmlIframe.value.contentDocument) return
+// the frame is a page of its own that is written once: other html means another frame.
+// The new frame starts with the height of the previous one, until it reports its own:
+// the message does not jump when the page of a streaming message is complete
+const frameGeneration = ref(0)
+const frameHeight = ref('')
+watch(html, () => {
+  frameGeneration.value++
+})
 
-  const offsetHeight = htmlIframe.value.contentDocument.documentElement.offsetHeight
-  if (offsetHeight > 0) {
-    htmlIframe.value.style.height = offsetHeight + 'px'
+// the frame asked for its page: it gets the html of this artifact
+const sendPageToFrame = () => {
+  const frame = htmlIframe.value?.contentWindow
+  if (!frame) return
+  frame.postMessage({ type: kArtifactContentMessage, html: html.value }, '*')
+
+  // a message that is still streaming: the body received so far comes after the head
+  if (props.transient && headComplete.value) {
+    updateIframeContent()
   }
+}
+
+let resolveSnapshot: ((html: string|null) => void)|null = null
+let snapshotRequest: Promise<string|null>|null = null
+
+// what the frame sends is written by the artifact: only a bounded number and a bounded string
+// are read from it, and the string is never inserted in the document of the app
+const onFrameMessage = (event: Event) => {
+  const { source, data } = event as MessageEvent
+  const iframe = htmlIframe.value
+  if (!iframe?.contentWindow || source !== iframe.contentWindow) return
+  if (!data || typeof data !== 'object') return
+
+  // sent by the page of the frame each time it is loaded (the artifact may reload itself): it has no id yet
+  if (data.type === kArtifactReadyMessage) {
+    sendPageToFrame()
+    return
+  }
+
+  if (data.id !== frameId) return
+
+  if (data.type === kFrameHeightMessage) {
+    const height = data.height
+    if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return
+    frameHeight.value = Math.min(Math.ceil(height), kMaxFrameHeight) + 'px'
+  } else if (data.type === kFrameSnapshotMessage) {
+    if (typeof data.html !== 'string' || data.html.length > kMaxSnapshotLength) return
+    resolveSnapshot?.(data.html)
+  }
+}
+
+const requestSnapshot = (frame: Window): Promise<string|null> => {
+  if (!snapshotRequest) {
+    snapshotRequest = new Promise((resolve) => {
+      const done = (html: string|null) => {
+        clearTimeout(timeout)
+        resolveSnapshot = null
+        snapshotRequest = null
+        resolve(html)
+      }
+      const timeout = setTimeout(() => done(null), kSnapshotTimeout)
+      resolveSnapshot = done
+      frame.postMessage({ type: kFrameSnapshotRequestMessage, id: frameId }, '*')
+    })
+  }
+  return snapshotRequest
 }
 
 const updateIframeContent = () => {
@@ -154,29 +228,16 @@ const updateIframeContent = () => {
 
   // Check if head is complete (contains </head>)
   if (!headComplete.value && htmlContent.includes('</head>')) {
-    const listenerScript = `
-  <script type="module">
-    window.addEventListener('message', (event) => {
-      if (event.data.type === 'update') {
-        document.body.innerHTML = event.data.body;
-      }
-    });
-  <\/script>
-  `
-
     // Extract everything up to and including </head>
     const headEndIndex = htmlContent.indexOf('</head>') + 7
     const headSection = htmlContent.substring(0, headEndIndex)
 
     // Inject dark mode CSS and listener before </head> and add empty body
     const darkModeCSS = isDarkMode() ? getDarkModeCSS() : ''
-    const htmlWithListener = headSection.replace('</head>', darkModeCSS + listenerScript + '</head>')
+    const htmlWithListener = headSection.replace('</head>', () => darkModeCSS + frameBridge + '</head>')
     initialHtmlWithListener.value = htmlWithListener + '<body></body></html>'
 
     headComplete.value = true
-
-    // Adjust height after iframe renders
-    setTimeout(() => adjustIframeHeight(), 50)
     return
   }
 
@@ -189,20 +250,10 @@ const updateIframeContent = () => {
       { type: 'update', body: bodyContent },
       '*'
     )
-
-    // Adjust height after content updates
-    setTimeout(() => adjustIframeHeight(), 50)
   }
 }
 
 let delayTimeout: NodeJS.Timeout | null = null
-let resizeTimeout: NodeJS.Timeout | null = null
-
-const handleResize = () => {
-  if (!htmlIframe.value) return
-  if (resizeTimeout) clearTimeout(resizeTimeout)
-  resizeTimeout = setTimeout(() => adjustIframeHeight(), 100)
-}
 
 const setupHtmlDelay = () => {
   if (!props.transient) {
@@ -246,34 +297,18 @@ onMounted(() => {
         delayTimeout = null
       }
       htmlRenderingDelayPassed.value = true
-      // Adjust height for non-transient HTML
-      setTimeout(() => adjustIframeHeight(), 100)
     } else {
       // Message became transient (shouldn't happen normally, but handle it)
       setupHtmlDelay()
     }
   })
 
-  // Watch for iframe to appear (for non-transient messages)
-  watch(htmlIframe, (newIframe) => {
-    if (newIframe && !props.transient) {
-      // Adjust height after iframe loads
-      setTimeout(() => adjustIframeHeight(), 100)
-    }
-  })
-
-  // For non-transient messages on mount
-  if (!props.transient) {
-    setTimeout(() => adjustIframeHeight(), 100)
-  }
-
-  // Adjust height on window resize (with debounce)
-  onDomEvent(window, 'resize', handleResize)
+  // The frame reports its height and answers snapshot requests with messages
+  onDomEvent(window, 'message', onFrameMessage)
 })
 
 onBeforeUnmount(() => {
   if (delayTimeout) clearTimeout(delayTimeout)
-  if (resizeTimeout) clearTimeout(resizeTimeout)
 })
 
 const toggleHtml = () => {
@@ -301,14 +336,13 @@ const onDownloadFormat = async (action: string) => {
             return
           }
 
-          // Get the actual HTML document from inside the iframe
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-          if (!iframeDoc) {
-            console.error('Could not access iframe content')
-            return
-          }
+          // The frame sends its rendered document as a string; without an answer the source is exported.
+          // DOMParser gives an inert document: its scripts do not run in the app.
+          const snapshot = iframe.contentWindow ? await requestSnapshot(iframe.contentWindow) : null
+          const iframeDoc = new DOMParser().parseFromString(snapshot ?? extractHtmlContent(), 'text/html')
+          iframeDoc.querySelectorAll('script[data-witsy-bridge]').forEach((script) => script.remove())
 
-          // Export the entire HTML document from the iframe
+          // Export the entire HTML document of the artifact
           await exportToPdf({
             title: filename.replace(/\.[^.]+$/, ''),
             element: iframeDoc.documentElement, // This gets the <html> element with all its content

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { IncomingMessage } from 'http'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { installApiEndpoints } from '@main/http_api'
+import { loadApiToken } from '@/cli/config'
 import { HttpServer } from '@main/http_server'
 import LlmFactory from '@services/llms/llm'
 import AssistantApi from '@main/assistant_api'
@@ -27,9 +31,11 @@ describe('HTTP API Endpoints', () => {
   let mockSettings: any
   let mockLlmManager: any
   let registeredRoutes: Map<string, RouteHandler>
+  let userDataPath: string
 
   beforeEach(() => {
     registeredRoutes = new Map()
+    userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'witsy-http-api-'))
 
     httpServer = {
       register: vi.fn((path: string, handler: RouteHandler) => {
@@ -38,7 +44,7 @@ describe('HTTP API Endpoints', () => {
     } as any
 
     mockApp = {
-      getPath: vi.fn(() => '/mock/user/data')
+      getPath: vi.fn(() => userDataPath)
     } as any
     mockMcp = {} as Mcp
     mockDocRepo = {} as any
@@ -70,6 +76,8 @@ describe('HTTP API Endpoints', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    vi.restoreAllMocks()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
   })
 
   describe('GET /api/cli/config', () => {
@@ -91,7 +99,7 @@ describe('HTTP API Endpoints', () => {
       const response = JSON.parse(mockRes.end.mock.calls[0][0])
       expect(response.engine).toEqual({ id: 'openai', name: 'OpenAI' })
       expect(response.model).toEqual({ id: 'gpt-4', name: 'GPT-4' })
-      expect(response.userDataPath).toBe('/mock/user/data')
+      expect(response.userDataPath).toBe(userDataPath)
       expect(response.enableHttpEndpoints).toBe(true)
     })
 
@@ -498,6 +506,160 @@ describe('HTTP API Endpoints', () => {
       await handler!(mockReq, mockRes, mockUrl)
 
       expect(mockRes.writeHead).toHaveBeenCalledWith(404, { 'Content-Type': 'application/json' })
+    })
+  })
+
+  describe('API token', () => {
+    const tokenFile = () => path.join(userDataPath, 'http-api-token')
+
+    test('writes a new token to the user data folder each time the endpoints are installed', () => {
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      const first = fs.readFileSync(tokenFile(), 'utf-8')
+      expect(first).toMatch(/^[0-9a-f]{64}$/)
+
+      registeredRoutes.clear()
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      const second = fs.readFileSync(tokenFile(), 'utf-8')
+      expect(second).toMatch(/^[0-9a-f]{64}$/)
+      expect(second).not.toBe(first)
+    })
+
+    test.skipIf(process.platform === 'win32')('the token file is readable by its owner only, even when a wider one existed', () => {
+      fs.writeFileSync(tokenFile(), 'stale', { mode: 0o644 })
+      fs.chmodSync(tokenFile(), 0o644)
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      expect(fs.statSync(tokenFile()).mode & 0o777).toBe(0o600)
+      expect(fs.readFileSync(tokenFile(), 'utf-8')).not.toBe('stale')
+    })
+
+    test('never logs the token', () => {
+      const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error'), vi.spyOn(console, 'info'), vi.spyOn(console, 'debug')]
+      logs.forEach((log) => log.mockImplementation(() => {}))
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      const token = fs.readFileSync(tokenFile(), 'utf-8')
+      const logged = logs.flatMap((log) => log.mock.calls).map((args) => args.map(String).join(' ')).join('\n')
+      expect(logged).not.toContain(token)
+    })
+
+    test('tolerates a token file that cannot be written and logs no token', () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const writable = userDataPath
+      userDataPath = path.join(writable, 'missing', 'folder')
+      expect(() => installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)).not.toThrow()
+      userDataPath = writable
+      expect(registeredRoutes.has('/api/complete')).toBe(true)
+      expect(fs.existsSync(tokenFile())).toBe(false)
+      const logged = error.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+      expect(logged).toContain('API token file')
+      expect(logged).not.toMatch(/[0-9a-f]{64}/)
+    })
+  })
+
+  describe('POST /api/complete with a work directory', () => {
+    const workDir = { path: '/some/project', access: 'rw' }
+
+    const complete = async (headers: Record<string, string>, body: object) => {
+      const payload = JSON.stringify({ stream: 'false', thread: [{ role: 'user', content: 'Hello' }], ...body })
+      const mockReq = {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        on: vi.fn((event, callback) => {
+          if (event === 'data') callback(Buffer.from(payload))
+          if (event === 'end') callback()
+        })
+      } as any
+      const mockRes = { writeHead: vi.fn(), write: vi.fn(), end: vi.fn() } as any
+      await registeredRoutes.get('/api/complete')!(mockReq, mockRes, new URL('http://localhost/api/complete'))
+      return mockRes
+    }
+
+    const readToken = () => fs.readFileSync(path.join(userDataPath, 'http-api-token'), 'utf-8')
+
+    beforeEach(() => {
+      vi.mocked(AssistantApi).mockImplementation(() => ({
+        initializeChat: vi.fn(),
+        addMessages: vi.fn(),
+        prompt: vi.fn(),
+        getLastMessage: vi.fn(() => ({ content: 'Test response' }))
+      }) as any)
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+    })
+
+    test('is refused without the API token', async () => {
+      const res = await complete({}, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(403, { 'Content-Type': 'application/json' })
+      const response = JSON.parse(res.end.mock.calls[0][0])
+      expect(response.success).toBe(false)
+      expect(response.error).toContain('workDir requires the API token')
+      expect(AssistantApi).not.toHaveBeenCalled()
+    })
+
+    test.each([
+      ['a wrong token', () => `Bearer ${'0'.repeat(64)}`],
+      ['a token of another length', () => 'Bearer abc'],
+      ['a prefix of the token', () => `Bearer ${readToken().slice(0, 32)}`],
+      ['the token without the Bearer scheme', () => readToken()],
+      ['another scheme', () => `Basic ${readToken()}`],
+      ['an empty bearer', () => 'Bearer '],
+    ])('is refused with %s', async (_, authorization) => {
+      const res = await complete({ authorization: authorization() }, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(403, { 'Content-Type': 'application/json' })
+      expect(AssistantApi).not.toHaveBeenCalled()
+    })
+
+    test('is refused with the token of a previous session', async () => {
+      const previous = readToken()
+      registeredRoutes.clear()
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      const res = await complete({ authorization: `Bearer ${previous}` }, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(403, { 'Content-Type': 'application/json' })
+      expect(AssistantApi).not.toHaveBeenCalled()
+    })
+
+    test('is honoured with the API token', async () => {
+      const res = await complete({ authorization: `Bearer ${readToken()}` }, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+      expect(vi.mocked(AssistantApi).mock.calls[0][1]).toEqual(workDir)
+    })
+
+    test('is honoured with the token the CLI reads from the user data folder', async () => {
+      const res = await complete({ authorization: `Bearer ${loadApiToken(userDataPath)}` }, { workDir: { path: '/some/project', access: 'ro' } })
+      expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+      expect(vi.mocked(AssistantApi).mock.calls[0][1]).toEqual({ path: '/some/project', access: 'ro' })
+    })
+
+    test('is refused when the token file could not be written', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const writable = userDataPath
+      userDataPath = path.join(writable, 'missing')
+      registeredRoutes.clear()
+      installApiEndpoints(httpServer, mockApp, mockMcp, mockDocRepo)
+      userDataPath = writable
+      const res = await complete({ authorization: `Bearer ${readToken()}` }, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(403, { 'Content-Type': 'application/json' })
+      expect(AssistantApi).not.toHaveBeenCalled()
+    })
+
+    test.each([
+      ['no work directory', {}],
+      ['a work directory without access', { workDir: { path: '/some/project', access: 'none' } }],
+      ['a work directory without path', { workDir: { path: null, access: 'rw' } }],
+    ])('needs no token with %s and gives the assistant no work directory', async (_, body) => {
+      const res = await complete({}, body)
+      expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' })
+      expect(vi.mocked(AssistantApi).mock.calls[0][1]).toBeNull()
+    })
+
+    test.each([
+      'text/plain;application/json',
+      'text/plain; charset=application/json',
+      'text/plain',
+      'application/x-www-form-urlencoded',
+    ])('answers 415 to a body sent as %s', async (contentType) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const res = await complete({ 'content-type': contentType, authorization: `Bearer ${readToken()}` }, { workDir })
+      expect(res.writeHead).toHaveBeenCalledWith(415, { 'Content-Type': 'application/json' })
+      expect(AssistantApi).not.toHaveBeenCalled()
     })
   })
 })

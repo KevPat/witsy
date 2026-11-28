@@ -8,8 +8,9 @@ import { useWindowMock } from '@tests/mocks/window'
 
 // Mock the i18n service
 vi.mock('@services/i18n', () => ({
-  t: (key: string) => {
+  t: (key: string, values?: Record<string, any>) => {
     if (key === 'agent.copySuffix') return 'Copy'
+    if (key === 'agent.forge.import.toolNotFound') return `${key} ${values.step} ${values.tool}`
     return key
   }
 }))
@@ -138,6 +139,40 @@ test('Import agent without conflict saves with original UUID', async () => {
   const savedAgent = vi.mocked(window.api.agents.save).mock.calls[0][1]
   expect(savedAgent.uuid).toBe('new-unique-uuid')
   expect(savedAgent.name).toBe('New Agent')
+})
+
+test('Import agent does not replace a legacy webhook token', async () => {
+  const wrapper: VueWrapper<any> = mount(AgentForge)
+
+  // an import is not a save from the editor: nobody would be shown the new url
+  const legacyAgent = JSON.parse(JSON.stringify({
+    uuid: 'legacy-webhook-uuid',
+    name: 'Legacy Webhook Agent',
+    description: 'An agent exported by a former version',
+    type: 'runnable',
+    engine: 'openai',
+    model: 'gpt-4',
+    steps: [{ tools: [], agents: [] }],
+    webhookToken: 'abc12345'
+  }))
+
+  const fileContents = {
+    url: 'file://test.json',
+    mimeType: 'application/json',
+    contents: JSON.stringify(legacyAgent)
+  }
+  vi.mocked(window.api.file.pickFile).mockReturnValue(fileContents)
+
+  // Trigger import
+  const listComponent = wrapper.findComponent({ name: 'List' })
+  listComponent.vm.$emit('importJson')
+  await flushPromises()
+
+  expect(window.api.agents.save).toHaveBeenCalledTimes(1)
+  const savedAgent = vi.mocked(window.api.agents.save).mock.calls[0][1]
+  expect(savedAgent.uuid).toBe('legacy-webhook-uuid')
+  expect(savedAgent.webhookToken).toBe('abc12345')
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
 })
 
 test('Import agent with conflict shows dialog', async () => {
@@ -645,6 +680,44 @@ test('Import with warnings shows warning dialog', async () => {
 
   // Agent should be saved
   expect(window.api.agents.save).toHaveBeenCalled()
+})
+
+test('Import warnings show the tool names of the imported file as text', async () => {
+  const wrapper: VueWrapper<any> = mount(AgentForge)
+
+  const tools = ['search <img src=x onerror="window.pwned=1">___ab12', 'fetch & <b>store</b>___cd34']
+  const fileContents = {
+    url: 'file://test.json',
+    mimeType: 'application/json',
+    contents: JSON.stringify({
+      uuid: 'new-uuid-with-markup',
+      name: 'Agent With Tools',
+      description: 'Test',
+      type: 'runnable',
+      engine: 'openai',
+      model: 'gpt-4',
+      steps: [{ tools, agents: [] }]
+    })
+  }
+  vi.mocked(window.api.file.pickFile).mockReturnValue(fileContents)
+  vi.mocked(Dialog.show).mockResolvedValue({ isConfirmed: true, isDenied: false, isDismissed: false, value: null })
+
+  wrapper.findComponent({ name: 'List' }).vm.$emit('importJson')
+  await flushPromises()
+
+  const options = vi.mocked(Dialog.show).mock.calls.map(([opts]) => opts).find((opts) => opts.title === 'agent.forge.import.warning.title')
+  expect(options).toBeDefined()
+
+  // what the dialog renders: the intro, one line per warning and nothing else than text
+  const body = document.createElement('div')
+  body.innerHTML = options.html
+  expect(Array.from(body.children).map((el) => el.tagName)).toEqual(['BR', 'BR', 'BR'])
+  expect(body.textContent).toBe([
+    'agent.forge.import.warning.text',
+    'agent.forge.import.toolNotFound 1 search <img src=x onerror="window.pwned=1">',
+    'agent.forge.import.toolNotFound 1 fetch & <b>store</b>',
+  ].join(''))
+  expect((window as any).pwned).toBeUndefined()
 })
 
 test('runningExecutions computed from runningAgentRuns state', () => {

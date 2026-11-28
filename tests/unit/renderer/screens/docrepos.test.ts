@@ -381,3 +381,25 @@ test('Scan for changes button calls scanForUpdates', async () => {
   await wrapper.find('.split-pane .sp-main header .scan').trigger('click')
   expect(window.api.docrepo.scanForUpdates).toHaveBeenCalledWith('uuid2', false)
 })
+
+test('Search results only link to web pages', async () => {
+  vi.mocked(window.api.docrepo.query).mockResolvedValueOnce([
+    { content: 'web', score: 0.9, metadata: { uuid: '1', type: 'url', title: 'Web page', url: 'https://example.com/a?b="c' } },
+    { content: 'local', score: 0.8, metadata: { uuid: '2', type: 'file', title: 'Local <b>file</b>', url: '/home/user/x" onmouseover="window.pwned=1.pdf' } },
+    { content: 'script', score: 0.7, metadata: { uuid: '3', type: 'url', title: 'Script', url: 'javascript:window.pwned=1' } },
+  ] as any)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ value: 'query', isConfirmed: true, isDenied: false, isDismissed: false })
+  const wrapper: VueWrapper<any> = mount(DocRepos)
+  await vi.waitUntil(async () => wrapper.vm.docRepos != null)
+
+  await wrapper.find('.split-pane .sp-main header .search').trigger('click')
+  await vi.waitUntil(() => vi.mocked(Dialog.show).mock.calls.length === 2)
+
+  const results = document.createElement('div')
+  results.innerHTML = vi.mocked(Dialog.show).mock.calls[1][0].html
+  const links = Array.from(results.querySelectorAll('a'))
+  expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://example.com/a?b="c'])
+  expect(Array.from(results.querySelectorAll('.result-title')).map((el) => el.textContent)).toEqual(['Web page', 'Local <b>file</b>', 'Script'])
+  expect(results.querySelectorAll('[onmouseover]')).toHaveLength(0)
+  expect(results.querySelector('b')).toBeNull()
+})

@@ -413,7 +413,10 @@
       "webhook": "Webhook",
       "webhook_copy": "Copy URL",
       "webhook_description": "Trigger this agent via HTTP request",
+      "webhook_legacy": "This URL uses an old, weak token. It still works, but it will be replaced by a strong one the next time you save this agent: you will then have to update your callers with the new URL.",
       "webhook_regenerate": "Regenerate token",
+      "webhook_replaced_text": "The old, weak webhook token of this agent has been replaced by a strong one and the old URL no longer works. Update your callers with the new URL: {url}",
+      "webhook_replaced_title": "Webhook URL changed",
       "webhook_url": "Webhook URL",
       "workflow": "Workflow"
     },

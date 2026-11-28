@@ -54,7 +54,8 @@ describe('CliPlugin path confinement', () => {
         expect(isInside(workDir, validated), `"${candidate}" resolved to ${validated}`).toBe(true)
       }
     }
-  })
+  // 2,000 real path resolutions: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('fuzz: absolute paths outside the root are rejected', () => {
     const rand = mulberry32(42)
@@ -66,24 +67,23 @@ describe('CliPlugin path confinement', () => {
     }
   })
 
-  bug('sibling directory sharing the working directory prefix is rejected', () => {
+  test('sibling directory sharing the working directory prefix is rejected', () => {
     // workDir = <root>/proj, target = <root>/proj-secrets/secret.txt
-    // validatePath uses fullPath.startsWith(workDirPath) without a separator boundary
     expect(plugin.validatePath(path.join(outside, 'secret.txt'))).toBeNull()
   })
 
-  bug('read_file cannot read a sibling directory through a relative path', async () => {
+  test('read_file cannot read a sibling directory through a relative path', async () => {
     const result = await plugin.execute({ model: 'test' }, { action: 'read_file', path: '../proj-secrets/secret.txt' })
     expect(result.success).toBe(false)
     expect(result.content || '').not.toContain('TOP SECRET')
   })
 
-  bug('write_file cannot create files in a sibling directory', async () => {
+  test('write_file cannot create files in a sibling directory', async () => {
     await plugin.execute({ model: 'test' }, { action: 'write_file', path: '../proj-secrets/planted.txt', content: 'x' })
     expect(fs.existsSync(path.join(outside, 'planted.txt'))).toBe(false)
   })
 
-  bug('delete_file cannot delete a sibling directory', async () => {
+  test('delete_file cannot delete a sibling directory', async () => {
     await plugin.execute({ model: 'test' }, { action: 'delete_file', path: '../proj-secrets' })
     expect(fs.existsSync(outside)).toBe(true)
   })
@@ -108,18 +108,18 @@ describe('CliPlugin path confinement', () => {
       fs.symlinkSync(outside, path.join(workDir, 'linkdir'))
     })
 
-    bug('read_file does not follow a symlink that points outside the working directory', async () => {
+    test('read_file does not follow a symlink that points outside the working directory', async () => {
       const result = await plugin.execute({ model: 'test' }, { action: 'read_file', path: 'link.txt' })
       expect(result.success).toBe(false)
       expect(result.content || '').not.toContain('TOP SECRET')
     })
 
-    bug('write_file does not write through a symlinked directory that points outside', async () => {
+    test('write_file does not write through a symlinked directory that points outside', async () => {
       await plugin.execute({ model: 'test' }, { action: 'write_file', path: 'linkdir/planted.txt', content: 'x' })
       expect(fs.existsSync(path.join(outside, 'planted.txt'))).toBe(false)
     })
 
-    bug('search does not return content from outside the working directory', async () => {
+    test('search does not return content from outside the working directory', async () => {
       const result = await plugin.execute({ model: 'test' }, { action: 'search', pattern: 'SECRET', path: 'link.txt' })
       expect(result.matchCount || 0).toBe(0)
     })
@@ -159,12 +159,12 @@ describe('CliPlugin read-only mode', () => {
     expect(fs.readdirSync(workDir)).toEqual(['data.txt'])
   })
 
-  bug.runIf(isPosix)('run_command cannot modify files when access is read-only', async () => {
+  test.runIf(isPosix)('run_command cannot modify files when access is read-only', async () => {
     await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'echo changed > data.txt' })
     expect(fs.readFileSync(path.join(workDir, 'data.txt'), 'utf-8')).toBe('original')
   })
 
-  bug.runIf(isPosix)('run_command cannot delete files when access is read-only', async () => {
+  test.runIf(isPosix)('run_command cannot delete files when access is read-only', async () => {
     // "rm" is on the deny list, "find -delete" is not
     await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'find . -name data.txt -delete' })
     expect(fs.existsSync(path.join(workDir, 'data.txt'))).toBe(true)
@@ -205,7 +205,8 @@ describe('CliPlugin edits', () => {
         expect(after).toEqual(lines)
       }
     }
-  })
+  // 300 files written, edited and read back: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('read_file tolerates out-of-range and non-integer bounds', async () => {
     fs.writeFileSync(path.join(workDir, 'a.txt'), 'one\ntwo\nthree')

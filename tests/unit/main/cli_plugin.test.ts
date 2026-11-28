@@ -62,6 +62,13 @@ describe('CliPlugin', () => {
       expect(roPlugin.getDescription()).toContain('read')
       expect(roPlugin.getDescription()).not.toContain('read and write')
     })
+
+    test('mentions shell commands for rw access only', () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      expect(plugin.getDescription()).toContain('run shell commands')
+      expect(roPlugin.getDescription()).not.toContain('shell')
+      expect(roPlugin.getDescription()).toContain(tempDir)
+    })
   })
 
   describe('getParameters', () => {
@@ -74,6 +81,8 @@ describe('CliPlugin', () => {
       expect(actionParam?.enum).toContain('create_directory')
       expect(actionParam?.enum).toContain('delete_file')
       expect(actionParam?.enum).toContain('move_file')
+      expect(actionParam?.enum).toContain('run_command')
+      expect(params.map(p => p.name)).toEqual(expect.arrayContaining(['command', 'cwd', 'timeout']))
     })
 
     test('excludes write actions for ro access', () => {
@@ -83,6 +92,17 @@ describe('CliPlugin', () => {
       expect(actionParam?.enum).toContain('read_file')
       expect(actionParam?.enum).not.toContain('write_file')
       expect(actionParam?.enum).not.toContain('edit_file')
+    })
+
+    test('offers run_command and its parameters for rw access only', () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      const params = roPlugin.getParameters()
+      expect(params.find(p => p.name === 'action')?.enum).toEqual(['read_file', 'list_files', 'search'])
+      const names = params.map(p => p.name)
+      expect(names).not.toContain('command')
+      expect(names).not.toContain('cwd')
+      expect(names).not.toContain('timeout')
+      expect(names).toEqual(expect.arrayContaining(['path', 'start', 'end', 'pattern', 'glob']))
     })
   })
 
@@ -104,6 +124,275 @@ describe('CliPlugin', () => {
     test('rejects path traversal', () => {
       expect(plugin.validatePath('../../../etc/passwd')).toBeNull()
     })
+
+    test('rejects a sibling directory that shares the workDir prefix', () => {
+      const siblingPath = path.join(
+        path.dirname(tempDir),
+        `${path.basename(tempDir)}-outside`,
+        'secret.txt'
+      )
+      expect(plugin.validatePath(siblingPath)).toBeNull()
+      expect(plugin.validatePath(`../${path.basename(tempDir)}-outside/secret.txt`)).toBeNull()
+    })
+
+    test('allows children and rejects paths that normalize outside', () => {
+      fs.writeFileSync(path.join(tempDir, 'note.txt'), 'hello')
+      expect(plugin.validatePath(path.join(tempDir, 'note.txt'))).toBe(path.join(tempDir, 'note.txt'))
+      expect(plugin.validatePath('note.txt')).toBe(path.normalize(path.join(tempDir, 'note.txt')))
+      expect(plugin.validatePath(path.join('sub', '..', 'note.txt'))).toBe(path.join(tempDir, 'note.txt'))
+      expect(plugin.validatePath(path.join(tempDir, '..', path.basename(tempDir), '..'))).toBeNull()
+      expect(plugin.validatePath(path.resolve(tempDir, '..', 'definitely-outside'))).toBeNull()
+      expect(plugin.validatePath(path.join('sub', '..', '..', path.basename(tempDir) + '-outside'))).toBeNull()
+    })
+
+    test('accepts the working directory itself and paths that do not exist yet', () => {
+      expect(plugin.validatePath('.')).toBe(tempDir)
+      expect(plugin.validatePath('')).toBe(tempDir)
+      expect(plugin.validatePath(tempDir)).toBe(tempDir)
+      expect(plugin.validatePath(path.join('new', 'deep', 'file.txt'))).toBe(path.join(tempDir, 'new', 'deep', 'file.txt'))
+    })
+
+    test('does not throw for odd inputs', () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      const samples = ['', '.', '..', '../..', '/', 'foo/../../bar', 'a'.repeat(2000), 'nul', 'CON', 'foo bar/baz', 'a\0b', 42, null, undefined, {}]
+      for (const sample of samples) {
+        expect(() => roPlugin.validatePath(sample as string)).not.toThrow()
+      }
+      for (const sample of ['..', '../..', '/', 'foo/../../bar', 'a\0b', 42, null, undefined, {}]) {
+        expect(roPlugin.validatePath(sample as string)).toBeNull()
+      }
+    })
+  })
+
+  describe('path containment', () => {
+
+    let outside: string
+
+    const run = (parameters: Record<string, unknown>) => {
+      return plugin.execute({ model: 'test' }, parameters as Parameters<CliPlugin['execute']>[1])
+    }
+
+    beforeEach(() => {
+      // a sibling whose name starts with the name of the working directory
+      outside = `${tempDir}-secret`
+      fs.mkdirSync(outside)
+      fs.writeFileSync(path.join(outside, 'secret.txt'), 'TOP SECRET')
+      fs.writeFileSync(path.join(tempDir, 'inside.txt'), 'inside')
+    })
+
+    afterEach(() => {
+      fs.rmSync(outside, { recursive: true, force: true })
+    })
+
+    describe('prefix sibling and dot segments', () => {
+
+      const escapes = () => [
+        path.join(outside, 'secret.txt'),
+        `../${path.basename(outside)}/secret.txt`,
+        `sub/../../${path.basename(outside)}/secret.txt`,
+      ]
+
+      test('read_file is refused', async () => {
+        for (const target of escapes()) {
+          const result = await run({ action: 'read_file', path: target })
+          expect(result.success, target).toBe(false)
+          expect(result.error, target).toContain('not allowed')
+          expect(result.content).toBeUndefined()
+        }
+      })
+
+      test('write_file and edit_file are refused', async () => {
+        for (const target of escapes()) {
+          const written = await run({ action: 'write_file', path: target, content: 'overwritten' })
+          expect(written.error, target).toContain('not allowed')
+          const edited = await run({ action: 'edit_file', path: target, start: 1, end: 1, content: 'edited' })
+          expect(edited.error, target).toContain('not allowed')
+        }
+        const planted = await run({ action: 'write_file', path: `../${path.basename(outside)}/planted.txt`, content: 'x' })
+        expect(planted.error).toContain('not allowed')
+        expect(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf-8')).toBe('TOP SECRET')
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+      test('list_files and search are refused', async () => {
+        for (const target of [outside, `../${path.basename(outside)}`]) {
+          const listed = await run({ action: 'list_files', path: target })
+          expect(listed.error, target).toContain('not allowed')
+          const searched = await run({ action: 'search', pattern: 'SECRET', path: target })
+          expect(searched.error, target).toContain('not allowed')
+          expect(searched.content).toBeUndefined()
+        }
+      })
+
+      test('create_directory, delete_file and move_file are refused', async () => {
+        const sibling = `../${path.basename(outside)}`
+        const created = await run({ action: 'create_directory', path: `${sibling}/newdir` })
+        expect(created.error).toContain('not allowed')
+        const deleted = await run({ action: 'delete_file', path: `${sibling}/secret.txt` })
+        expect(deleted.error).toContain('not allowed')
+        const deletedDir = await run({ action: 'delete_file', path: sibling })
+        expect(deletedDir.error).toContain('not allowed')
+        const movedOut = await run({ action: 'move_file', path: 'inside.txt', newPath: `${sibling}/inside.txt` })
+        expect(movedOut.error).toContain('not allowed')
+        const movedIn = await run({ action: 'move_file', path: `${sibling}/secret.txt`, newPath: 'stolen.txt' })
+        expect(movedIn.error).toContain('not allowed')
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+        expect(fs.readdirSync(tempDir)).toEqual(['inside.txt'])
+      })
+
+      test('run_command does not start in a sibling directory', async () => {
+        for (const cwd of [outside, `../${path.basename(outside)}`]) {
+          const result = await run({ action: 'run_command', command: 'echo ran > ran.txt', cwd })
+          expect(result.success, cwd).toBe(false)
+          expect(result.error, cwd).toContain('Invalid working directory')
+        }
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+    })
+
+    describe.runIf(process.platform !== 'win32')('symbolic links', () => {
+
+      beforeEach(() => {
+        fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(tempDir, 'link.txt'))
+        fs.symlinkSync(outside, path.join(tempDir, 'linkdir'))
+        fs.symlinkSync(path.join(outside, 'not-yet.txt'), path.join(tempDir, 'dangling.txt'))
+      })
+
+      test('validatePath rejects links that leave the working directory', () => {
+        expect(plugin.validatePath('link.txt')).toBeNull()
+        expect(plugin.validatePath('linkdir')).toBeNull()
+        expect(plugin.validatePath('linkdir/secret.txt')).toBeNull()
+        expect(plugin.validatePath('linkdir/new/file.txt')).toBeNull()
+        expect(plugin.validatePath('dangling.txt')).toBeNull()
+        expect(plugin.validatePath(path.join(tempDir, 'linkdir', 'secret.txt'))).toBeNull()
+      })
+
+      test('read_file does not follow a link to outside', async () => {
+        for (const target of ['link.txt', 'linkdir/secret.txt']) {
+          const result = await run({ action: 'read_file', path: target })
+          expect(result.success, target).toBe(false)
+          expect(result.error, target).toContain('not allowed')
+          expect(result.content).toBeUndefined()
+        }
+      })
+
+      test('write_file and edit_file do not follow a link to outside', async () => {
+        for (const target of ['link.txt', 'linkdir/secret.txt']) {
+          const written = await run({ action: 'write_file', path: target, content: 'overwritten' })
+          expect(written.error, target).toContain('not allowed')
+          const edited = await run({ action: 'edit_file', path: target, start: 1, end: 1, content: 'edited' })
+          expect(edited.error, target).toContain('not allowed')
+        }
+        const planted = await run({ action: 'write_file', path: 'linkdir/sub/planted.txt', content: 'x' })
+        expect(planted.error).toContain('not allowed')
+        expect(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf-8')).toBe('TOP SECRET')
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+      test('write_file does not create the target of a dangling link', async () => {
+        const result = await run({ action: 'write_file', path: 'dangling.txt', content: 'x' })
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('not allowed')
+        expect(fs.existsSync(path.join(outside, 'not-yet.txt'))).toBe(false)
+      })
+
+      test('list_files does not list a linked directory', async () => {
+        const result = await run({ action: 'list_files', path: 'linkdir' })
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('not allowed')
+        expect(result.content).toBeUndefined()
+      })
+
+      test('search does not read through links', async () => {
+        for (const target of ['link.txt', 'linkdir', 'linkdir/secret.txt']) {
+          const result = await run({ action: 'search', pattern: 'SECRET', path: target })
+          expect(result.success, target).toBe(false)
+          expect(result.error, target).toContain('not allowed')
+        }
+        // links met while walking the working directory are skipped
+        fs.mkdirSync(path.join(tempDir, 'sub'))
+        fs.symlinkSync(outside, path.join(tempDir, 'sub', 'nested-link'))
+        fs.writeFileSync(path.join(tempDir, 'sub', 'real.txt'), 'NOT SECRET')
+        const walked = await run({ action: 'search', pattern: 'SECRET' })
+        expect(walked.success).toBe(true)
+        expect(walked.matchCount).toBe(1)
+        expect(walked.content).toBe(`${path.join('sub', 'real.txt')}:1:NOT SECRET`)
+      })
+
+      test('create_directory does not create below a linked directory', async () => {
+        const result = await run({ action: 'create_directory', path: 'linkdir/newdir' })
+        expect(result.error).toContain('not allowed')
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+      test('delete_file does not delete through a linked directory', async () => {
+        const result = await run({ action: 'delete_file', path: 'linkdir/secret.txt' })
+        expect(result.error).toContain('not allowed')
+        expect(fs.existsSync(path.join(outside, 'secret.txt'))).toBe(true)
+      })
+
+      test('move_file does not move out through a linked destination', async () => {
+        for (const newPath of ['linkdir/inside.txt', 'linkdir/sub/inside.txt', 'dangling.txt']) {
+          const result = await run({ action: 'move_file', path: 'inside.txt', newPath })
+          expect(result.success, newPath).toBe(false)
+          expect(result.error, newPath).toContain('not allowed')
+        }
+        expect(fs.existsSync(path.join(tempDir, 'inside.txt'))).toBe(true)
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+      test('move_file does not move in through a linked source', async () => {
+        const result = await run({ action: 'move_file', path: 'linkdir/secret.txt', newPath: 'stolen.txt' })
+        expect(result.error).toContain('not allowed')
+        expect(fs.existsSync(path.join(outside, 'secret.txt'))).toBe(true)
+        expect(fs.existsSync(path.join(tempDir, 'stolen.txt'))).toBe(false)
+      })
+
+      test('run_command does not start in a linked directory', async () => {
+        const result = await run({ action: 'run_command', command: 'echo ran > ran.txt', cwd: 'linkdir' })
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('Invalid working directory')
+        expect(fs.readdirSync(outside)).toEqual(['secret.txt'])
+      })
+
+      test('links that stay inside the working directory keep working', async () => {
+        fs.mkdirSync(path.join(tempDir, 'real'))
+        fs.writeFileSync(path.join(tempDir, 'real', 'data.txt'), 'data')
+        fs.symlinkSync(path.join(tempDir, 'real'), path.join(tempDir, 'alias'))
+        fs.symlinkSync('real/data.txt', path.join(tempDir, 'data-link.txt'))
+
+        // the path the caller used is returned, not the link target
+        expect(plugin.validatePath('alias/data.txt')).toBe(path.join(tempDir, 'alias', 'data.txt'))
+
+        const read = await run({ action: 'read_file', path: 'alias/data.txt' })
+        expect(read.content).toContain('data')
+        const readLink = await run({ action: 'read_file', path: 'data-link.txt' })
+        expect(readLink.content).toContain('data')
+        const written = await run({ action: 'write_file', path: 'alias/new.txt', content: 'new' })
+        expect(written.success).toBe(true)
+        expect(fs.readFileSync(path.join(tempDir, 'real', 'new.txt'), 'utf-8')).toBe('new')
+        const listed = await run({ action: 'list_files', path: 'alias' })
+        expect(listed.fileCount).toBe(2)
+      })
+
+      test('a working directory reached through a link is usable', async () => {
+        const alias = `${tempDir}-alias`
+        fs.symlinkSync(tempDir, alias)
+        try {
+          const aliasPlugin = new CliPlugin({ workDirPath: alias, workDirAccess: 'rw' })
+          expect(aliasPlugin.validatePath('inside.txt')).toBe(path.join(alias, 'inside.txt'))
+          const read = await aliasPlugin.execute({ model: 'test' }, { action: 'read_file', path: 'inside.txt' })
+          expect(read.content).toContain('inside')
+          const escaped = await aliasPlugin.execute({ model: 'test' }, { action: 'read_file', path: 'link.txt' })
+          expect(escaped.error).toContain('not allowed')
+        } finally {
+          fs.unlinkSync(alias)
+        }
+      })
+
+    })
+
   })
 
   describe('read_file', () => {
@@ -991,6 +1280,78 @@ describe('CliPlugin', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('blocked')
+    })
+
+    test('blocks rm and mv wherever they are the command', async () => {
+      fs.writeFileSync(path.join(tempDir, 'keep.txt'), 'keep')
+      for (const command of ['/bin/rm keep.txt', 'echo a && rm keep.txt', 'echo $(rm keep.txt)', 'ls | xargs rm', 'sh -c "mv keep.txt gone.txt"']) {
+        const result = await plugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toContain('blocked')
+        expect(result.stderr, command).toContain('Use the file operation actions instead')
+      }
+      expect(fs.readdirSync(tempDir)).toEqual(['keep.txt'])
+    })
+
+    test('blocks dangerous commands', async () => {
+      for (const command of ['sudo ls', 'dd if=/dev/zero of=out.bin count=1', 'chmod +x script.sh']) {
+        const result = await plugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toBe('Dangerous command blocked')
+      }
+      expect(fs.readdirSync(tempDir)).toEqual([])
+    })
+
+    test('runs commands that only mention a blocked word', async () => {
+      fs.writeFileSync(path.join(tempDir, 'format.txt'), 'formatted')
+      fs.writeFileSync(path.join(tempDir, 'dd.txt'), 'dd')
+
+      const cat = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'cat format.txt' })
+      expect(cat.success).toBe(true)
+      expect(cat.stdout).toContain('formatted')
+
+      // PowerShell (the shell on Windows) prints each argument of echo on its own line
+      const echo = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'echo rm mv del sudo' })
+      expect(echo.success).toBe(true)
+      expect(echo.stdout.split(/\s+/).filter(Boolean)).toEqual(['rm', 'mv', 'del', 'sudo'])
+
+      // grep is not a Windows command: findstr is the one that is always there
+      const filter = process.platform === 'win32' ? 'findstr' : 'grep'
+      const grep = await plugin.execute({ model: 'test' }, { action: 'run_command', command: `ls | ${filter} dd` })
+      expect(grep.success).toBe(true)
+      expect(grep.stdout).toContain('dd.txt')
+    })
+
+    test('is refused with ro access', async () => {
+      fs.writeFileSync(path.join(tempDir, 'data.txt'), 'original')
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+
+      const commands = [
+        'echo hello',
+        'ls',
+        'echo changed > data.txt',
+        'touch created.txt',
+        'find . -name data.txt -delete',
+        'rm data.txt',
+      ]
+      for (const command of commands) {
+        const result = await roPlugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toContain('Write access not granted')
+        expect(result.stdout, command).toBe('')
+        expect(result.exitCode, command).toBe(1)
+      }
+
+      // nothing ran
+      expect(fs.readdirSync(tempDir)).toEqual(['data.txt'])
+      expect(fs.readFileSync(path.join(tempDir, 'data.txt'), 'utf-8')).toBe('original')
+    })
+
+    test('is refused with ro access before its parameters are looked at', async () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      const result = await roPlugin.execute({ model: 'test' }, { action: 'run_command' })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Write access not granted')
     })
 
     test('allows command chaining with &&', async () => {

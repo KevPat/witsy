@@ -110,6 +110,122 @@ test('getSkillFile blocks path traversal', () => {
   expect(result.error).toContain('escapes skill directory')
 })
 
+const isPosix = process.platform !== 'win32'
+
+const createOutsideSecrets = () => {
+  const outsideDir = path.join(tmpDir, 'outside')
+  fs.mkdirSync(path.join(outsideDir, 'nested'), { recursive: true })
+  fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'TOP SECRET\n')
+  fs.writeFileSync(path.join(outsideDir, 'nested', 'deep.txt'), 'TOP SECRET\n')
+  fs.writeFileSync(path.join(customLocation, 'sibling.txt'), 'TOP SECRET\n')
+  return outsideDir
+}
+
+test.runIf(isPosix)('getSkillFile does not follow links that leave the skill folder', () => {
+  const app = createTestApp()
+  const outsideDir = createOutsideSecrets()
+  const skillRoot = path.join(customLocation, 'test-skill')
+  fs.symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(skillRoot, 'link.txt'))
+  fs.symlinkSync(path.join('..', 'sibling.txt'), path.join(skillRoot, 'relative-link.txt'))
+  fs.symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(skillRoot, 'scripts', 'link.py'))
+  fs.symlinkSync(outsideDir, path.join(skillRoot, 'linked-dir'))
+  fs.symlinkSync(path.join(skillRoot, 'linked-dir'), path.join(skillRoot, 'link-to-link'))
+  fs.symlinkSync(path.join(outsideDir, 'missing.txt'), path.join(skillRoot, 'dangling.txt'))
+
+  const skill = listSkills(app, workspaceId)[0]
+  for (const relativePath of [
+    'link.txt',
+    './link.txt',
+    'relative-link.txt',
+    'scripts/link.py',
+    'scripts/../link.txt',
+    'linked-dir/secret.txt',
+    'linked-dir/nested/deep.txt',
+    'link-to-link/secret.txt',
+    'dangling.txt',
+    path.join(skillRoot, 'link.txt'),
+    path.join(skillRoot, 'linked-dir', 'secret.txt'),
+  ]) {
+    const result = getSkillFile(app, workspaceId, skill.id, relativePath)
+    expect(result, relativePath).toStrictEqual({ success: false, error: 'Path escapes skill directory' })
+  }
+
+  // regular files next to the links are still served
+  expect(getSkillFile(app, workspaceId, skill.id, 'notes.txt').content).toBe('alpha\nbeta\ngamma\n')
+  expect(getSkillFile(app, workspaceId, skill.id, 'scripts/helper.py', 1, 1).content).toBe('print("hello")')
+  expect(getSkillFile(app, workspaceId, skill.id, path.join(skillRoot, 'notes.txt'), 1, 1).content).toBe('alpha')
+})
+
+test.runIf(isPosix)('getSkillFile follows links that stay inside the skill folder', () => {
+  const app = createTestApp()
+  const skillRoot = path.join(customLocation, 'test-skill')
+  fs.symlinkSync(path.join(skillRoot, 'notes.txt'), path.join(skillRoot, 'alias.txt'))
+  fs.symlinkSync('scripts', path.join(skillRoot, 'bin'))
+
+  const skill = listSkills(app, workspaceId)[0]
+  expect(getSkillFile(app, workspaceId, skill.id, 'alias.txt', 2, 2)).toMatchObject({ success: true, content: 'beta' })
+  expect(getSkillFile(app, workspaceId, skill.id, 'bin/helper.py', 2, 2)).toMatchObject({ success: true, content: 'print("world")' })
+})
+
+test.runIf(isPosix)('getSkillFile reads a skill whose location is reached through a link', () => {
+  const app = createTestApp()
+  const linkedLocation = path.join(tmpDir, 'linked-skills')
+  fs.symlinkSync(customLocation, linkedLocation)
+  vi.mocked(loadSettings).mockReturnValue({ skills: { locations: [linkedLocation] } } as any)
+
+  const skill = listSkills(app, workspaceId)[0]
+  expect(skill.rootPath).toBe(path.join(linkedLocation, 'test-skill'))
+  expect(skill.skillMdPath).toBe(path.join(linkedLocation, 'test-skill', 'SKILL.md'))
+  expect(getSkillFile(app, workspaceId, skill.id, 'notes.txt', 1, 1)).toMatchObject({ success: true, content: 'alpha' })
+  expect(getSkillFile(app, workspaceId, skill.id, '../outside.txt').success).toBe(false)
+})
+
+test('getSkillFile refuses the skill folder itself and invalid paths', () => {
+  const app = createTestApp()
+  const skill = listSkills(app, workspaceId)[0]
+  for (const relativePath of ['.', './', 'scripts/..', skill.rootPath]) {
+    expect(getSkillFile(app, workspaceId, skill.id, relativePath), relativePath).toStrictEqual({ success: false, error: 'Path escapes skill directory' })
+  }
+  for (const relativePath of ['', '   ', null, undefined, 42, { path: 'notes.txt' }]) {
+    expect(getSkillFile(app, workspaceId, skill.id, relativePath as any), String(relativePath)).toStrictEqual({ success: false, error: 'File path is required' })
+  }
+  expect(getSkillFile(app, workspaceId, skill.id, 'notes.txt\0.md').success).toBe(false)
+})
+
+test.runIf(isPosix)('loadSkill does not list or follow links in the skill folder', () => {
+  const app = createTestApp()
+  const outsideDir = createOutsideSecrets()
+  const skillRoot = path.join(customLocation, 'test-skill')
+  fs.symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(skillRoot, 'link.txt'))
+  fs.symlinkSync(outsideDir, path.join(skillRoot, 'linked-dir'))
+  fs.symlinkSync(outsideDir, path.join(skillRoot, 'scripts', 'linked-dir'))
+  fs.symlinkSync(path.join(outsideDir, 'missing.txt'), path.join(skillRoot, 'dangling.txt'))
+
+  const skill = listSkills(app, workspaceId)[0]
+  const loaded = loadSkill(app, workspaceId, skill.id)
+  expect(loaded?.available_files.map(file => file.path).sort()).toStrictEqual(['SKILL.md', 'notes.txt', 'scripts/helper.py'])
+})
+
+test.runIf(isPosix)('a SKILL.md that links outside of its folder is not loaded as a skill', () => {
+  const app = createTestApp()
+  const outsideDir = createOutsideSecrets()
+  const evilRoot = path.join(customLocation, 'evil-skill')
+  fs.mkdirSync(evilRoot)
+  fs.symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(evilRoot, 'SKILL.md'))
+
+  const skills = listSkills(app, workspaceId)
+  expect(skills.map(skill => skill.rootPath)).toStrictEqual([path.join(customLocation, 'test-skill')])
+
+  // a SKILL.md that links to a file of its own folder is still a skill
+  const aliasRoot = path.join(customLocation, 'alias-skill')
+  fs.mkdirSync(aliasRoot)
+  fs.writeFileSync(path.join(aliasRoot, 'README.md'), '---\nname: alias-skill\ndescription: Linked\n---\n\n# Alias\n')
+  fs.symlinkSync('README.md', path.join(aliasRoot, 'SKILL.md'))
+  const alias = listSkills(app, workspaceId).find(skill => skill.rootPath === aliasRoot)
+  expect(alias?.name).toBe('alias-skill')
+  expect(loadSkill(app, workspaceId, alias!.id)?.instructions).toContain('# Alias')
+})
+
 test('installSkillFromUrl installs all discovered skills (root and subfolders)', async () => {
   const app = createTestApp()
   const installPath = path.join(tmpDir, 'installed-skills')

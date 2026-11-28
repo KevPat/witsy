@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'vitest'
-import { loadCliConfig, saveCliConfig, getDefaultUserDataPath, CliConfig } from '@/cli/config'
+import { loadCliConfig, saveCliConfig, getDefaultUserDataPath, loadApiToken, CliConfig } from '@/cli/config'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -248,6 +248,31 @@ describe('CLI Config', () => {
         // Linux
         expect(userDataPath).toContain('Witsy')
       }
+    })
+  })
+
+  describe('loadApiToken', () => {
+    test('reads the token the app wrote in its user data folder', () => {
+      fs.writeFileSync(path.join(tempDir, 'http-api-token'), 'a'.repeat(64), 'utf-8')
+      expect(loadApiToken(tempDir)).toBe('a'.repeat(64))
+    })
+
+    test('ignores surrounding whitespace', () => {
+      fs.writeFileSync(path.join(tempDir, 'http-api-token'), `  ${'a'.repeat(64)}\n`, 'utf-8')
+      expect(loadApiToken(tempDir)).toBe('a'.repeat(64))
+    })
+
+    test.each([
+      ['the file does not exist', () => tempDir],
+      ['the folder does not exist', () => path.join(tempDir, 'missing')],
+      ['the user data path is not known yet', () => ''],
+    ])('returns null when %s', (_, userDataPath) => {
+      expect(loadApiToken(userDataPath())).toBeNull()
+    })
+
+    test('returns null when the file is empty', () => {
+      fs.writeFileSync(path.join(tempDir, 'http-api-token'), '\n', 'utf-8')
+      expect(loadApiToken(tempDir)).toBeNull()
     })
   })
 })

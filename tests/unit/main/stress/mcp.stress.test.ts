@@ -43,11 +43,11 @@ vi.mock('@main/http_server', () => ({
 // installer process double: tests drive it through `installer`
 type FakeChild = EventEmitter & { stdout: EventEmitter, stderr: EventEmitter, kill: () => void }
 let installer: FakeChild | null = null
-const execCalls: string[] = []
+const spawnCalls: { file: string, args: string[] }[] = []
 vi.mock('child_process', async () => {
   return { default: {
-    exec: vi.fn((cmd: string) => {
-      execCalls.push(cmd)
+    spawn: vi.fn((file: string, args: string[]) => {
+      spawnCalls.push({ file, args })
       const child = new EventEmitter() as FakeChild
       child.stdout = new EventEmitter()
       child.stderr = new EventEmitter()
@@ -148,7 +148,7 @@ const settle = async () => {
 beforeEach(() => {
   vi.clearAllMocks()
   installer = null
-  execCalls.length = 0
+  spawnCalls.length = 0
   openClients = 0
   for (const key of Object.keys(toolsByUrl)) delete toolsByUrl[key]
   config = baseConfig()
@@ -186,7 +186,7 @@ describe('stdio command line', () => {
     }))
   })
 
-  bug('an mcpServers entry without args does not break the server list', () => {
+  test('an mcpServers entry without args does not break the server list', () => {
     // "args" is optional in the common mcpServers format
     config = baseConfig([stdioServer('s1')], { bare: { command: 'my-mcp-server' } })
     const mcp = new Mcp(app)
@@ -198,7 +198,7 @@ describe('stdio command line', () => {
 
 describe('http servers with OAuth', () => {
 
-  bug('a server with client credentials but no tokens yet can connect', async () => {
+  test('a server with client credentials but no tokens yet can connect', async () => {
     // connectToStreamableHttpServer reads server.oauth.tokens.scope without a guard (the SSE variant has one)
     config = baseConfig([{
       uuid: 'h1', registryId: 'h1', state: 'enabled', type: 'http', url: 'http://localhost:3002',
@@ -262,7 +262,7 @@ describe('installServer', () => {
     expect(await pending).toBe('api_key_missing')
   })
 
-  bug('settles when the installer exits without printing a known message', async () => {
+  test('settles when the installer exits without printing a known message', async () => {
     // e.g. npx failing because the network is down: no handler for exit/close
     const mcp = new Mcp(app)
     let status: string = 'pending'
@@ -275,16 +275,32 @@ describe('installServer', () => {
     expect(status).not.toBe('pending')
   })
 
-  bug.each([
+  test.each([
     ['server; echo INJECTED', ''],
     ['server && echo INJECTED', ''],
     ['$(echo INJECTED)', ''],
     ['server', 'key`echo INJECTED`'],
     ['server', 'key | echo INJECTED'],
-  ])('server name and API key cannot add shell operators to the install command: %s %s', (server, apiKey) => {
-    // the command line is handed to child_process.exec, i.e. to a shell
+  ])('server name and API key cannot add shell operators to the install command: %s %s', async (server, apiKey) => {
+    // the installer is no longer started through a shell, and such values are refused before anything runs:
+    // there is no command line to show for them either
     const mcp = new Mcp(app)
-    expect(unquotedOperators(mcp.getInstallCommand('smithery', server, apiKey)!)).toBe(0)
+    expect(mcp.getInstallCommand('smithery', server, apiKey)).toBeNull()
+    expect(await mcp.installServer('smithery', server, apiKey)).toBe('error')
+    expect(spawnCalls).toHaveLength(0)
+  })
+
+  test('the installer receives the server name and the API key as separate arguments', async () => {
+    const mcp = new Mcp(app)
+    const pending = mcp.installServer('smithery', '@owner/server', 'key-123')
+    await settle()
+    installer!.stdout.emit('data', Buffer.from('server successfully installed'))
+    expect(await pending).toBe('success')
+    expect(spawnCalls).toHaveLength(1)
+    // on Windows npx is a .cmd shim that only cmd.exe can start: the same arguments follow "cmd.exe /d /s /c"
+    const launcher = process.platform === 'win32' ? [process.env.comspec || 'cmd.exe', '/d', '/s', '/c'] : []
+    expect([spawnCalls[0].file, ...spawnCalls[0].args]).toEqual([...launcher, 'npx', '-y', '@smithery/cli@latest', 'install', '@owner/server', '--client', 'witsy', '--key', 'key-123'])
+    expect(unquotedOperators(mcp.getInstallCommand('smithery', '@owner/server', 'key-123')!)).toBe(0)
   })
 
 })

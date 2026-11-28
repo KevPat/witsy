@@ -160,6 +160,22 @@ test('Basic Agent Run - Success', async () => {
   expect(run.messages[2].role).toBe('assistant')
 })
 
+test('Agent Run saves the agent without replacing a legacy webhook token', async () => {
+  // the bookkeeping of a run must not change the url the callers of the webhook use
+  testAgent.webhookToken = 'abc12345'
+
+  const run = await runAgent('webhook', { name: 'there' }, { ephemeral: false })
+
+  expect(window.api.agents.save).toHaveBeenCalled()
+  for (const call of vi.mocked(window.api.agents.save).mock.calls) {
+    expect(call[1].uuid).toBe(testAgent.uuid)
+    expect(call[1].lastRunId).toBe(run.uuid)
+    expect(call[1].webhookToken).toBe('abc12345')
+  }
+  expect(window.api.agents.generateWebhookToken).not.toHaveBeenCalled()
+  expect(testAgent.webhookToken).toBe('abc12345')
+})
+
 test('Agent Run captures agentInfo', async () => {
   testAgent.name = 'Captured Agent Name'
   testAgent.steps = [

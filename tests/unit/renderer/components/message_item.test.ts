@@ -5,7 +5,7 @@ import { nextTick, ref } from 'vue'
 import { useWindowMock } from '@tests/mocks/window'
 import { createI18nMock } from '@tests/mocks'
 import { SearchState } from '@/renderer/screens/Chat.vue'
-import { chatCallbacksMock, withChatCallbacks } from '@root/vitest.setup'
+import { chatCallbacksMock, emitBusEventMock, withChatCallbacks } from '@root/vitest.setup'
 import { store } from '@services/store'
 import { stubTeleport } from '@tests/mocks/stubs'
 import MessageItem from '@components/MessageItem.vue'
@@ -36,19 +36,19 @@ const botMessageText: Message = new Message('assistant', '**Hi**\n\n1. One \n\n2
 botMessageText.usage = { prompt_tokens: 0, completion_tokens: 0 }
 const botMessageImage: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '![image](https://example.com/image.jpg)' })
 const botMessageImage2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<img src="https://example.com/image.jpg" alt="description">' })
-const botMessageImageLink1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '[![image](https://example.com/image.jpg)](url)' })
-const botMessageImageLink2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![image](https://example.com/image.jpg)](url). neat?' })
+const botMessageImageLink1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '[![image](https://example.com/image.jpg)](https://example.com/page)' })
+const botMessageImageLink2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![image](https://example.com/image.jpg)](https://example.com/page). neat?' })
 const botMessageImageCode1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '`image`: `<img src="https://example.com/image.jpg" alt="description">`' })
 const botMessageImageCode3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'image:\n```<img src="https://example.com/image.jpg" alt="description">```' })
-const botMessageVideoMd: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '![video](file:///data/video.mp4)' })
-const botMessageVideoHtml: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<video controls src="file:///data/video.mp4">' })
-const botMessageVideoCode1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'video: `<video controls src="file:///data/video.mp4" />`' })
-const botMessageVideoCode3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '```video```:\n```<video controls src="file:///data/video.mp4" />```' })
+const botMessageVideoMd: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '![video](file:///tmp/images/video.mp4)' })
+const botMessageVideoHtml: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<video controls src="file:///tmp/images/video.mp4">' })
+const botMessageVideoCode1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'video: `<video controls src="file:///tmp/images/video.mp4" />`' })
+const botMessageVideoCode3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '```video```:\n```<video controls src="file:///tmp/images/video.mp4" />```' })
 const botMessageImageLegacy: Message = Message.fromJson({ role: 'assistant', type: 'image', content: 'https://example.com/image.jpg' })
 const botMessageTransient: Message = Message.fromJson({ role: 'assistant', type: 'text', content :'Hi' })
 const botMessageReasoning: Message = Message.fromJson({ role: 'assistant', type: 'text', reasoning: 'Hum', content :'Hi' })
-const botMessageToolMedia1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<tool index="0"></tool>Here:\n\n![image](file:///data/image.jpg)\n\nWelcome!' })
-const botMessageToolMedia2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Sure!\n\n<tool index="0"></tool>![image](file:///data/image.jpg)\n\nWelcome!' })
+const botMessageToolMedia1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<tool index="0"></tool>Here:\n\n![image](file:///tmp/images/image.jpg)\n\nWelcome!' })
+const botMessageToolMedia2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Sure!\n\n<tool index="0"></tool>![image](file:///tmp/images/image.jpg)\n\nWelcome!' })
 const botMessageToolArtifact1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test">Test</artifact>\n\nWelcome!' })
 const botMessageToolArtifact2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test1">Test1</artifact>\n\n<artifact title="test2">Test2</artifact>\n\nWelcome!' })
 const botMessageToolArtifact3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test1">Test1</artifact>\n\n<artifact title="test2">Te' })
@@ -207,7 +207,7 @@ test('Assistant image markdown link at beginning message', async () => {
   expect(wrapper.find('.message-body .media-container').exists()).toBe(false)
   expect(wrapper.find('.message-body .download').exists()).toBe(false)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body a').attributes('href')).toBe('url')
+  expect(wrapper.find('.message-body a').attributes('href')).toBe('https://example.com/page')
   expect(wrapper.find('.message-body a img').attributes('src')).toBe('https://example.com/image.jpg')
 })
 
@@ -217,7 +217,7 @@ test('Assistant image markdown link at middle message', async () => {
   expect(wrapper.find('.message-body .media-container').exists()).toBe(false)
   expect(wrapper.find('.message-body .download').exists()).toBe(false)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body a').attributes('href')).toBe('url')
+  expect(wrapper.find('.message-body a').attributes('href')).toBe('https://example.com/page')
   expect(wrapper.find('.message-body a img').attributes('src')).toBe('https://example.com/image.jpg')
 })
 
@@ -227,7 +227,7 @@ test('Assistant video markdown message', async () => {
   expect(wrapper.find('.message-body .video').exists()).toBe(true)
   expect(wrapper.find('.message-body .download').exists()).toBe(true)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body video').attributes('src')).toBe('file:///data/video.mp4')
+  expect(wrapper.find('.message-body video').attributes('src')).toBe('file:///tmp/images/video.mp4')
 })
 
 test('Assistant video html message', async () => {
@@ -236,16 +236,16 @@ test('Assistant video html message', async () => {
   expect(wrapper.find('.message-body .video').exists()).toBe(true)
   expect(wrapper.find('.message-body .download').exists()).toBe(true)
   expect(wrapper.find('.message-body .message-transient').exists()).toBe(false)
-  expect(wrapper.find('.message-body video').attributes('src')).toBe('file:///data/video.mp4')
+  expect(wrapper.find('.message-body video').attributes('src')).toBe('file:///tmp/images/video.mp4')
 })
 
 test('Assistant image message formats', async () => {
   const wrapper1 = await mount(botMessageImageLegacy)
   expect(wrapper1.find('.message-body img.image').attributes().src).toBe('https://example.com/image.jpg')
 
-  botMessageImageLegacy.setImage('file://image.png')
+  botMessageImageLegacy.setImage('file:///tmp/images/image.png')
   const wrapper2 = await mount(botMessageImageLegacy)
-  expect(wrapper2.find('.message-body img.image').attributes().src).toBe('file://image.png')
+  expect(wrapper2.find('.message-body img.image').attributes().src).toBe('file:///tmp/images/image.png')
 
   botMessageImageLegacy.setImage('imageb64')
   const wrapper3 = await mount(botMessageImageLegacy)
@@ -267,11 +267,11 @@ test('Assistant image message with HTML code', async () => {
   expect(wrapper6.find('.message-body img').exists()).toBe(false)
 
   const wrapper7 = await mount(botMessageVideoCode1)
-  expect(wrapper7.find('.message-body').text()).toBe('video: <video controls src="file:///data/video.mp4" />')
+  expect(wrapper7.find('.message-body').text()).toBe('video: <video controls src="file:///tmp/images/video.mp4" />')
   expect(wrapper7.find('.message-body video').exists()).toBe(false)
 
   const wrapper8 = await mount(botMessageVideoCode3)
-  expect(wrapper8.find('.message-body').text()).toBe('video:\n<video controls src="file:///data/video.mp4" />')
+  expect(wrapper8.find('.message-body').text()).toBe('video:\n<video controls src="file:///tmp/images/video.mp4" />')
   expect(wrapper8.find('.message-body video').exists()).toBe(false)
 })
 
@@ -285,6 +285,86 @@ test('Assistant image message with tool media', async () => {
   expect(wrapper2.find('.message-body').text()).toBe('Sure!\nWelcome!')
   expect(wrapper2.findAll('.message-body img').length).toBe(1)
 
+})
+
+// the app data folder of the window mock is /tmp
+test.each([
+  ['![photo](file:///Users/me/secret.png)', '![photo](file:///Users/me/secret.png)'],
+  ['![photo](file:///C:/Users/me/secret.png)', '![photo](file:///C:/Users/me/secret.png)'],
+  ['![photo](file://C:\\Users\\me\\secret.png)', '![photo](file://C:\\Users\\me\\secret.png)'],
+  ['![photo](file://evil.example/share/pixel.png)', '![photo](file://evil.example/share/pixel.png)'],
+  ['![photo](file:///tmp/../etc/secret.png)', '![photo](file:///tmp/../etc/secret.png)'],
+  ['![photo](file:///tmp/images/../../etc/secret.png)', '![photo](file:///tmp/images/../../etc/secret.png)'],
+  ['![photo](file:///tmp/images/%2e%2e/%2e%2e/etc/secret.png)', '![photo](file:///tmp/images/../../etc/secret.png)'],
+  ['![photo](file:///tmp/images/..%2F..%2Fetc%2Fsecret.png)', '![photo](file:///tmp/images/../../etc/secret.png)'],
+  ['![photo](file:///tmp/images/%252e%252e/%252e%252e/etc/secret.png)', '![photo](file:///tmp/images/%2e%2e/%2e%2e/etc/secret.png)'],
+  ['![photo](/Users/me/secret.png)', '![photo](file:///Users/me/secret.png)'],
+  ['![photo](C:\\Users\\me\\secret.png)', '![photo](file://C:\\Users\\me\\secret.png)'],
+  ['![photo](\\\\evil.example\\share\\pixel.png)', '![photo](file://\\\\evil.example\\share\\pixel.png)'],
+  ['![photo](../../secret.png)', '![photo](file://../../secret.png)'],
+  ['![photo](http/../../secret.png)', '![photo](http/../../secret.png)'],
+  ['<img src="file:///Users/me/secret.png">', '![Video](file:///Users/me/secret.png)'],
+  ['<video controls src="file:///Users/me/secret.mp4">', '![Video](file:///Users/me/secret.mp4)'],
+  ['<video controls src="file://evil.example/share/clip.mp4">', '![Video](file://evil.example/share/clip.mp4)'],
+])('Assistant message does not load local media outside of app data: %s', async (content, text) => {
+  const wrapper = await mount(Message.fromJson({ role: 'assistant', type: 'text', content }))
+  expect(wrapper.find('.message-body img').exists()).toBe(false)
+  expect(wrapper.find('.message-body video').exists()).toBe(false)
+  expect(wrapper.find('.message-body .media-container').exists()).toBe(false)
+  expect(wrapper.find('.message-body .download').exists()).toBe(false)
+  expect(wrapper.find('.message-body .copy').exists()).toBe(false)
+  expect(wrapper.find('.message-body').text()).toBe(text)
+})
+
+test.each([
+  ['![photo](file:///tmp/images/photo.png)', 'file:///tmp/images/photo.png'],
+  ['![photo](file:///tmp/workspaces/0b5c/images/photo.png)', 'file:///tmp/workspaces/0b5c/images/photo.png'],
+  ['![photo](file:///tmp/workspaces/0b5c/images/my photo.png)', 'file:///tmp/workspaces/0b5c/images/my%20photo.png'],
+  ['![photo](file:///tmp/workspaces/0b5c/images/my%20photo.png)', 'file:///tmp/workspaces/0b5c/images/my%20photo.png'],
+  ['![photo](file:///tmp/workspaces/../images/photo.png)', 'file:///tmp/images/photo.png'],
+  ['![photo](/tmp/images/photo.png)', 'file:///tmp/images/photo.png'],
+  ['<img src="file:///tmp/images/photo.png" alt="photo">', 'file:///tmp/images/photo.png'],
+])('Assistant message loads the media of app data: %s', async (content, src) => {
+  const wrapper = await mount(Message.fromJson({ role: 'assistant', type: 'text', content }))
+  expect(wrapper.find('.message-body').text()).toBe('')
+  expect(wrapper.findAll('.message-body img')).toHaveLength(1)
+  expect(wrapper.find('.message-body .media-container img').attributes('src')).toBe(src)
+  expect(wrapper.find('.message-body .download').exists()).toBe(true)
+})
+
+test('Assistant message keeps the text around media that is not loaded', async () => {
+  const wrapper = await mount(Message.fromJson({ role: 'assistant', type: 'text', content: 'Before\n\n![photo](file:///etc/secret.png)\n\n![chart](file:///tmp/images/chart.png)\n\nAfter' }))
+  expect(wrapper.findAll('.message-body img')).toHaveLength(1)
+  expect(wrapper.find('.message-body img').attributes('src')).toBe('file:///tmp/images/chart.png')
+  expect(wrapper.find('.message-body').text()).toBe('Before\n![photo](file:///etc/secret.png)After')
+  expect(wrapper.find('.message-body .media-refused').text()).toBe('![photo](file:///etc/secret.png)')
+})
+
+test('Assistant message does not load local images outside of app data in links and tables', async () => {
+  const wrapper1 = await mount(Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![photo](file:///Users/me/secret.png)](https://example.com/page). neat?' }))
+  expect(wrapper1.find('.message-body img').exists()).toBe(false)
+  expect(wrapper1.find('.message-body a').attributes('href')).toBe('https://example.com/page')
+  expect(wrapper1.find('.message-body').text()).toBe('look: ![photo](file:///Users/me/secret.png). neat?')
+
+  const wrapper2 = await mount(Message.fromJson({ role: 'assistant', type: 'text', content: 'look: [![photo](file:///tmp/images/photo.png)](https://example.com/page). neat?' }))
+  expect(wrapper2.find('.message-body a img').attributes('src')).toBe('file:///tmp/images/photo.png')
+})
+
+test('Assistant image message does not load a local file outside of app data', async () => {
+  botMessageImageLegacy.setImage('file:///Users/me/secret.png')
+  const wrapper1 = await mount(botMessageImageLegacy)
+  expect(wrapper1.find('.message-body img').exists()).toBe(false)
+  expect(wrapper1.find('.message-body').text()).toBe('file:///Users/me/secret.png')
+
+  botMessageImageLegacy.setImage('http/../../../secret.png')
+  const wrapper2 = await mount(botMessageImageLegacy)
+  expect(wrapper2.find('.message-body img').exists()).toBe(false)
+})
+
+test('Assistant image is shown full screen from the url that was checked', async () => {
+  const wrapper = await mount(Message.fromJson({ role: 'assistant', type: 'text', content: '![photo](file:///tmp/workspaces/../images/photo.png)' }))
+  await wrapper.find('.message-body .media-container img').trigger('click')
+  expect(emitBusEventMock).toHaveBeenLastCalledWith('fullscreen', 'file:///tmp/images/photo.png')
 })
 
 test('Assistant image message with artifact', async () => {
@@ -339,9 +419,12 @@ test('Assistant artifact with HTML preview', async () => {
   // Now iframe should exist with cached HTML (head + empty body + listener)
   let iframe = artifact.find('iframe')
   expect(iframe.exists()).toBe(true)
-  expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
-  expect(iframe.attributes('srcdoc')).toContain('<body></body>')
-  expect(iframe.attributes('srcdoc')).toContain('window.addEventListener')
+  expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
+  // the frame loads the artifact page of the app, which is sent the html when it is loaded
+  expect(iframe.attributes('src')).toBe('witsy-artifact://frame/')
+  expect(iframe.attributes('srcdoc')).toBeUndefined()
+  expect(artifactComponent.vm.html).toContain('<body></body>')
+  expect(artifactComponent.vm.html).toContain('window.addEventListener')
   expect(artifact.find('.html-loading').exists()).toBe(false)
 
   // Check for preview controls
@@ -378,12 +461,26 @@ test('Assistant artifact with HTML preview (non-transient)', async () => {
   const iframe = artifact.find('iframe')
   if (iframe.exists()) {
     // Non-transient message should show HTML immediately (no loading message)
-    expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
-    expect(iframe.attributes('srcdoc')).toContain('<!DOCTYPE html>')
-    expect(iframe.attributes('srcdoc')).toContain('<h1>Hello from DOCTYPE</h1>')
-    expect(iframe.attributes('srcdoc')).not.toContain('common.htmlGeneration')
+    expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-forms')
+    expect(iframe.attributes('src')).toBe('witsy-artifact://frame/')
+    expect(iframe.attributes('srcdoc')).toBeUndefined()
+    const page = wrapper.findComponent(MessageItemHtmlBlock).vm.html
+    expect(page).toContain('<!DOCTYPE html>')
+    expect(page).toContain('<h1>Hello from DOCTYPE</h1>')
+    expect(page).not.toContain('common.htmlGeneration')
   }
 
+})
+
+test('HTML preview isolates untrusted scripts from the application origin', async () => {
+  store.config.appearance.chat.autoPreview.html = true
+  const wrapper = await mount(botMessageToolArtifactHtml2)
+  const iframe = wrapper.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+  const sandboxTokens = iframe.attributes('sandbox').split(/\s+/)
+  expect(sandboxTokens).toContain('allow-scripts')
+  expect(sandboxTokens).not.toContain('allow-same-origin')
 })
 
 test('Assistant artifact with HTML preview (DOCTYPE)', async () => {
@@ -623,7 +720,7 @@ test('Run assistant video actions', async () => {
   expect(wrapper.find('.message-body .copy').exists()).toBe(false)
   await wrapper.find('.message-body .download').trigger('click')
   expect(window.api.file.download).toHaveBeenLastCalledWith({
-    url: 'file:///data/video.mp4',
+    url: 'file:///tmp/images/video.mp4',
     properties: {
       directory: 'downloads',
       prompt: true,

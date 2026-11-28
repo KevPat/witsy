@@ -133,7 +133,8 @@ describe('creating skills', () => {
     }
     // nothing was written anywhere else
     expect(tree(nested).filter(entry => !entry.startsWith('userData/skills'))).toEqual(before)
-  })
+  // 120 folders created and listed: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
   test('the same name used 30 times gives 30 different skills', () => {
     const roots = Array.from({ length: 30 }, () => createSkill(app, workspaceId, { name: 'My Skill', instructions: 'x' }).rootPath)
@@ -215,15 +216,16 @@ describe('reading skill files', () => {
       expect(result.content ?? '', candidate).not.toContain('TOP SECRET')
     }
     expect(getSkillFile(app, workspaceId, skillId, 'docs/./guide.md', 2, 2)).toMatchObject({ success: true, content: 'line 2' })
-  })
+  // 400 lookups on the real file system: over the default 5 seconds on Windows when the whole suite runs in parallel
+  }, 60000)
 
-  bug.runIf(isPosix)('a file of the skill that is a link to a file outside of it is not returned', () => {
+  test.runIf(isPosix)('a file of the skill that is a link to a file outside of it is not returned', () => {
     // the containment check compares path strings only, and readFileSync follows the link
     fs.symlinkSync(path.join(nested, 'private', 'secret.txt'), path.join(skillRoot, 'notes.txt'))
     expect(getSkillFile(app, workspaceId, skillId, 'notes.txt')).toMatchObject({ success: false })
   })
 
-  bug.runIf(isPosix)('a file reached through a linked folder that leaves the skill is not returned', () => {
+  test.runIf(isPosix)('a file reached through a linked folder that leaves the skill is not returned', () => {
     // same string-only check: docs-link/secret.txt is "inside" the skill but resolves outside of it
     fs.symlinkSync(path.join(nested, 'private'), path.join(skillRoot, 'docs-link'))
     expect(getSkillFile(app, workspaceId, skillId, 'docs-link/secret.txt')).toMatchObject({ success: false })

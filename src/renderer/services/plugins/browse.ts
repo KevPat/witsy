@@ -2,6 +2,7 @@
 import { convert } from 'html-to-text'
 import { PluginExecutionContext, PluginParameter, mimeTypeToExtension } from 'multi-llm-ts'
 import { anyDict } from 'types/index'
+import { getUrlRefusal } from '@renderer/utils/url_guard'
 import { t } from '../i18n'
 import Plugin, { PluginConfig } from './plugin'
 
@@ -83,10 +84,30 @@ export default class extends Plugin {
       parameters.chunkLength = this.kDefaultChunkLength
     }
 
+    // the url comes from the model: nothing on this machine or on a private network is downloaded
+    const refusal = getUrlRefusal(parameters.url)
+    if (refusal) {
+      return { error: refusal }
+    }
+
+    if (context.abortSignal?.aborted) {
+      return { error: 'Operation cancelled' }
+    }
+
     try {
 
       // get the html
-      const response = await fetch(parameters.url)
+      const response = await this.runWithAbort(
+        fetch(parameters.url, { signal: context.abortSignal }),
+        context.abortSignal
+      )
+
+      // fetch follows redirects: the page a public url bounced to is held to the same rule
+      const redirectRefusal = response.url ? getUrlRefusal(response.url) : null
+      if (redirectRefusal) {
+        return { error: redirectRefusal }
+      }
+
       if (!response.ok) {
         return { error: `Failed to fetch URL: ${response.status} ${response.statusText}` }
       }
@@ -113,6 +134,9 @@ export default class extends Plugin {
 
 
     } catch (error) {
+      if (context.abortSignal?.aborted) {
+        return { error: 'Operation cancelled' }
+      }
       return { error: error }
     }
 

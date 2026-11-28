@@ -271,11 +271,13 @@ const onSearch = async () => {
         
       if (result.metadata?.title) {
         html += '<div class="result-title">'
-        if (result.metadata.url) {
-          html += `<a href="${result.metadata?.url || '#'}" target="_blank" rel="noopener noreferrer">`
+        // only web pages are links: local documents cannot be opened from a link
+        const url = /^https?:\/\//i.test(result.metadata.url ?? '') ? result.metadata.url : null
+        if (url) {
+          html += `<a href="${escapeHtml(url).replace(/"/g, '&quot;')}" target="_blank" rel="noopener noreferrer">`
         }
         html += escapeHtml(result.metadata.title)
-        if (result.metadata.url) {
+        if (url) {
           html += `</a>`
         }
         html += `</div>`

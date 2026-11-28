@@ -2,6 +2,7 @@
 import { convert } from 'html-to-text'
 import Swal, { DialogResult as SwalDialogResult } from 'sweetalert2/dist/sweetalert2.js'
 import { t } from '@services/i18n'
+import { escapeHtml } from './html'
 
 export type DialogOptions = {
   title: string
@@ -163,8 +164,9 @@ const Dialog = {
       } catch { /* empty */ }
     }
 
-    // now do it
-    return Swal.fire(opts)
+    // SweetAlert2 renders the title as markup and no caller means it that way:
+    // names of skills, files, agents... end up in titles
+    return Swal.fire({ ...opts, title: typeof opts.title === 'string' ? escapeHtml(opts.title) : opts.title })
   },
 
   waitUntilClosed: async (): Promise<void> => {

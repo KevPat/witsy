@@ -23,10 +23,8 @@ const capabilitiesReadOnly = `## Your Capabilities
 You have access to the **CLI plugin** with these tools:
 
 1. **read_file** - Read file with line numbers (supports line ranges)
-2. **list_directory** - List files and folders in a directory
-
-You also have the **shell tool**:
-- **run_command** - Execute shell commands in the working directory (read-only operations)`
+2. **list_files** - List files and folders in a directory
+3. **search** - Search file contents with a regular expression (optional glob filter)`
 
 /**
  * Capabilities for read-write access
@@ -55,22 +53,19 @@ const workingWithFilesReadOnly = `## Working with Files
 Your goal is to help the user discover and understand files in this folder.
 
 **File discovery workflow:**
-- **Use shell commands** for listing, searching, and exploring:
-  - {{shell.listFiles}}
-  - {{shell.findFiles}}
-  - {{shell.searchContent}}
-  - {{shell.treeCommand}}
-- Shell commands are more efficient than reading multiple files
+- Use \`list_files\` to list the content of a directory
+- Use \`search\` to find text in files (regular expression, optional \`glob\` filter such as "*.ts")
+- Searching is more efficient than reading multiple files
 
 **File reading workflow:**
-- **Never use read_file to search for text** - use shell {{shell.grepCommand}} to find the line number first
+- **Never use read_file to search for text** - use \`search\` to find the line number first
 - Once you know the line number from the search, use \`read_file\` with start/end to read that section
 - Use \`read_file\` with start/end parameters to read specific line ranges
 - **Avoid reading entire large files** - use line ranges to stay within context limits
 - For files >100 lines, read in chunks (e.g., lines 1-50, then 51-100)
 
 **Example workflow:**
-1. Use {{shell.searchExample}} to find line number
+1. Use \`search\` with the pattern "function myFunc" to find line number
 2. Use \`read_file\` with start=(line-10) and end=(line+20) to read context around it`
 
 /**
@@ -112,15 +107,12 @@ Your goal is to help the user discover, understand, and update files in this fol
 - Confirm destructive operations before executing`
 
 /**
- * Shell command safety
+ * Shell commands with read-only access: a command could write, so there are none
  */
-const shellSafety = `## Shell Command Safety
+const shellSafety = `## Shell Commands
 
-For your security and the user's protection:
-- All shell commands execute ONLY within the working directory
-- Commands with dangerous patterns (rm -rf, dd, sudo, etc.) are blocked
-- Command chaining operators (&&, ||, ;) are allowed
-- Pipes (|) and redirects (>, >>) are allowed for legitimate workflows`
+Shell commands are not available with read-only access: \`run_command\` is refused.
+Use \`list_files\`, \`search\` and \`read_file\` to explore the folder.`
 
 /**
  * Shell command safety for read-write (additional notes about using tools)

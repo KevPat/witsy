@@ -1,5 +1,6 @@
-import { vi, test, expect, beforeEach, describe } from 'vitest'
-import { app } from 'electron'
+import { vi, test, expect, beforeEach, afterEach, describe } from 'vitest'
+import { app, shell } from 'electron'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import McpOAuthManager, { McpOAuthClientProvider } from '@main/mcp_auth'
 
 // Mock Electron
@@ -436,7 +437,10 @@ describe('McpOAuthManager - Callback Functionality', () => {
     ;(manager as any).handleCallback(mockReq, mockRes, mockParsedUrl)
     
     // Verify response
-    expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'text/html' })
+    expect(mockRes.writeHead).toHaveBeenCalledWith(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+    })
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('mcp.oauth.success.title'))
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('mcp.oauth.success.message'))
     
@@ -472,7 +476,11 @@ describe('McpOAuthManager - Callback Functionality', () => {
     ;(manager as any).handleCallback(mockReq, mockRes, mockParsedUrl)
     
     // Verify response
-    expect(mockRes.writeHead).toHaveBeenCalledWith(400, { 'Content-Type': 'text/html' })
+    expect(mockRes.writeHead).toHaveBeenCalledWith(400, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': expect.stringContaining("default-src 'none'"),
+    })
     expect(mockRes.end).toHaveBeenCalledWith(expect.stringContaining('Authorization Failed'))
     
     // Verify callback was rejected
@@ -575,5 +583,308 @@ describe('McpOAuthManager - Callback Functionality', () => {
     // Verify second callback resolved
     expect(mockResolve2).toHaveBeenCalledWith('auth-code-2')
     expect((manager as any).pendingCallbacks.has(flowId2)).toBe(false)
+  })
+})
+
+describe('McpOAuthManager - Callback page escaping', () => {
+  let manager: McpOAuthManager
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    manager = new McpOAuthManager(app)
+  })
+
+  // answers the callback of a flow that is waiting for it, the way the browser would
+  const errorPage = (error: string): { status: number, headers: Record<string, string>, body: string } => {
+    const state = 'pending-flow'
+    const timeout = setTimeout(() => {}, 1000)
+    ;(manager as any).pendingCallbacks.set(state, { resolve: vi.fn(), reject: vi.fn(), timeout })
+    const res = { writeHead: vi.fn(), end: vi.fn() }
+    const url = new URL(`http://localhost:8090/mcp/callback?state=${state}&error=${encodeURIComponent(error)}`)
+    ;(manager as any).handleCallback({}, res, url)
+    clearTimeout(timeout)
+    return { status: res.writeHead.mock.calls[0][0], headers: res.writeHead.mock.calls[0][1], body: res.end.mock.calls[0][0] }
+  }
+
+  test.each([
+    ['<script>alert(document.domain)</script>', '&lt;script&gt;alert(document.domain)&lt;/script&gt;'],
+    ['<img src=x onerror=alert(1)>', '&lt;img src=x onerror=alert(1)&gt;'],
+    ['</p><iframe src="https://evil.example.com"></iframe>', '&lt;/p&gt;&lt;iframe src=&quot;https://evil.example.com&quot;&gt;&lt;/iframe&gt;'],
+    ['"><svg onload=alert(1)>', '&quot;&gt;&lt;svg onload=alert(1)&gt;'],
+    ['\' onmouseover=\'alert(1)', '&#39; onmouseover=&#39;alert(1)'],
+    ['&lt;script&gt;alert(1)&lt;/script&gt;', '&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;'],
+  ])('error page escapes %s', (payload, escaped) => {
+    const { status, body } = errorPage(payload)
+    expect(status).toBe(400)
+    expect(body).not.toContain(payload)
+    expect(body).toContain(`<p>Error: ${escaped}</p>`)
+    // the payload only exists as text: no element comes from it (the page has a logo and no script)
+    expect(body.match(/<img/g)).toHaveLength(1)
+    expect(body).not.toMatch(/<script|<iframe|<svg/i)
+    const markup = body.replace(`<p>Error: ${escaped}</p>`, '')
+    expect(markup).not.toMatch(/alert\(|onerror=|onload=|onmouseover=/i)
+  })
+
+  test('error page shows a plain error code as is', () => {
+    const { body } = errorPage('access_denied')
+    expect(body).toContain('<p>Error: access_denied</p>')
+  })
+
+  test('error page truncates an oversized error', () => {
+    const { body } = errorPage('a'.repeat(5000) + '<script>alert(1)</script>')
+    expect(body).toContain(`<p>Error: ${'a'.repeat(256)}</p>`)
+    expect(body).not.toContain('alert(1)')
+  })
+
+  test('error page is served as html that cannot be sniffed or run scripts', () => {
+    const { headers } = errorPage('<script>alert(1)</script>')
+    expect(headers['Content-Type']).toBe('text/html; charset=utf-8')
+    expect(headers['X-Content-Type-Options']).toBe('nosniff')
+    expect(headers['Content-Security-Policy']).toContain("default-src 'none'")
+    expect(headers['Content-Security-Policy']).not.toContain('script-src')
+  })
+})
+
+describe('McpOAuthManager - Flow isolation', () => {
+  let manager: McpOAuthManager
+
+  const metadata = () => ({
+    client_name: 'Test Client',
+    redirect_uris: ['http://localhost:8090/mcp/callback'],
+    grant_types: ['authorization_code'],
+    response_types: ['code']
+  })
+
+  // a server that needs an authorization: connecting sends the browser to its authorization
+  // endpoint until the transport was given a code, which becomes the access token
+  const authorizationEndpoint = (serverUrl: URL) => `https://auth.example.com/authorize?server=${serverUrl.hostname}`
+  const transports: { url: URL, options: any, finishAuth: ReturnType<typeof vi.fn> }[] = []
+
+  const pending = (): Map<string, unknown> => (manager as any).pendingCallbacks
+
+  const openedUrls = (): URL[] => vi.mocked(shell.openExternal).mock.calls.map(([url]) => new URL(url))
+
+  const stateFor = (serverUrl: string): string => {
+    const opened = openedUrls().filter((url) => url.searchParams.get('server') === new URL(serverUrl).hostname)
+    return opened[opened.length - 1].searchParams.get('state')!
+  }
+
+  const callback = (query: string) => {
+    const res = { writeHead: vi.fn(), end: vi.fn() }
+    ;(manager as any).handleCallback({}, res, new URL(`http://localhost:8090/mcp/callback?${query}`))
+    return res
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    transports.length = 0
+    mockHttpServerInstance.getBaseUrl.mockReturnValue('http://localhost:8090')
+    const { UnauthorizedError } = await import('@modelcontextprotocol/sdk/client/auth.js')
+    vi.mocked(StreamableHTTPClientTransport).mockImplementation(((url: URL, options: any) => {
+      const transport = {
+        url, options,
+        finishAuth: vi.fn(async (code: string) => options.authProvider.saveTokens({ access_token: `token-for-${code}`, token_type: 'bearer' })),
+      }
+      transports.push(transport)
+      return transport
+    }) as any)
+    mockClient.connect.mockImplementation(async (transport: any) => {
+      const provider = transport.options.authProvider
+      if (!provider.tokens()) {
+        provider.redirectToAuthorization(new URL(authorizationEndpoint(transport.url)))
+        throw new (UnauthorizedError as any)('Unauthorized')
+      }
+    })
+    manager = new McpOAuthManager(app)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(StreamableHTTPClientTransport).mockImplementation((() => mockTransport) as any)
+    mockClient.connect.mockReset()
+    mockHttpServerInstance.getBaseUrl.mockReturnValue('http://localhost:8090')
+  })
+
+  test('each flow gets its own unguessable state', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.123456789)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1700000000000)
+    manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata()).catch(() => {})
+    manager.startOAuthFlow('http', 'https://b.example.com/mcp', metadata()).catch(() => {})
+    random.mockRestore()
+    now.mockRestore()
+    await vi.waitFor(() => expect(pending().size).toBe(2))
+    const stateA = stateFor('https://a.example.com/mcp')
+    const stateB = stateFor('https://b.example.com/mcp')
+    // 32 random bytes, whatever Math.random and the clock return
+    expect(stateA).toMatch(/^[0-9a-f]{64}$/)
+    expect(stateB).toMatch(/^[0-9a-f]{64}$/)
+    expect(stateA).not.toBe(stateB)
+    expect([...pending().keys()].sort()).toEqual([stateA, stateB].sort())
+  })
+
+  test('concurrent flows complete with their own callback, server and tokens', async () => {
+    const flowA = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())
+    const flowB = manager.startOAuthFlow('http', 'https://b.example.com/mcp', metadata())
+    await vi.waitFor(() => expect(pending().size).toBe(2))
+    const stateA = stateFor('https://a.example.com/mcp')
+    const stateB = stateFor('https://b.example.com/mcp')
+
+    // B is authorized first: A keeps waiting
+    callback(`code=code-b&state=${stateB}`)
+    const resultB = JSON.parse(await flowB)
+    expect(resultB.tokens.access_token).toBe('token-for-code-b')
+    expect(pending().has(stateA)).toBe(true)
+
+    callback(`code=code-a&state=${stateA}`)
+    const resultA = JSON.parse(await flowA)
+    expect(resultA.tokens.access_token).toBe('token-for-code-a')
+
+    // each flow only ever talked to its own server, with its own code
+    expect(transports.map((t) => t.url.hostname)).toEqual(['a.example.com', 'b.example.com', 'b.example.com', 'a.example.com'])
+    expect(transports[0].finishAuth).toHaveBeenCalledWith('code-a')
+    expect(transports[1].finishAuth).toHaveBeenCalledWith('code-b')
+    expect(transports[2].options.authProvider.tokens().access_token).toBe('token-for-code-b')
+    expect(transports[3].options.authProvider.tokens().access_token).toBe('token-for-code-a')
+    expect(pending().size).toBe(0)
+  })
+
+  test('a callback without a state or with an unknown state is refused and completes nothing', async () => {
+    let settled = false
+    manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata()).then(() => settled = true, () => settled = true)
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+
+    for (const query of ['code=stolen', 'code=stolen&state=', 'code=stolen&state=default', 'code=stolen&state=unknown', `code=stolen&state=${'0'.repeat(64)}`]) {
+      const res = callback(query)
+      expect(res.writeHead, query).toHaveBeenCalledWith(400)
+      expect(res.end, query).toHaveBeenCalledWith('Bad request')
+    }
+
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(pending().size).toBe(1)
+    expect(transports[0].finishAuth).not.toHaveBeenCalled()
+  })
+
+  test('an error callback with an unknown state shows nothing of the request', async () => {
+    const res = callback('error=%3Cb%3Eplease%20call%20this%20number%3C%2Fb%3E&state=unknown')
+    expect(res.writeHead).toHaveBeenCalledWith(400)
+    expect(res.end).toHaveBeenCalledWith('Bad request')
+  })
+
+  test('a state completes a single callback', async () => {
+    const flow = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+    const state = stateFor('https://a.example.com/mcp')
+
+    expect(callback(`code=code-a&state=${state}`).writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+    const replay = callback(`code=code-replayed&state=${state}`)
+    expect(replay.writeHead).toHaveBeenCalledWith(400)
+    expect(replay.end).toHaveBeenCalledWith('Bad request')
+
+    expect(JSON.parse(await flow).tokens.access_token).toBe('token-for-code-a')
+    expect(transports[0].finishAuth).toHaveBeenCalledTimes(1)
+  })
+
+  test('an error callback ends its flow and its state', async () => {
+    const flow = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+    const state = stateFor('https://a.example.com/mcp')
+
+    expect(callback(`error=access_denied&state=${state}`).writeHead).toHaveBeenCalledWith(400, expect.any(Object))
+    await expect(flow).rejects.toThrow('OAuth authorization failed: access_denied')
+    expect(callback(`code=code-a&state=${state}`).end).toHaveBeenCalledWith('Bad request')
+  })
+
+  test('a new authorization request in the same flow gets a new state', async () => {
+    // the server asks for an authorization again after the first code
+    transports.length = 0
+    let authorizations = 0
+    vi.mocked(StreamableHTTPClientTransport).mockImplementation(((url: URL, options: any) => {
+      const transport = {
+        url, options,
+        finishAuth: vi.fn(async (code: string) => {
+          if (++authorizations === 2) options.authProvider.saveTokens({ access_token: `token-for-${code}`, token_type: 'bearer' })
+        }),
+      }
+      transports.push(transport)
+      return transport
+    }) as any)
+
+    const flow = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+    const first = stateFor('https://a.example.com/mcp')
+    callback(`code=code-1&state=${first}`)
+
+    await vi.waitFor(() => expect(openedUrls()).toHaveLength(2))
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+    const second = stateFor('https://a.example.com/mcp')
+    expect(second).not.toBe(first)
+    expect(callback(`code=code-2&state=${first}`).end).toHaveBeenCalledWith('Bad request')
+    callback(`code=code-2&state=${second}`)
+
+    expect(JSON.parse(await flow).tokens.access_token).toBe('token-for-code-2')
+  })
+
+  test('a state expires', async () => {
+    vi.useFakeTimers()
+    const flow = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())
+    const failure = expect(flow).rejects.toThrow('OAuth callback timeout')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pending().size).toBe(1)
+    const state = stateFor('https://a.example.com/mcp')
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1)
+    expect(pending().has(state)).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    await failure
+    expect(pending().size).toBe(0)
+
+    const late = callback(`code=code-a&state=${state}`)
+    expect(late.writeHead).toHaveBeenCalledWith(400)
+    expect(late.end).toHaveBeenCalledWith('Bad request')
+    expect(transports[0].finishAuth).not.toHaveBeenCalled()
+  })
+
+  test('the redirect uri uses the port the callback server listens on', async () => {
+    // the configured port was taken: the server fell back to another one
+    mockHttpServerInstance.getBaseUrl.mockReturnValue('http://localhost:8091')
+    const flow = manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata(), { client_id: 'id', client_secret: 'secret' })
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+
+    expect(mockHttpServerInstance.ensureServerRunning).toHaveBeenCalled()
+    const provider = transports[0].options.authProvider
+    expect(provider.redirectUrl).toBe('http://localhost:8091/mcp/callback')
+    expect(provider.clientMetadata.redirect_uris).toEqual(['http://localhost:8091/mcp/callback'])
+    expect(provider.clientInformation().redirect_uris).toEqual(['http://localhost:8091/mcp/callback'])
+
+    callback(`code=code-a&state=${stateFor('https://a.example.com/mcp')}`)
+    expect(JSON.parse(await flow).clientMetadata.redirect_uris).toEqual(['http://localhost:8091/mcp/callback'])
+  })
+
+  test('the authorization url is opened in the browser with the state', async () => {
+    manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata()).catch(() => {})
+    await vi.waitFor(() => expect(pending().size).toBe(1))
+    expect(shell.openExternal).toHaveBeenCalledTimes(1)
+    const opened = openedUrls()[0]
+    expect(opened.origin + opened.pathname).toBe('https://auth.example.com/authorize')
+    expect(pending().has(opened.searchParams.get('state')!)).toBe(true)
+  })
+
+  test.each([
+    ['javascript:alert(1)'],
+    ['file:///C:/Windows/System32/calc.exe'],
+    ['ms-msdt:/id PCWDiagnostic'],
+    ['search-ms:query=x&crumb=location:\\\\evil.example.com\\share'],
+    ['mailto:someone@example.com'],
+    ['vscode://extension/install'],
+  ])('an authorization url that is not a web page is not opened: %s', async (authorizationUrl) => {
+    const { UnauthorizedError } = await import('@modelcontextprotocol/sdk/client/auth.js')
+    mockClient.connect.mockImplementation(async (transport: any) => {
+      transport.options.authProvider.redirectToAuthorization(new URL(authorizationUrl))
+      throw new (UnauthorizedError as any)('Unauthorized')
+    })
+    await expect(manager.startOAuthFlow('http', 'https://a.example.com/mcp', metadata())).rejects.toThrow('only http and https URLs can be opened')
+    expect(shell.openExternal).not.toHaveBeenCalled()
+    expect(pending().size).toBe(0)
   })
 })

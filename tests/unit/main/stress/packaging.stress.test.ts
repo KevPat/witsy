@@ -2,6 +2,7 @@
 import { describe, expect, test } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { runAsNodeFuse } from '@root/build/cli_runtime'
 import { bug } from './bug'
 
 // Static checks of the build and packaging configuration. Nothing is built or executed.
@@ -92,14 +93,49 @@ describe('forge configuration', () => {
     expect(forgeConfig).not.toMatch(/buildVersion:\s*`\$\{process\.env\.BUILD_NUMBER\}`/)
   })
 
-  bug('the packaged binary cannot be run as a plain Node.js interpreter or debugged from the command line', () => {
-    // ELECTRON_RUN_AS_NODE and --inspect let any local process run code as the signed app (on macOS with its permissions)
+  test('the packaged binary is a Node.js interpreter only when the CLI runs on the app binary', () => {
+    // ELECTRON_RUN_AS_NODE lets any local process run code as the signed app (on macOS with its permissions).
+    // The fuse follows build/cli_runtime.ts: on by default on every platform, off for a build made with
+    // WITSY_CLI_RUNTIME=node, whose CLI runs on the Node.js of the user (tests/unit/main/build/cli_runtime.test.ts).
     expect(forgeConfig).not.toMatch(/\[FuseV1Options\.RunAsNode\]:\s*true/)
-    expect(forgeConfig).not.toMatch(/\[FuseV1Options\.EnableNodeCliInspectArguments\]:\s*true/)
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.RunAsNode\]:\s*runAsNodeFuse\(targetPlatform\)/)
+    expect(runAsNodeFuse('win32', {})).toBe(true)
+    expect(runAsNodeFuse('darwin', {})).toBe(true)
+    expect(runAsNodeFuse('linux', {})).toBe(true)
+    expect(runAsNodeFuse('win32', { WITSY_CLI_RUNTIME: 'node' })).toBe(false)
+    expect(runAsNodeFuse('darwin', { WITSY_CLI_RUNTIME: 'node' })).toBe(false)
+    expect(runAsNodeFuse('linux', { WITSY_CLI_RUNTIME: 'node' })).toBe(false)
   })
 
-  bug('asar integrity validation is enabled', () => {
+  test('release builds cannot be debugged from the command line', () => {
+    // --inspect is only accepted by the e2e build (TEST=1), which Playwright drives through it
+    expect(forgeConfig).not.toMatch(/\[FuseV1Options\.EnableNodeCliInspectArguments\]:\s*true/)
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.EnableNodeCliInspectArguments\]:\s*!!process\.env\.TEST\b/)
+  })
+
+  test('asar integrity validation is enabled for macOS builds', () => {
+    // a modified app.asar would run with the permissions granted to the signed app.
+    // Windows is still off (7ab83b00: the check failed there) and Linux has no such check.
     expect(forgeConfig).not.toMatch(/\[FuseV1Options\.EnableEmbeddedAsarIntegrityValidation\]:\s*false/)
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.EnableEmbeddedAsarIntegrityValidation\]:\s*isDarwinTarget\b/)
+    expect(forgeConfig).toMatch(/const isDarwinTarget = \['darwin', 'mas'\]\.includes\(targetPlatform\)/)
+    // it only means something when the app cannot be loaded from anywhere else
+    expect(forgeConfig).toMatch(/\[FuseV1Options\.OnlyLoadAppFromAsar\]:\s*true/)
+  })
+
+  test('the platform being packaged is the one given to forge, or the host', () => {
+    // the fuses are chosen when the configuration is loaded: `make all` builds every platform from one host
+    const source = forgeConfig.match(/const targetPlatform = (\(\(\): string => \{[\s\S]*?\}\)\(\));/)?.[1]
+    expect(source).toBeDefined()
+    const targetPlatform = (argv: string[], platform: string): string => {
+      return new Function('process', `return ${source!.replace('(): string =>', '() =>')}`)({ argv, platform })
+    }
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p', 'darwin', '-a', 'arm64'], 'linux')).toBe('darwin')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p', 'win32', '-a', 'x64'], 'darwin')).toBe('win32')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '--platform', 'linux'], 'darwin')).toBe('linux')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '--platform=win32'], 'darwin')).toBe('win32')
+    expect(targetPlatform(['node', 'electron-forge', 'package'], 'darwin')).toBe('darwin')
+    expect(targetPlatform(['node', 'electron-forge', 'make', '-p'], 'win32')).toBe('win32')
   })
 
   test('the patched MCP SDK CommonJS build still parses', () => {

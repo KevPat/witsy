@@ -1,11 +1,32 @@
 // Witsy API Client
 
+import { loadApiToken } from './config'
 import { state } from './state'
 import { ChatCli } from './models'
 
 export class WitsyAPI {
+  private apiToken: string | null = null
+
   private baseUrl(): string {
     return `http://localhost:${state.port}`
+  }
+
+  // Sends a request with the API token of the app. The token changes each time the app
+  // starts: when the request is refused, the token file is read again and the request retried once.
+  private async request(path: string, init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> } = {}): Promise<Response> {
+    const send = (token: string | null) => fetch(`${this.baseUrl()}${path}`, token
+      ? { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } }
+      : init)
+
+    const token = this.apiToken ?? loadApiToken(state.userDataPath)
+    this.apiToken = token
+    const response = await send(token)
+    if (response.status !== 401 && response.status !== 403) return response
+
+    const latest = loadApiToken(state.userDataPath)
+    if (!latest || latest === token) return response
+    this.apiToken = latest
+    return await send(latest)
   }
 
   async connectWithTimeout(port: number, timeoutMs: number): Promise<boolean> {
@@ -37,21 +58,21 @@ export class WitsyAPI {
   }
 
   async getEngines(): Promise<Array<{ id: string; name: string }>> {
-    const response = await fetch(`${this.baseUrl()}/api/engines`)
+    const response = await this.request('/api/engines')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const data = await response.json()
     return data.engines
   }
 
   async getModels(engine: string): Promise<Array<{ id: string; name: string }>> {
-    const response = await fetch(`${this.baseUrl()}/api/models/${engine}`)
+    const response = await this.request(`/api/models/${engine}`)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const data = await response.json()
     return data.models
   }
 
   async complete(thread: Array<{ role: string; content: string }>, onChunk: (text: string) => void, signal?: AbortSignal): Promise<void> {
-    const response = await fetch(`${this.baseUrl()}/api/complete`, {
+    const response = await this.request('/api/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -101,7 +122,7 @@ export class WitsyAPI {
   }
 
   async saveConversation(chat: ChatCli): Promise<string> {
-    const response = await fetch(`${this.baseUrl()}/api/conversations`, {
+    const response = await this.request('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat })

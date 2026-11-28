@@ -68,6 +68,7 @@ import * as backup from './main/backup';
 import * as config from './main/config';
 import * as menu from './main/menu';
 import * as shortcuts from './main/shortcuts';
+import * as webSecurity from './main/web_security';
 import * as webview from './main/webview';
 import * as window from './main/window';
 import * as workspace from './main/workspace';
@@ -191,6 +192,9 @@ const quitApp = () => {
   app.quit();
 }
 
+// the scheme of the html artifacts must be known before onReady
+webSecurity.registerPrivilegedSchemes();
+
 // this needs to be done before onReady
 if (process.platform === 'darwin') {
   systemPreferences.setUserDefault('NSDisabledDictationMenuItem', 'boolean', true)
@@ -225,6 +229,9 @@ app.whenReady().then(async () => {
 
   // initialize webview session
   webview.initWebviewSession()
+
+  // the page of the html artifacts and the scripts the app accepts: before any window exists
+  webSecurity.installWebSecurity()
 
   // error
   if (config.settingsFileHadError()) {
