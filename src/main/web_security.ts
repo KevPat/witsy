@@ -23,9 +23,10 @@ import { isPathInside } from './path_containment'
 //
 // 4. Web security is on for the packaged app (windows/index.ts). Electron gives a file: page
 //    access to other origins whatever this setting is, which is what lets the app call the model
-//    providers and read local images in a canvas; frames that are not the app (an artifact, a web
-//    page) no longer get that access. tools/web_security_probe.cjs checks all of this in a real
-//    Electron: run it again when Electron is upgraded.
+//    providers and read local images in a canvas. With it off, a frame that is not the app could
+//    read local files too: an html artifact could, from inside its sandbox. It no longer can.
+//    tools/web_security_probe.cjs checks all of this in a real Electron: run it again when
+//    Electron is upgraded.
 
 /**
  * The page html artifacts are loaded in. It waits for the html of the artifact, sent by the app
