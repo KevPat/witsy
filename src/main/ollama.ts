@@ -20,22 +20,30 @@ let currentDownload: DownloadState | null = null;
  */
 function getOllamaDownloadUrl(): { url: string; filename: string } {
   const platform = process.platform;
+  const arch = process.arch;
   
   if (platform === 'darwin') {
+    // universal image: Intel and Apple silicon
     return {
       url: 'https://ollama.com/download/Ollama.dmg',
       filename: 'Ollama.dmg'
     };
   } else if (platform === 'win32') {
+    // one installer for x64 and arm64
     return {
       url: 'https://ollama.com/download/OllamaSetup.exe',
       filename: 'OllamaSetup.exe'
     };
-  } else {
+  } else if (platform === 'linux' && (arch === 'x64' || arch === 'arm64')) {
+    // Ollama publishes no single installable file for Linux, only per-architecture
+    // archives (ollama-linux-amd64.tar.zst, ollama-linux-arm64.tar.zst). Its installer
+    // is this script, which picks the archive matching the machine it runs on.
     return {
-      url: 'https://ollama.com/download/ollama-linux-amd64',
-      filename: 'ollama-linux-amd64'
+      url: 'https://ollama.com/install.sh',
+      filename: 'ollama-install.sh'
     };
+  } else {
+    throw new Error(`Ollama does not provide an installer for ${platform} ${arch}`);
   }
 }
 
@@ -63,6 +71,20 @@ export function startDownload(targetDirectory: string): string {
   const request = net.request(url);
   
   request.on('response', (response) => {
+
+    // an error page is not an installer
+    if (!(response.statusCode >= 200 && response.statusCode < 300)) {
+      request.abort();
+      if (mainWindow) {
+        emitIpcEvent(mainWindow, 'ollama-download-error', {
+          downloadId: downloadId,
+          error: `HTTP ${response.statusCode}`
+        });
+      }
+      currentDownload = null;
+      return;
+    }
+
     const contentLength = response.headers['content-length'];
     if (contentLength && typeof contentLength === 'string') {
       currentDownload!.totalBytes = parseInt(contentLength, 10);

@@ -129,15 +129,48 @@ describe('ollama download', () => {
     expect(events('ollama-download-error')).toHaveLength(50)
   })
 
-  bug.each([403, 404, 500])('an HTTP %i response is reported as an error, not as a finished download', (status) => {
-    // the status code is never looked at: the error page is saved as the installer
-    startDownload(dir)
+  test.each([301, 403, 404, 500])('an HTTP %i response is reported as an error, not as a finished download', (status) => {
+    const downloadId = startDownload(dir)
     const response = new FakeResponse(status, { 'content-length': '9' })
     requests[0].emit('response', response)
     response.emit('data', Buffer.from('Not Found'))
     response.emit('end')
     expect(events('ollama-download-complete')).toHaveLength(0)
+    expect(events('ollama-download-progress')).toHaveLength(0)
+    expect(events('ollama-download-error')).toEqual([{ downloadId, error: `HTTP ${status}` }])
+  })
+
+  test('an HTTP error leaves no file behind, stops the transfer and frees the downloader', () => {
+    startDownload(dir)
+    const response = new FakeResponse(404, { 'content-length': '9' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('Not Found'))
+    response.emit('end')
+    expect(files).toHaveLength(0)
+    expect(fs.readdirSync(dir)).toEqual([])
+    expect(requests[0].abort).toHaveBeenCalled()
+    expect(getDownloadStatus()).toBeNull()
+
+    // the next attempt is a normal download
+    startDownload(dir)
+    const retry = new FakeResponse(200, { 'content-length': '2' })
+    requests[1].emit('response', retry)
+    retry.emit('data', Buffer.from('ok'))
+    retry.emit('end')
+    expect(files).toHaveLength(1)
+    expect(files[0].text()).toBe('ok')
+    expect(events('ollama-download-complete')).toHaveLength(1)
     expect(events('ollama-download-error')).toHaveLength(1)
+  })
+
+  test.each([200, 206, 299])('an HTTP %i response is downloaded', (status) => {
+    startDownload(dir)
+    const response = new FakeResponse(status, { 'content-length': '2' })
+    requests[0].emit('response', response)
+    response.emit('data', Buffer.from('ok'))
+    response.emit('end')
+    expect(events('ollama-download-complete')).toHaveLength(1)
+    expect(events('ollama-download-error')).toHaveLength(0)
   })
 
   bug('cancelling aborts the network request', () => {
@@ -203,10 +236,29 @@ describe('ollama platform selection', () => {
     expect(getDownloadStatus()!.filePath).toBe(path.join(dir, filename))
   })
 
-  bug('linux arm64 does not download the x64 binary', () => {
+  test('linux arm64 does not download the x64 binary', () => {
     setPlatform('linux', 'arm64')
     startDownload(dir)
     expect(vi.mocked(net.request).mock.calls[0][0]).not.toContain('amd64')
+  })
+
+  test.each(['x64', 'arm64'])('linux %s downloads the install script, which is not tied to an architecture', (cpu) => {
+    // the only other files Ollama publishes for Linux are .tar.zst archives: nothing a user can run
+    setPlatform('linux', cpu)
+    startDownload(dir)
+    expect(vi.mocked(net.request).mock.calls[0][0]).toBe('https://ollama.com/install.sh')
+    expect(getDownloadStatus()!.filePath).toBe(path.join(dir, 'ollama-install.sh'))
+  })
+
+  test.each([
+    ['linux', 'arm'],
+    ['linux', 'ia32'],
+    ['freebsd', 'x64'],
+  ])('%s %s has no installer: the download is refused instead of fetching something unusable', (os, cpu) => {
+    setPlatform(os, cpu)
+    expect(() => startDownload(dir)).toThrow(`Ollama does not provide an installer for ${os} ${cpu}`)
+    expect(net.request).not.toHaveBeenCalled()
+    expect(getDownloadStatus()).toBeNull()
   })
 
   test.each([
