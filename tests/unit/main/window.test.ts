@@ -472,6 +472,76 @@ test('Every app window is guarded', async () => {
   expect(BrowserWindow.prototype.webContents.setWindowOpenHandler).toHaveBeenCalledTimes(windows)
 })
 
+const attachWebview = (webPreferences: Record<string, unknown>, params: Record<string, string>) => {
+  const event = { preventDefault: vi.fn() }
+  lastWebContentsListener('will-attach-webview')(event, webPreferences, params)
+  return event.preventDefault.mock.calls.length > 0 ? 'refused' : 'attached'
+}
+
+test('A webview is attached as an isolated web page', async () => {
+  window.createWindow({ hash: '/chat' })
+
+  // what WebAppViewer asks for
+  const webPreferences: Record<string, unknown> = { partition: 'persist:webapp_Mail', disablePopups: false, plugins: undefined, zoomFactor: 1 }
+  const params = { src: 'https://mail.example.com/inbox', partition: 'persist:webapp_Mail', allowpopups: 'true', useragent: 'Mozilla/5.0' }
+  expect(attachWebview(webPreferences, params)).toBe('attached')
+  expect(webPreferences).toEqual({
+    partition: 'persist:webapp_Mail', disablePopups: false, plugins: undefined, zoomFactor: 1,
+    nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true,
+  })
+  expect(params).toEqual({ src: 'https://mail.example.com/inbox', partition: 'persist:webapp_Mail', allowpopups: 'true', useragent: 'Mozilla/5.0' })
+
+  expect(attachWebview({}, { src: 'http://localhost:8080/app' })).toBe('attached')
+})
+
+test('A webview never gets a preload script, node or an unsandboxed page', async () => {
+  window.createWindow({ hash: '/chat' })
+
+  // what a tag written by something else than the app could ask for
+  const webPreferences: Record<string, unknown> = {
+    preload: '/tmp/evil.js', preloadURL: 'file:///tmp/evil.js',
+    nodeIntegration: true, nodeIntegrationInSubFrames: true, contextIsolation: false, sandbox: false, webSecurity: false,
+    partition: 'persist:webapp_Mail',
+  }
+  expect(attachWebview(webPreferences, { src: 'https://evil.example/', preload: 'file:///tmp/evil.js', nodeintegration: 'true', disablewebsecurity: 'true' })).toBe('attached')
+  expect(webPreferences).toEqual({
+    nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true,
+    partition: 'persist:webapp_Mail',
+  })
+})
+
+test('A webview only starts on a web page', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  window.createWindow({ hash: '/chat' })
+
+  for (const src of [
+    'file:///etc/passwd',
+    'file:///app/renderer/vite/index.html#/chat',
+    'http://localhost:3000.evil.example/',
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'about:blank',
+    'chrome://gpu',
+    'smb://evil.example/share',
+    'example.com',
+    '',
+    undefined,
+  ]) {
+    const webPreferences: Record<string, unknown> = { preload: '/tmp/evil.js', nodeIntegration: true }
+    expect(attachWebview(webPreferences, { src }), String(src)).toBe('refused')
+    expect(webPreferences.preload).toBeUndefined()
+    expect(webPreferences.nodeIntegration).toBe(false)
+  }
+  expect(attachWebview({}, undefined)).toBe('refused')
+})
+
+test('Every app window isolates its webviews', async () => {
+  window.openMainWindow()
+  window.createWindow({ hash: '/computer' })
+  const listeners = (BrowserWindow.prototype.webContents.on as Mock).mock.calls.map((call) => call[0])
+  expect(listeners.filter((name) => name === 'will-attach-webview')).toHaveLength(2)
+})
+
 test('Utilities', async () => {
   expect(window.persistentWindows().length).toBe(4)
   expect(window.areAllWindowsClosed()).toBe(false)

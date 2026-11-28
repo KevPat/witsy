@@ -1,4 +1,4 @@
-import { session, webContents } from 'electron'
+import { session, webContents, WebContents } from 'electron'
 import { openExternalUrl } from './external_links'
 import { getCleanUserAgent } from './utils'
 
@@ -18,6 +18,41 @@ export function initWebviewSession(): void {
       'User-Agent': newUA
     }
     cb({ requestHeaders: headers })
+  })
+}
+
+const isWebUrl = (url: unknown): boolean => {
+  try {
+    return typeof url === 'string' && ['http:', 'https:'].includes(new URL(url).protocol)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Keep every <webview> of a window an isolated web page, whatever attributes the tag
+ * was given by the page that embeds it: no preload script, no node, sandboxed,
+ * web security on, and nothing but an http(s) url to start with.
+ * Partition, popups and user agent are left as the tag asked.
+ * @param embedder The webContents of the window that may embed webviews
+ */
+export function isolateWebviews(embedder: WebContents): void {
+  embedder.on('will-attach-webview', (event, webPreferences, params) => {
+
+    delete webPreferences.preload
+    delete (webPreferences as Record<string, unknown>).preloadURL
+
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+
+    if (!isWebUrl(params?.src)) {
+      console.warn('[webview] refused to attach a webview that does not load a web page')
+      event.preventDefault()
+    }
+
   })
 }
 

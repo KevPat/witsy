@@ -12,6 +12,7 @@ import MacosAutomator from '@main/automations/macos';
 import WindowsAutomator from '@main/automations/windows';
 import interceptNetwork from '../network';
 import { openExternalUrl } from '../external_links';
+import { isolateWebviews } from '../webview';
 import * as config from '../config';
 import Store from 'electron-store';
 import process from 'node:process';
@@ -228,6 +229,9 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
       openExternalUrl(event.url);
     }
   });
+
+  // web apps are shown in <webview> tags: those never get what this window has
+  isolateWebviews(window.webContents);
 
   // to log network traffic
   interceptNetwork(window);
