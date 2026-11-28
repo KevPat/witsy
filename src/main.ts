@@ -1,4 +1,6 @@
 
+// must stay first: the modules below read process.env.DEBUG when they are loaded
+import './main/debug_env';
 import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification, systemPreferences } from 'electron';
 import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer';
 import log from 'electron-log/main';
