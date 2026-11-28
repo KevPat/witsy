@@ -169,7 +169,7 @@
     "markdown-it-diagram": "^1.1.6",
     "markdown-it-mark": "^4.0.0",
     "mermaid": "^12.4.0",
-    "minimatch": "^10.0.3",
+    "minimatch": "^11.0.9",
     "mitt": "^3.0.1",
     "multi-llm-ts": "5.1.0-beta9",
     "number-flip-animation": "^2.1.1",
@@ -222,6 +222,9 @@
     },
     "exceljs": {
       "uuid": "$uuid"
+    },
+    "multi-llm-ts": {
+      "minimatch": "$minimatch"
     },
     "pptxgenjs": {
       "image-size": "^2.2.0"
