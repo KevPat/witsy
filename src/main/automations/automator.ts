@@ -6,7 +6,6 @@ import WindowsAutomator from './windows'
 import NutAutomator from './nut'
 import Automation from './automation';
 import { ClipboardSnapshot, restoreClipboard, saveClipboard } from './clipboard_snapshot';
-import { ClipboardSnapshot, restoreClipboard, saveClipboard } from './clipboard_snapshot';
 
 export default class Automator {
   
