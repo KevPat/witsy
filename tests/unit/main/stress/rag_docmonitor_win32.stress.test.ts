@@ -22,6 +22,14 @@ vi.mock('electron', async () => {
   }
 })
 
+// the exclude patterns come from the settings
+vi.mock('@main/config', async () => {
+  const defaultSettings = (await import('@root/defaults/settings.json')).default
+  return {
+    loadSettings: vi.fn(() => JSON.parse(JSON.stringify(defaultSettings))),
+  }
+})
+
 // chokidar double: like chokidar on Windows it reports backslash paths and only for the watched tree
 type FakeWatcher = {
   root: string
@@ -64,6 +72,8 @@ const mulberry32 = (seed: number) => () => {
 
 const docRepo = {
   contents: [] as any[],
+  queue: [] as any[],
+  isSourceSupported: vi.fn((): boolean => true),
   addDocumentSource: vi.fn().mockResolvedValue('task'),
   addChildDocumentSource: vi.fn().mockResolvedValue('task'),
   removeDocumentSource: vi.fn().mockResolvedValue(undefined),

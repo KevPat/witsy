@@ -2,7 +2,10 @@ import { App } from 'electron'
 import { DocRepoListener } from 'types/rag'
 import DocumentRepository from './docrepo'
 import DocumentSourceImpl from './docsource'
+import { loadSettings } from '../config'
+import defaultSettings from '@root/defaults/settings.json'
 import { watch, FSWatcher } from 'chokidar'
+import { Minimatch } from 'minimatch'
 import path from 'path'
 import fs from 'fs'
 
@@ -19,6 +22,8 @@ export default class DocumentMonitor implements DocRepoListener {
   watchers: Map<string, FSWatcher> = new Map()
   pendingOperations: Map<string, PendingOperation> = new Map()
   debounceDelay: number = 1000 // 1 second debounce
+  staleWatcherCandidates: Set<string> = new Set()
+  staleWatcherTimer: NodeJS.Timeout | null = null
 
   constructor(app: App, docRepo: DocumentRepository) {
     this.app = app
@@ -44,6 +49,11 @@ export default class DocumentMonitor implements DocRepoListener {
       clearTimeout(pending.timer)
     }
     this.pendingOperations.clear()
+    if (this.staleWatcherTimer) {
+      clearTimeout(this.staleWatcherTimer)
+      this.staleWatcherTimer = null
+    }
+    this.staleWatcherCandidates.clear()
 
     // Close all watchers
     for (const watcher of this.watchers.values()) {
@@ -64,11 +74,28 @@ export default class DocumentMonitor implements DocRepoListener {
   // DocRepoListener interface implementation
   onDocumentSourceAdded(docSource: DocumentSourceImpl): void {
     console.log(`[docmonitor] Document added notification: ${docSource.origin.substring(0, 50)}...`)
+
+    // The files of a folder are covered by the watcher of that folder
+    if (this.isFolderItem(docSource)) {
+      return
+    }
+
     this.addDocSourceWatcher(docSource)
   }
 
   onDocumentSourceRemoved(origin: string): void {
     console.log(`[docmonitor] Document removed notification: ${origin}`)
+
+    // Another base may still rely on this watcher, and a base that is being deleted still lists
+    // its sources when it notifies: keep the watcher for now and check again once that is settled
+    if (this.watchers.has(origin) && this.isSourceOrigin(origin)) {
+      this.staleWatcherCandidates.add(origin)
+      if (!this.staleWatcherTimer) {
+        this.staleWatcherTimer = setTimeout(() => this.closeStaleWatchers(), this.debounceDelay)
+      }
+      return
+    }
+
     const watcher = this.watchers.get(origin)
     if (watcher) {
       console.log(`[docmonitor] Removing watcher for: ${origin}`)
@@ -78,6 +105,29 @@ export default class DocumentMonitor implements DocRepoListener {
     
     // Clear any pending operations for this path
     this.clearPendingOperation(origin)
+  }
+
+  private closeStaleWatchers(): void {
+    const origins = [...this.staleWatcherCandidates]
+    this.staleWatcherTimer = null
+    this.staleWatcherCandidates.clear()
+    for (const origin of origins) {
+      if (!this.isSourceOrigin(origin)) {
+        this.onDocumentSourceRemoved(origin)
+      }
+    }
+  }
+
+  private isSourceOrigin(origin: string): boolean {
+    return this.docRepo.contents.some(docBase => docBase.documents.some(docSource =>
+      (docSource.type === 'file' || docSource.type === 'folder') && docSource.origin === origin
+    ))
+  }
+
+  private isFolderItem(docSource: DocumentSourceImpl): boolean {
+    return this.docRepo.contents.some(docBase => docBase.documents.some(folder =>
+      folder.type === 'folder' && folder.items?.some(item => item.uuid === docSource.uuid)
+    ))
   }
 
   private addDocSourceWatcher(docSource: DocumentSourceImpl): void {
@@ -102,8 +152,10 @@ export default class DocumentMonitor implements DocRepoListener {
     console.log(`[docmonitor] Adding watcher for ${docSource.type}: ${watchPath}`)
 
     try {
+      const excludeMatchers = this.getExcludeMatchers()
       const watchOptions = {
-        ignored: /(^|[/\\])\../, // ignore dotfiles
+        // ignore dotfiles and excluded names below the watched path, wherever that path is located
+        ignored: (candidate: string) => this.isExcluded(watchPath, candidate, excludeMatchers),
         persistent: true,
         ignoreInitial: true, // don't trigger on initial scan
         followSymlinks: false,
@@ -215,7 +267,7 @@ export default class DocumentMonitor implements DocRepoListener {
         switch (operation) {
           case 'add':
             // For new files, add them to the docbase
-            if (docSource.type === 'folder' && fs.existsSync(filePath)) {
+            if (docSource.type === 'folder' && fs.existsSync(filePath) && !this.isExcluded(docSource.origin, filePath)) {
               console.log(`[docmonitor] Adding new file to docbase ${docBase.name}: ${filePath}`)
               await this.docRepo.addChildDocumentSource(docBase.uuid, docSource.uuid, 'file', filePath, false)
               await this.cleanupDuplicateDocuments(docBase, filePath)
@@ -242,6 +294,12 @@ export default class DocumentMonitor implements DocRepoListener {
                   // If it's a root-level document, use addDocumentSource
                   await this.docRepo.addDocumentSource(docBase.uuid, targetDocSource.type, targetDocSource.origin, false)
                 }
+              } else if (this.canIndexUntrackedFile(docBase, docSource, filePath)) {
+                // The folder does not have this file yet: the write replaced its pending creation,
+                // or the creation could not be indexed (a file is empty when it has just been created)
+                console.log(`[docmonitor] Adding written file to docbase ${docBase.name}: ${filePath}`)
+                await this.docRepo.addChildDocumentSource(docBase.uuid, docSource.uuid, 'file', filePath, false)
+                await this.cleanupDuplicateDocuments(docBase, filePath)
               }
             }
             break
@@ -382,6 +440,37 @@ export default class DocumentMonitor implements DocRepoListener {
       && relativePath !== '..'
       && !relativePath.startsWith(`..${path.sep}`)
       && !path.isAbsolute(relativePath)
+  }
+
+  private getExcludeMatchers(): Minimatch[] {
+    let excludePatterns = defaultSettings.rag.excludePatterns
+    try {
+      excludePatterns = loadSettings(this.app).rag?.excludePatterns ?? excludePatterns
+    } catch (error) {
+      console.warn('[docmonitor] Could not read the exclude patterns, using the default ones', error)
+    }
+    return excludePatterns.split(',').map(p => p.trim()).filter(p => p.length > 0).map(p => new Minimatch(p))
+  }
+
+  // Same rule as the listing of a folder: the patterns are matched against each name below the root,
+  // never against the root itself or its parents. Dotfiles are never monitored.
+  private isExcluded(root: string, filePath: string, excludeMatchers = this.getExcludeMatchers()): boolean {
+    if (!this.isInside(root, filePath)) {
+      return false
+    }
+    return path.relative(root, filePath).split(path.sep).some(name =>
+      name.startsWith('.') || excludeMatchers.some(matcher => matcher.match(name))
+    )
+  }
+
+  private canIndexUntrackedFile(docBase: any, folder: DocumentSourceImpl, filePath: string): boolean {
+    if (this.isExcluded(folder.origin, filePath) || !this.docRepo.isSourceSupported('file', filePath)) {
+      return false
+    }
+    // When the file is already waiting to be indexed, that will read what was just written:
+    // queueing it again would add it to the folder twice
+    return !this.docRepo.queue.some(item => item.operation === 'add' && item.baseId === docBase.uuid
+      && item.parentDocId === folder.uuid && item.origin === filePath)
   }
 
   private async cleanupDuplicateDocuments(docBase: any, filePath: string): Promise<void> {

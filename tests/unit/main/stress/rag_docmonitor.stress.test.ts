@@ -5,7 +5,7 @@ import fs from 'fs'
 import DocumentMonitor from '@main/rag/docmonitor'
 import DocumentSourceImpl from '@main/rag/docsource'
 import defaultSettings from '@root/defaults/settings.json'
-import { bug } from './bug'
+import { loadSettings } from '@main/config'
 
 vi.mock('electron', async () => {
   return {
@@ -84,6 +84,8 @@ const mulberry32 = (seed: number) => () => {
 
 const docRepo = {
   contents: [] as any[],
+  queue: [] as any[],
+  isSourceSupported: vi.fn((): boolean => true),
   addDocumentSource: vi.fn().mockResolvedValue('task'),
   addChildDocumentSource: vi.fn().mockResolvedValue('task'),
   removeDocumentSource: vi.fn().mockResolvedValue(undefined),
@@ -116,7 +118,9 @@ const addedChildren = () => docRepo.addChildDocumentSource.mock.calls.map(call =
 
 beforeEach(() => {
   watchers.length = 0
+  docRepo.queue = []
   vi.clearAllMocks()
+  vi.mocked(loadSettings).mockImplementation(() => JSON.parse(JSON.stringify(defaultSettings)))
   vi.useFakeTimers()
   vi.spyOn(fs, 'existsSync').mockReturnValue(true)
   vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -139,7 +143,7 @@ describe('DocumentMonitor debounce', () => {
     expect(docRepo.addChildDocumentSource).toHaveBeenCalledWith('base', 'folder', 'file', '/path/to/folder/new.txt', false)
   })
 
-  bug('a file that is created and then written to is still indexed', async () => {
+  test('a file that is created and then written to is still indexed', async () => {
     // the pending add is replaced by the change, and a change on an untracked file is a no-op
     start(docBase('base', [folder('folder', '/path/to/folder')]))
     emit('add', '/path/to/folder/new.txt')
@@ -151,7 +155,7 @@ describe('DocumentMonitor debounce', () => {
     expect(addedChildren()).toEqual(['/path/to/folder/new.txt'])
   })
 
-  bug('fuzz: every new file ends up indexed whatever the number of writes that follow its creation', async () => {
+  test('fuzz: every new file ends up indexed whatever the number of writes that follow its creation', async () => {
     // same defect: only the files that got no change event within the debounce window are indexed
     const rand = mulberry32(20261127)
     start(docBase('base', [folder('folder', '/path/to/folder')]))
@@ -168,6 +172,24 @@ describe('DocumentMonitor debounce', () => {
     }
     await settle()
     expect(created.filter(path => !addedChildren().includes(path))).toEqual([])
+  })
+
+  test('a write to a file that is already waiting to be indexed does not queue it again', async () => {
+    start(docBase('base', [folder('folder', '/path/to/folder')]))
+    docRepo.queue = [{ operation: 'add', baseId: 'base', parentDocId: 'folder', origin: '/path/to/folder/new.txt' }]
+    emit('change', '/path/to/folder/new.txt')
+    await settle()
+    expect(docRepo.addChildDocumentSource).not.toHaveBeenCalled()
+  })
+
+  test('a write to a file of a type that cannot be indexed is ignored', async () => {
+    start(docBase('base', [folder('folder', '/path/to/folder')]))
+    docRepo.isSourceSupported.mockReturnValue(false)
+    emit('change', '/path/to/folder/archive.bin')
+    await settle()
+    expect(docRepo.isSourceSupported).toHaveBeenCalledWith('file', '/path/to/folder/archive.bin')
+    expect(docRepo.addChildDocumentSource).not.toHaveBeenCalled()
+    docRepo.isSourceSupported.mockReturnValue(true)
   })
 
   test('a burst of changes on a tracked child re-indexes it once', async () => {
@@ -218,7 +240,8 @@ describe('DocumentMonitor debounce', () => {
     await settle()
     expect(monitor.pendingOperations.size).toBe(0)
     expect(vi.getTimerCount()).toBe(0)
-    const expectedAdds = [...last].filter(([path, event]) => event === 'add' || (event === 'change' && tracked.has(path))).map(([path]) => path)
+    // a write to a file the folder does not have yet indexes it: its creation may have been replaced by that write
+    const expectedAdds = [...last].filter(([, event]) => event === 'add' || event === 'change').map(([path]) => path)
     const expectedRemovals = [...last].filter(([path, event]) => event === 'unlink' && tracked.has(path)).map(([path]) => tracked.get(path))
     expect(addedChildren().sort()).toEqual(expectedAdds.sort())
     expect(docRepo.removeChildDocumentSource.mock.calls.map(call => call[1]).sort()).toEqual(expectedRemovals.sort())
@@ -253,7 +276,7 @@ describe('DocumentMonitor watcher scope', () => {
     expect(docRepo.addChildDocumentSource).not.toHaveBeenCalled()
   })
 
-  bug.each(['/home/me/.notes/kb', '/Users/me/.config/witsy docs', '/srv/.snapshots/2026/docs'])('a folder located at %s still gets its new files indexed', async (origin) => {
+  test.each(['/home/me/.notes/kb', '/Users/me/.config/witsy docs', '/srv/.snapshots/2026/docs'])('a folder located at %s still gets its new files indexed', async (origin) => {
     // the dot file pattern is tested against the whole path, so it matches the watched root itself
     start(docBase('base', [folder('folder', origin)]))
     emit('add', `${origin}/new.txt`)
@@ -261,7 +284,7 @@ describe('DocumentMonitor watcher scope', () => {
     expect(addedChildren()).toEqual([`${origin}/new.txt`])
   })
 
-  bug('a single file located under a dot directory is re-indexed when it changes', async () => {
+  test('a single file located under a dot directory is re-indexed when it changes', async () => {
     // same pattern: the watcher of /home/me/.notes/todo.md ignores its own root
     start(docBase('base', [new DocumentSourceImpl('file', 'file', '/home/me/.notes/todo.md')]))
     emit('change', '/home/me/.notes/todo.md')
@@ -269,12 +292,40 @@ describe('DocumentMonitor watcher scope', () => {
     expect(docRepo.addDocumentSource).toHaveBeenCalledWith('base', 'file', '/home/me/.notes/todo.md', false)
   })
 
-  bug.each(defaultSettings.rag.excludePatterns.split(',').filter(pattern => !pattern.startsWith('.')))('a new file under an excluded "%s" directory is not indexed', async (excluded) => {
+  test.each(defaultSettings.rag.excludePatterns.split(',').filter(pattern => !pattern.startsWith('.')))('a new file under an excluded "%s" directory is not indexed', async (excluded) => {
     // rag.excludePatterns is applied when a folder is listed but never by the watcher
     start(docBase('base', [folder('folder', '/path/to/folder')]))
     emit('add', `/path/to/folder/project/${excluded}/pkg/readme.md`)
     await settle()
     expect(addedChildren()).toEqual([])
+  })
+
+  test('the exclude patterns of the settings are used', async () => {
+    vi.mocked(loadSettings).mockReturnValue({ rag: { excludePatterns: 'drafts, *.tmp' } } as any)
+    start(docBase('base', [folder('folder', '/path/to/folder')]))
+    expect(emit('add', '/path/to/folder/drafts/a.md')).toBe(0)
+    expect(emit('add', '/path/to/folder/sub/b.tmp')).toBe(0)
+    expect(emit('add', '/path/to/folder/node_modules/c.md')).toBe(1)
+    await settle()
+    expect(addedChildren()).toEqual(['/path/to/folder/node_modules/c.md'])
+  })
+
+  test('a folder is still watched when the settings cannot be read', async () => {
+    vi.mocked(loadSettings).mockImplementation(() => { throw new Error('unreadable') })
+    start(docBase('base', [folder('folder', '/path/to/folder')]))
+    expect(emit('add', '/path/to/folder/node_modules/c.md')).toBe(0)
+    expect(emit('add', '/path/to/folder/a.md')).toBe(1)
+    await settle()
+    expect(addedChildren()).toEqual(['/path/to/folder/a.md'])
+  })
+
+  test('a change of a file that was excluded after its folder was added is not indexed', async () => {
+    start(docBase('base', [folder('folder', '/path/to/folder')]))
+    vi.mocked(loadSettings).mockReturnValue({ rag: { excludePatterns: 'private' } } as any)
+    watchers[0].handlers.add('/path/to/folder/private/a.md')
+    watchers[0].handlers.change('/path/to/folder/private/b.md')
+    await settle()
+    expect(docRepo.addChildDocumentSource).not.toHaveBeenCalled()
   })
 
   test('fuzz: a new file is attributed to exactly the folders that contain it', async () => {
@@ -323,7 +374,7 @@ describe('DocumentMonitor watcher lifecycle', () => {
     expect(watchers.every(watcher => watcher.closed)).toBe(true)
   })
 
-  bug('indexing a child of a watched folder does not create a watcher for that child', () => {
+  test('indexing a child of a watched folder does not create a watcher for that child', () => {
     // the repository notifies every indexed document, and the monitor watches any file it is told about
     const source = folder('folder', '/path/to/folder', ['a.txt'])
     start(docBase('base', [source]))
@@ -331,7 +382,7 @@ describe('DocumentMonitor watcher lifecycle', () => {
     expect(watchers.map(watcher => watcher.root)).toEqual(['/path/to/folder'])
   })
 
-  bug('removing a folder leaves no watcher behind for the children indexed while it was watched', () => {
+  test('removing a folder leaves no watcher behind for the children indexed while it was watched', () => {
     // the per child watchers are only closed when each child is removed one by one
     const source = folder('folder', '/path/to/folder')
     const base = docBase('base', [source])
@@ -346,7 +397,30 @@ describe('DocumentMonitor watcher lifecycle', () => {
     expect(watchers.filter(watcher => !watcher.closed).map(watcher => watcher.root)).toEqual([])
   })
 
-  bug('removing a source from one base keeps the watcher that another base relies on', async () => {
+  test('the watchers of a base that is deleted are closed once the base is gone', async () => {
+    // the repository notifies the removal of each source before it drops the base
+    const base = docBase('A', [folder('folderA', '/path/to/folder'), new DocumentSourceImpl('file', 'file', '/path/to/file.txt')])
+    start(base)
+    monitor.onDocumentSourceRemoved('/path/to/folder')
+    monitor.onDocumentSourceRemoved('/path/to/file.txt')
+    expect(watchers.filter(watcher => !watcher.closed)).toHaveLength(2)
+    docRepo.contents = []
+    await settle()
+    expect(watchers.filter(watcher => !watcher.closed)).toHaveLength(0)
+    expect(monitor.watchers.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('stop() cancels the pending check of the watchers', () => {
+    start(docBase('A', [folder('folderA', '/path/to/folder')]))
+    monitor.onDocumentSourceRemoved('/path/to/folder')
+    expect(vi.getTimerCount()).toBe(1)
+    monitor.stop()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(watchers.every(watcher => watcher.closed)).toBe(true)
+  })
+
+  test('removing a source from one base keeps the watcher that another base relies on', async () => {
     // watchers are keyed by path only, so the removal notification closes the watcher shared by both bases
     const baseA = docBase('A', [folder('folderA', '/shared/folder')])
     const baseB = docBase('B', [folder('folderB', '/shared/folder')])

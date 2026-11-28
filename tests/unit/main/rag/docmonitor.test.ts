@@ -18,6 +18,14 @@ vi.mock('electron', async() => {
   }
 })
 
+// The exclude patterns come from the settings
+vi.mock('@main/config', async () => {
+  const defaultSettings = (await vi.importActual<any>('@root/defaults/settings.json')).default
+  return {
+    loadSettings: vi.fn(() => JSON.parse(JSON.stringify(defaultSettings))),
+  }
+})
+
 // Mock chokidar
 const mockWatcher = {
   on: vi.fn().mockReturnThis(),
@@ -47,6 +55,8 @@ vi.mock('fs', () => ({
 // Mock DocumentRepository - simple version without complex implementations
 const mockDocRepo = {
   contents: [] as any[],
+  queue: [] as any[],
+  isSourceSupported: vi.fn((): boolean => true),
   addDocumentSource: vi.fn().mockResolvedValue('mock-doc-id'),
   addChildDocumentSource: vi.fn().mockResolvedValue('mock-child-doc-id'),
   removeDocumentSource: vi.fn().mockResolvedValue(undefined),
