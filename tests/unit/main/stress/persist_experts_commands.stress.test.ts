@@ -10,7 +10,7 @@ import * as experts from '@main/experts'
 import * as file from '@main/file'
 import defaultCommands from '@root/defaults/commands.json'
 import defaultExperts from '@root/defaults/experts.json'
-import { bug } from './bug'
+
 
 let root: string
 let userData: string
@@ -291,7 +291,7 @@ describe('experts.json', () => {
     expect(experts.loadCategories(app, workspaceId).length).toBeGreaterThanOrEqual(defaultExperts.categories.length)
   })
 
-  bug.each([
+  test.each([
     ['doctor, deprecated in the code', '6e197c43-1074-479b-89d5-3ab8d54ad36b'],
     ['removed from the defaults in 2024-11', '07308c44-0e1e-4a2b-be8e-c0a610fd5574'],
     ['removed from the defaults in 2024-09', 'ef640997-0ab8-4d5a-aa8e-10f8c3f4a7f1'],
@@ -304,7 +304,7 @@ describe('experts.json', () => {
     expect(loaded.length).toBeGreaterThanOrEqual(defaultExperts.experts.length + 1)
   })
 
-  bug('a retired system expert in the current file format does not prevent loading either', () => {
+  test('a retired system expert in the current file format does not prevent loading either', () => {
     // same unchecked defaultExpert.categoryId, reached through the { categories, experts } branch
     writeText(expertsFile(), JSON.stringify({
       categories: defaultExperts.categories,
@@ -315,7 +315,7 @@ describe('experts.json', () => {
     expect(loaded.find(expert => expert.id === 'user-expert-1')).toBeDefined()
   })
 
-  bug.each([
+  test.each([
     ['[null]'],
     ['[1]'],
     ['[{"type":"system"}]'],
@@ -336,7 +336,7 @@ describe('experts.json', () => {
     expect(categories.every(category => category !== null && typeof category === 'object' && typeof category.id === 'string')).toBe(true)
   })
 
-  bug('picking the commands export in the experts import does not break the experts', () => {
+  test('picking the commands export in the experts import does not break the experts', () => {
     // commands are an array of { type: 'system' } entries: taken for a legacy experts file, then crash on defaultExpert.categoryId
     experts.saveExperts(app, workspaceId, [...experts.loadExperts(app, workspaceId), userExpert(1)])
     vi.mocked(file.pickFile).mockReturnValue(writeText(path.join(root, 'commands.json'), JSON.stringify(defaultCommands)))
@@ -349,7 +349,7 @@ describe('experts.json', () => {
     expect(loaded.filter(expert => commandIds.includes(expert.id))).toEqual([])
   })
 
-  bug('exporting the experts of a fresh workspace does not throw', () => {
+  test('exporting the experts of a fresh workspace does not throw', () => {
     // the defaults are returned without ever being written, and exportExperts copies the file that does not exist yet (ENOENT)
     const target = path.join(root, 'export')
     fs.mkdirSync(target)
@@ -369,7 +369,7 @@ describe('experts.json', () => {
     expect(JSON.parse(fs.readFileSync(path.join(target, 'experts.json'), 'utf-8')).experts.find((expert: Expert) => expert.id === 'user-expert-1')).toBeDefined()
   })
 
-  bug('fuzz: an experts file truncated at any point is not replaced on the next save without a backup', () => {
+  test('fuzz: an experts file truncated at any point is not replaced on the next save without a backup', () => {
     // a parse error is treated like a missing file: defaults are returned and the next save (every use of an expert bumps its stats) overwrites the user's file
     const full = JSON.stringify({ categories: defaultExperts.categories, experts: [...defaultExperts.experts.slice(0, 4), userExpert(1), userExpert(2)] }, null, 2)
     const lost: number[] = []
