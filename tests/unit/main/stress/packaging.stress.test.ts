@@ -102,7 +102,7 @@ describe('forge configuration', () => {
     expect(forgeConfig).not.toMatch(/\[FuseV1Options\.EnableEmbeddedAsarIntegrityValidation\]:\s*false/)
   })
 
-  bug('the patched MCP SDK CommonJS build still parses', () => {
+  test('the patched MCP SDK CommonJS build still parses', () => {
     // the patch replaces the `shell: false,` property with a bare expression
     const patch = read(fs.readdirSync(path.join(root, 'patches')).map(f => `patches/${f}`).find(f => f.includes('modelcontextprotocol'))!)
     const cjs = patch.split('diff --git').find(section => section.includes('/dist/cjs/client/stdio.js'))!
