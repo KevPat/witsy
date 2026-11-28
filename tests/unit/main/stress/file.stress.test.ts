@@ -348,7 +348,7 @@ describe('searchContent', () => {
     const docs = path.join(root, 'documents')
     for (let i = 0; i < 1001; i++) fs.writeFileSync(path.join(docs, `f${i}.txt`), 'hay')
     const result = file.searchContent(docs, 'needle')
-    expect(result).toEqual({ matches: [], filesSearched: 1000, truncated: true })
+    expect(result).toEqual({ matches: [], filesSearched: 1000, truncated: true, incomplete: true })
   })
 
   test('exactly 1000 files are all searched and the result is complete', () => {

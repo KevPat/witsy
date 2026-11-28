@@ -477,6 +477,8 @@ export default class CliPlugin extends Plugin {
             matchCount: result.matches.filter(m => m.isMatch).length,
             fileCount: result.filesSearched,
             ...(result.truncated ? { truncated: true } : {}),
+            // not every file was searched: the model must not conclude that there is no other match
+            ...(result.incomplete ? { incomplete: true, note: 'Not every file was searched (file limit reached or unreadable files). Narrow the path or the glob to search the rest.' } : {}),
           }
         }
 

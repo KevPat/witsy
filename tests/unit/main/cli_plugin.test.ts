@@ -354,7 +354,32 @@ describe('CliPlugin', () => {
       })
       expect(complete.matchCount).toBe(3)
       expect(complete.truncated).toBeUndefined()
+      expect(complete.incomplete).toBeUndefined()
+
+      // a result cut by maxResults is not a search that left files out
+      expect(cut.incomplete).toBeUndefined()
     })
+
+    test('reports a search that did not cover every file', async () => {
+      // more files than the search walks (1000): the model must be told that no match here does not mean no match
+      const many = path.join(tempDir, 'many')
+      fs.mkdirSync(many)
+      for (let i = 0; i < 1005; i++) {
+        fs.writeFileSync(path.join(many, `file${i}.txt`), 'haystack')
+      }
+
+      const result = await plugin.execute({ model: 'test' }, {
+        action: 'search',
+        path: 'many',
+        pattern: 'needle'
+      })
+      expect(result.success).toBe(true)
+      expect(result.matchCount).toBe(0)
+      expect(result.fileCount).toBe(1000)
+      expect(result.truncated).toBe(true)
+      expect(result.incomplete).toBe(true)
+      expect(result.note).toContain('Not every file was searched')
+    }, 30000)
 
     test('finds pattern in files', async () => {
       fs.writeFileSync(path.join(tempDir, 'file1.txt'), 'hello world\nfoo bar')

@@ -648,13 +648,17 @@ export const searchContent = (
 
   const matches: SearchMatch[] = []
   let truncated = false
+  let incomplete = false
 
   // Handle file vs directory
   const stats = fs.statSync(basePath)
   const { files, capped } = stats.isFile() ? { files: [basePath], capped: false } : findFilesForSearch(basePath, glob)
 
   // the result is also incomplete when not every file could be searched
-  if (capped) truncated = true
+  if (capped) {
+    truncated = true
+    incomplete = true
+  }
 
   for (const file of files) {
     if (matches.length >= maxResults) {
@@ -666,6 +670,8 @@ export const searchContent = (
     try {
       content = fs.readFileSync(file, 'utf-8')
     } catch {
+      // a file that cannot be read was not searched
+      incomplete = true
       continue
     }
 
@@ -711,6 +717,7 @@ export const searchContent = (
   return {
     matches,
     filesSearched: files.length,
-    truncated
+    truncated,
+    ...(incomplete ? { incomplete: true } : {}),
   }
 }

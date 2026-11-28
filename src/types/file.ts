@@ -62,5 +62,9 @@ export type SearchOptions = {
 export type SearchResult = {
   matches: SearchMatch[]
   filesSearched: number
+  // the result was cut short: more matches exist (maxResults) or not every file was searched
   truncated: boolean
+  // not every file was searched (file limit reached, or a file could not be read):
+  // no match in the result does not mean no match in the folder
+  incomplete?: boolean
 }
