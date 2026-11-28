@@ -167,7 +167,7 @@ describe('DocumentRepository queue', () => {
     expect(fs.existsSync(path.join(userData, 'docrepo', a))).toBe(false)
   })
 
-  bug('deleting a base that still has queued documents does not block the queue', async () => {
+  test('deleting a base that still has queued documents does not block the queue', async () => {
     // the queued item of the deleted base makes connect() throw before it is shifted, on every later run of the loop
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -181,7 +181,7 @@ describe('DocumentRepository queue', () => {
     expect(documentsOf(docrepo, b).map(doc => doc.filename)).toEqual(['b1.txt'])
   })
 
-  bug('a queue blocked by a deleted base recovers when another document is added', async () => {
+  test('a queue blocked by a deleted base recovers when another document is added', async () => {
     // same defect seen later: the stale head is retried and fails again each time something is queued
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -197,7 +197,7 @@ describe('DocumentRepository queue', () => {
     expect(documentsOf(docrepo, b).map(doc => doc.filename)).toEqual(['b0.txt', 'b1.txt', 'b2.txt', 'b3.txt', 'b4.txt'])
   })
 
-  bug('deleting a base stops the indexing of its folder that is in progress', async () => {
+  test('deleting a base stops the indexing of its folder that is in progress', async () => {
     // nothing aborts the running task: every remaining file is still sent to the embedding service
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -212,7 +212,7 @@ describe('DocumentRepository queue', () => {
     expect(embedCalls.length).toBe(1)
   })
 
-  bug('a base deleted while its folder is being indexed does not stall documents queued for other bases', async () => {
+  test('a base deleted while its folder is being indexed does not stall documents queued for other bases', async () => {
     // listeners are notified with a null document for the vanished base; the monitor dereferences it and the loop dies
     const docrepo = newRepo()
     const notified: string[] = []
@@ -236,7 +236,7 @@ describe('DocumentRepository queue', () => {
     expect(documentsOf(docrepo, b).map(doc => doc.filename)).toEqual(['b1.txt'])
   })
 
-  bug('a document added twice while the queue is busy is indexed once', async () => {
+  test('a document added twice while the queue is busy is indexed once', async () => {
     // an origin is only looked up in the indexed documents, not in the queue, so the second request gets a new id
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -334,7 +334,7 @@ describe('DocumentRepository random interleavings', () => {
     checkInvariants(docrepo, seed)
   })
 
-  bug.each([1, 20261127, 424242])('seed %i: the same requests mixed with base deletions drain and leave index and list consistent', async (seed) => {
+  test.each([1, 20261127, 424242])('seed %i: the same requests mixed with base deletions drain and leave index and list consistent', async (seed) => {
     // the first base deleted with queued documents blocks the queue for the rest of the scenario
     const docrepo = await scenario(seed, true)
     checkInvariants(docrepo, seed)
@@ -560,7 +560,7 @@ describe('DocumentRepository rescan', () => {
     expect(documentsOf(docrepo, a)[0].items.map(item => item.filename).sort()).toEqual(['a.txt', 'b.txt'])
   })
 
-  bug('two rescans requested while the queue is busy index a new file of a folder once', async () => {
+  test('two rescans requested while the queue is busy index a new file of a folder once', async () => {
     // a file that is queued but not processed yet is seen as untracked again, and is queued with a second id
     const docrepo = newRepo()
     const a = await createBase(docrepo, 'A')
@@ -638,7 +638,7 @@ describe('DocumentRepository web sources', () => {
     expect(documentsOf(docrepo, a)[0].title).toBe('My Page Title')
   })
 
-  bug.each([403, 404, 500, 503])('an HTTP %i error page is not indexed as the content of a web page', async (status) => {
+  test.each([403, 404, 500, 503])('an HTTP %i error page is not indexed as the content of a web page', async (status) => {
     // loadUrl() never looks at response.ok
     vi.mocked(fetch).mockResolvedValue(new Response('<html><body>Something went wrong</body></html>', { status }))
     const docrepo = newRepo()
