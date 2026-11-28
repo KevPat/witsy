@@ -108,7 +108,7 @@ describe('Notes', () => {
     const statusTags = wrapper.findAll('.tag.success')
     expect(statusTags).toHaveLength(2)
     statusTags.forEach(tag => {
-      expect(tag.text()).toBe('Ready')
+      expect(tag.text()).toBe('docRepo.status.done')
     })
   })
 

@@ -955,7 +955,8 @@
       "edit": {
         "title": "Edit Note"
       },
-      "noNotes": "You don't have any notes yet. Click on the button below to add your first note."
+      "noNotes": "You don't have any notes yet. Click on the button below to add your first note.",
+      "subtitle": "Add notes to be indexed and searchable"
     },
     "scan": {
       "filesOnly": "Files only",
@@ -2013,6 +2014,14 @@
       "titlingUser": "Provide a title for the conversation above. Do not return anything other than the title. Do not wrap responses in quotes."
     }
   },
+  "linkEditor": {
+    "edit": "Edit Link",
+    "insert": "Insert Link",
+    "placeholder": "Link text",
+    "remove": "Remove Link",
+    "text": "Text",
+    "update": "Update"
+  },
   "main": {
     "chat": {
       "confirmDeleteMultiple": "Are you sure you want to delete these chats?",
@@ -2227,6 +2236,10 @@
     },
     "content": {
       "empty": "Empty content"
+    },
+    "mermaid": {
+      "copied": "Copied!",
+      "copyCode": "Copy Code"
     },
     "reasoning": {
       "active": "Thinking",
@@ -3385,6 +3398,12 @@
     "noApps": "No web apps configured",
     "preserveColors": "Preserve webapp icon colors",
     "title": "Web Apps",
+    "toolbar": {
+      "back": "Go back",
+      "forward": "Go forward",
+      "home": "Go to home page",
+      "reload": "Reload"
+    },
     "url": "URL",
     "validation": {
       "requiredFields": "Name and URL are required"
