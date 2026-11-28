@@ -10,39 +10,45 @@ jobs:
       contents: write
     steps:
       - name: Github checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: get-package-version
         id: package-version
-        uses: beaconbrigade/package-json-version@v0.3.2
+        uses: beaconbrigade/package-json-version@1da990953ac5abf189b6833724706acaae203fe4 # v0.3.2
       - name: Install Dependencies
         run: npm ci
       - name: Setup DigiCert Code Signing Tools
-        uses: digicert/ssm-code-signing@v1.0.0
+        uses: digicert/ssm-code-signing@b300bb7e8c2ab85257d660fe5b6c6374131ca2ef # v1.0.0
       - name: Setup Certificate
         run: |
           echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
         shell: bash
       - name: Set DigiCert Environment Variables
         run: |
-          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV"
-          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV"
           echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
-          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" >> "$GITHUB_ENV"
         shell: bash
+      # The DigiCert secrets go only to the two steps that talk to DigiCert:
+      # smctl here, and signtool (run by forge.config.ts and build/sign_binaries.ts) in the build.
       - name: Sync Certificates
         run: smctl windows certsync
         shell: cmd
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
       - name: Build script
         run: ./build/build.ps1
         env:
           NODE_OPTIONS: --max_old_space_size=4096
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
       - name: List packages
-        uses: mathiasvr/command-output@v2.0.0
+        uses: mathiasvr/command-output@34408ea3d0528273faff3d9e201761ae96106cd0 # v2.0.0
         id: packagelist
         with:
           run: node ./build/list_packages.mjs
