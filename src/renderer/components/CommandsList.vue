@@ -19,7 +19,7 @@
 
       <div class="actions">
 
-        <ContextMenuTrigger class="toolbar-menu" position="below-right" :bordered="true">
+        <ContextMenuTrigger :label="t('common.actions')" class="toolbar-menu" position="below-right" :bordered="true">
           <template #menu>
             <div class="item" @click="handleActionClick('defaults')">{{ t('settings.commands.defaults') }}</div>
             <div class="item" @click="handleActionClick('export')">{{ t('settings.commands.export') }}</div>
@@ -55,8 +55,8 @@
           </td>
           <td>
             <div class="actions">
-              <ButtonIcon class="edit" @click="onEdit(command)"><PencilIcon /></ButtonIcon>
-              <ContextMenuTrigger position="below-right">
+              <ButtonIcon :label="t('common.edit')" class="edit" @click="onEdit(command)"><PencilIcon /></ButtonIcon>
+              <ContextMenuTrigger :label="t('common.actions')" position="below-right">
                 <template #menu>
                   <div class="item" @click="onDeleteSingle(command)">{{ t('common.delete') }}</div>
                   <div class="item" @click="onMoveUp(command)">{{ t('common.moveUp') }}</div>

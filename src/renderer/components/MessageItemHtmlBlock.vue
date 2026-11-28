@@ -3,15 +3,15 @@
     <div class="panel-header">
       <ChevronDownIcon class="icon toggle" @click.stop="togglePanel" />
       <label>{{ title }}</label>
-      <ButtonIcon class="preview" @click="toggleHtml">
+      <ButtonIcon :label="previewHtml ? t('common.close') : t('common.preview')" class="preview" @click="toggleHtml">
         <ScanEyeIcon v-if="!previewHtml" />
         <EyeOffIcon v-else />
       </ButtonIcon>
-      <ButtonIcon>
+      <ButtonIcon :label="t('common.copy')">
         <ClipboardCheckIcon v-if="copying" />
         <ClipboardIcon @click="onCopy" v-else />
       </ButtonIcon>
-      <ContextMenuTrigger class="download" position="below-right">
+      <ContextMenuTrigger :label="t('common.download')" class="download" position="below-right">
         <template #trigger>
           <DownloadIcon />
         </template>

@@ -1,0 +1,1284 @@
+{
+  "so.planning.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "planning",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "queries": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "title",
+                "description",
+                "queries"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.planning.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "sections": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "title",
+            "description",
+            "queries"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "sections"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.planning.zodToJsonSchema.named": {
+    "$ref": "#/definitions/planning",
+    "definitions": {
+      "planning": {
+        "type": "object",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "queries": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "title",
+                "description",
+                "queries"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.analysis.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "analysis",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "learnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "learnings"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.analysis.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "learnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "learnings"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.analysis.zodToJsonSchema.named": {
+    "$ref": "#/definitions/analysis",
+    "definitions": {
+      "analysis": {
+        "type": "object",
+        "properties": {
+          "learnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "learnings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.title.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "title",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.title.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.title.zodToJsonSchema.named": {
+    "$ref": "#/definitions/title",
+    "definitions": {
+      "title": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.research_decision.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "research_decision",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "continue",
+              "done"
+            ],
+            "description": "Status: continue with work or done (complete)"
+          },
+          "nextAction": {
+            "type": "string",
+            "nullable": true,
+            "description": "Human-readable description of next action"
+          },
+          "agentName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Which deepresearch agent to call: planning, search, analysis, writer, title, or synthesis"
+          },
+          "agentParamsJson": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON string containing parameters to pass to the agent. Can include '_relevantMemory' field. Example: {\"userQuery\":\"...\",\"_relevantMemory\":[\"id1\"]}"
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Explanation of decision and current progress"
+          },
+          "estimatedRemaining": {
+            "type": "number",
+            "nullable": true,
+            "description": "Estimated number of remaining actions (helps with progress tracking)"
+          },
+          "deliveryMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Summary message when status='done'"
+          }
+        },
+        "required": [
+          "status",
+          "nextAction",
+          "agentName",
+          "agentParamsJson",
+          "reasoning",
+          "estimatedRemaining",
+          "deliveryMessage"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.research_decision.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": [
+          "continue",
+          "done"
+        ],
+        "description": "Status: continue with work or done (complete)"
+      },
+      "nextAction": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Human-readable description of next action"
+      },
+      "agentName": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Which deepresearch agent to call: planning, search, analysis, writer, title, or synthesis"
+      },
+      "agentParamsJson": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "JSON string containing parameters to pass to the agent. Can include '_relevantMemory' field. Example: {\"userQuery\":\"...\",\"_relevantMemory\":[\"id1\"]}"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "Explanation of decision and current progress"
+      },
+      "estimatedRemaining": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Estimated number of remaining actions (helps with progress tracking)"
+      },
+      "deliveryMessage": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Summary message when status='done'"
+      }
+    },
+    "required": [
+      "status",
+      "reasoning"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.research_decision.zodToJsonSchema.named": {
+    "$ref": "#/definitions/research_decision",
+    "definitions": {
+      "research_decision": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "continue",
+              "done"
+            ],
+            "description": "Status: continue with work or done (complete)"
+          },
+          "nextAction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-readable description of next action"
+          },
+          "agentName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which deepresearch agent to call: planning, search, analysis, writer, title, or synthesis"
+          },
+          "agentParamsJson": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON string containing parameters to pass to the agent. Can include '_relevantMemory' field. Example: {\"userQuery\":\"...\",\"_relevantMemory\":[\"id1\"]}"
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Explanation of decision and current progress"
+          },
+          "estimatedRemaining": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Estimated number of remaining actions (helps with progress tracking)"
+          },
+          "deliveryMessage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Summary message when status='done'"
+          }
+        },
+        "required": [
+          "status",
+          "reasoning"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_flat.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_flat",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "age": {
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nums": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            }
+          },
+          "any": {
+            "type": "string"
+          },
+          "weird": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "age",
+          "ok",
+          "tags",
+          "nums",
+          "flags",
+          "any",
+          "weird"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_flat.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "age": {
+        "type": "number"
+      },
+      "ok": {
+        "type": "boolean"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "nums": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "flags": {
+        "type": "array",
+        "items": {
+          "type": "boolean"
+        }
+      },
+      "any": {
+        "type": "string"
+      },
+      "weird": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "age",
+      "ok",
+      "tags",
+      "nums",
+      "flags",
+      "any",
+      "weird"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_flat.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_flat",
+    "definitions": {
+      "spec_flat": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "age": {
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nums": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            }
+          },
+          "any": {
+            "type": "string"
+          },
+          "weird": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "age",
+          "ok",
+          "tags",
+          "nums",
+          "flags",
+          "any",
+          "weird"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_nested.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_nested",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "address": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "zip": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "city",
+                  "zip"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "address"
+            ],
+            "additionalProperties": false
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "user",
+          "items"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_nested.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "user": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "city",
+              "zip"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "name",
+          "address"
+        ],
+        "additionalProperties": false
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "number"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "user",
+      "items"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_nested.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_nested",
+    "definitions": {
+      "spec_nested": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "address": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "zip": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "city",
+                  "zip"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "address"
+            ],
+            "additionalProperties": false
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "user",
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_literals.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_literals",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "number"
+          },
+          "c": {
+            "type": "boolean"
+          },
+          "d": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "e": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_literals.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "a": {
+        "type": "string"
+      },
+      "b": {
+        "type": "number"
+      },
+      "c": {
+        "type": "boolean"
+      },
+      "d": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "e": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_literals.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_literals",
+    "definitions": {
+      "spec_literals": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "number"
+          },
+          "c": {
+            "type": "boolean"
+          },
+          "d": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "e": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_formal.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_formal",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "count"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_formal.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "count": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "title",
+      "count"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_formal.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_formal",
+    "definitions": {
+      "spec_formal": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_typed.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_typed",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_typed.zodToJsonSchema": {
+    "type": "object",
+    "properties": {
+      "x": {
+        "type": "string"
+      },
+      "y": {
+        "type": "number"
+      },
+      "z": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "x",
+      "y",
+      "z"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_typed.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_typed",
+    "definitions": {
+      "spec_typed": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_arrayRoot.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_arrayRoot",
+      "strict": true,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "q"
+          ],
+          "additionalProperties": false
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_arrayRoot.zodToJsonSchema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "q"
+      ],
+      "additionalProperties": false
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_arrayRoot.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_arrayRoot",
+    "definitions": {
+      "spec_arrayRoot": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "q"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_scalarRoot.openai.response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "spec_scalarRoot",
+      "strict": true,
+      "schema": {
+        "type": "number",
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  },
+  "so.spec_scalarRoot.zodToJsonSchema": {
+    "type": "number",
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "so.spec_scalarRoot.zodToJsonSchema.named": {
+    "$ref": "#/definitions/spec_scalarRoot",
+    "definitions": {
+      "spec_scalarRoot": {
+        "type": "number"
+      }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "rt.basic.agentsTool": {
+    "name": "fn_basic",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string",
+          "description": "query"
+        },
+        "n": {
+          "type": "number",
+          "nullable": true
+        },
+        "b": {
+          "type": "boolean",
+          "nullable": true,
+          "description": "flag"
+        }
+      },
+      "required": [
+        "q",
+        "n",
+        "b"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "rt.enumArr.agentsTool": {
+    "name": "fn_enumArr",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "a",
+            "b"
+          ]
+        },
+        "list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "L"
+        },
+        "anyArr": {
+          "anyOf": [
+            {
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "list",
+        "anyArr"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "rt.nested.agentsTool": {
+    "name": "fn_nested",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "X"
+                }
+              },
+              "required": [
+                "x"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "o"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "rt.unknownType.agentsTool": {
+    "name": "fn_unknownType",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "f": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "g": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "f",
+        "g"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  "rt.notObject.agentsTool": {
+    "name": "fn_notObject",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "description": "root string"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}

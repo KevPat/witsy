@@ -42,13 +42,13 @@
                     :disabled="index === favorites.length - 1"
                     v-tooltip="{ text: t('settings.favorites.moveDown'), position: 'top-left' }"
                     @click="moveDown(index)"
-                  ><ChevronDownIcon /></ButtonIcon>
+                   :label="t('settings.favorites.moveDown')"><ChevronDownIcon /></ButtonIcon>
                   <ButtonIcon
                     :disabled="index === 0"
                     v-tooltip="{ text: t('settings.favorites.moveUp'), position: 'top-left' }"
                     @click="moveUp(index)"
-                  ><ChevronUpIcon /></ButtonIcon>
-                  <ContextMenuTrigger position="below-right">
+                   :label="t('settings.favorites.moveUp')"><ChevronUpIcon /></ButtonIcon>
+                  <ContextMenuTrigger :label="t('common.actions')" position="below-right">
                     <template #menu>
                       <div class="item delete" @click="removeFavorite(index)">
                         {{ t('settings.favorites.remove') }}

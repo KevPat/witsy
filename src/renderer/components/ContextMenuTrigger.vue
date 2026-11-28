@@ -2,6 +2,7 @@
   <div class="context-menu-trigger">
     
     <ButtonIcon
+      :label="label"
       :id="triggerId" 
       class="trigger" 
       @click="toggleMenu"
@@ -38,6 +39,10 @@ import ContextMenuPlus, { type MenuPosition } from './ContextMenuPlus.vue'
 const { onDomEvent } = useEventListener()
 
 const props = defineProps({
+  label: {
+    type: String,
+    required: true,
+  },
   position: {
     type: String as () => MenuPosition,
     default: 'below-right' as MenuPosition

@@ -35,7 +35,6 @@ if (isDarwin) {
   osxPackagerConfig = {
     osxSign: {
       identity: process.env.IDENTIFY_DARWIN_CODE,
-      provisioningProfile: './build/Witsy_Darwin.provisionprofile',
       optionsForFile: () => { return {
         hardenedRuntime: true,
         entitlements: './build/Entitlements.darwin.plist'
@@ -67,7 +66,7 @@ const config: ForgeConfig = {
     executableName: process.platform == 'linux' ? 'witsy' : 'Witsy',
     appBundleId: 'com.nabocorp.witsy',
     extendInfo: './build/Info.plist',
-    buildVersion: `${process.env.BUILD_NUMBER}`,
+    buildVersion: process.env.BUILD_NUMBER ?? '0',
     extraResource: [
       'assets/trayTemplate.png',
       'assets/trayTemplate@2x.png',
@@ -92,11 +91,6 @@ const config: ForgeConfig = {
             signDarwinBinaries(buildPath, arch);
           }
 
-          // Sign Windows binaries before the zip and the Squirrel installer are built.
-          if (platform === 'win32') {
-            signWindowsBinaries(buildPath, arch);
-          }
-
           callback();
         } catch (error: any) {
           callback(error);
@@ -117,7 +111,17 @@ const config: ForgeConfig = {
         signWithParams: `/sha1 ${process.env.SM_CODE_SIGNING_CERT_SHA1_HASH} /tr http://timestamp.digicert.com /td SHA256 /fd SHA256`
       } : {})
     }),
-    /* linux  */ new MakerRpm({}), new MakerDeb({})
+    /* linux  */ new MakerRpm({
+      options: {
+        requires: ['libevdev'],
+        icon: './assets/icon.png',
+      }
+    }), new MakerDeb({
+      options: {
+        depends: ['libevdev2'],
+        icon: './assets/icon.png',
+      }
+    })
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
@@ -159,6 +163,15 @@ const config: ForgeConfig = {
       // Build CLI before packaging
       execSync('npm run build:cli', { stdio: 'inherit' })
       prePackage(platform, arch)
+    },
+    postPackage: async (_forgeConfig, packageResult) => {
+      // Fuses mutate the executable after afterCopy. Sign the finalized package
+      // so ZIP and Squirrel makers receive a valid Authenticode signature.
+      if (packageResult.platform === 'win32') {
+        for (const outputPath of packageResult.outputPaths) {
+          signWindowsBinaries(outputPath, packageResult.arch)
+        }
+      }
     },
     
     /*
@@ -209,7 +222,7 @@ const config: ForgeConfig = {
       console.log(`🧹 Cleaning up platform-specific binaries for ${platform}-${arch}`);
 
       purgeOnnxRuntime(buildPath, platform, arch);
-      purgeLibnut(buildPath, platform);
+      purgeLibnut(buildPath, platform, arch);
       purgeAutolib(buildPath, platform, arch);
 
       console.log(`✅ Cleanup complete`);

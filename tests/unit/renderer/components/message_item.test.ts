@@ -5,7 +5,7 @@ import { nextTick, ref } from 'vue'
 import { useWindowMock } from '@tests/mocks/window'
 import { createI18nMock } from '@tests/mocks'
 import { SearchState } from '@/renderer/screens/Chat.vue'
-import { chatCallbacksMock, withChatCallbacks } from '@root/vitest.setup'
+import { chatCallbacksMock, onBusEventMock, withChatCallbacks } from '@root/vitest.setup'
 import { store } from '@services/store'
 import { stubTeleport } from '@tests/mocks/stubs'
 import MessageItem from '@components/MessageItem.vue'
@@ -17,6 +17,7 @@ import Dialog from '@renderer/utils/dialog'
 enableAutoUnmount(afterAll)
 
 const readAloudMock = vi.fn()
+const stopAudioMock = vi.fn()
 
 vi.mock('@services/i18n', async () => {
   return createI18nMock()
@@ -27,6 +28,7 @@ vi.mock('@renderer/audio/audio_player', async () => {
     addListener: vi.fn(),
     removeListener: vi.fn(),
     play: readAloudMock,
+    stop: stopAudioMock,
   })}
 })
 
@@ -144,6 +146,23 @@ test('Assistant text message', async () => {
   expect(wrapper.find('.message-actions .quote').exists()).toBe(false)
   expect(wrapper.find('.message-actions .usage').exists()).toBe(true)
   expect(wrapper.find('.message-actions .tools').exists()).toBe(true)
+})
+
+test('noise detection stops active audio playback', async () => {
+  await mount(botMessageText)
+  const listener = onBusEventMock.mock.calls.find(([event]) => event === 'audio-noise-detected')?.[1]
+  expect(listener).toBeTypeOf('function')
+  listener?.()
+  expect(stopAudioMock).toHaveBeenCalled()
+})
+
+test('message links open externally without a polling timer', async () => {
+  const intervalSpy = vi.spyOn(globalThis, 'setInterval')
+  const wrapper = await mount(new Message('assistant', '[Example](https://example.com)'))
+  await nextTick()
+  expect(wrapper.find('a').attributes('target')).toBe('_blank')
+  expect(intervalSpy).not.toHaveBeenCalled()
+  intervalSpy.mockRestore()
 })
 
 test('Assistant legacy image message', async () => {
@@ -973,6 +992,24 @@ test('Search highlight multiple matches', async () => {
   const wrapper = await mount(botMessageText)
   const marks = wrapper.findAll('mark')
   expect(marks.length).toBe(3)
+})
+
+test('Search treats regular-expression metacharacters as literal text', async () => {
+  const botMessageText = new Message('assistant', 'Version 1.2')
+  searchState.filter.value = '.'
+  const wrapper = await mount(botMessageText)
+  const marks = wrapper.findAll('mark')
+  expect(marks.length).toBe(1)
+  expect(marks[0].text()).toBe('.')
+})
+
+test('Search highlighting preserves generated link markup', async () => {
+  const botMessageText = new Message('assistant', '[Alpha](https://example.com)')
+  searchState.filter.value = 'a'
+  const wrapper = await mount(botMessageText)
+  const link = wrapper.find('a')
+  expect(link.exists()).toBe(true)
+  expect(link.attributes('href')).toBe('https://example.com')
 })
 
 test('Search highlight in table block', async () => {

@@ -70,6 +70,7 @@ describe('Tooltip directive', () => {
       
       expect(button.exists()).toBe(true)
       expect(wrapper.vm.tooltipConfig).toBe('Test tooltip')
+      expect(button.attributes('aria-label')).toBe('Test tooltip')
     })
 
     it('should not show tooltip immediately on mouseenter', async () => {
@@ -135,6 +136,20 @@ describe('Tooltip directive', () => {
       await wrapper.setProps({ tooltipConfig: 'Updated text' })
       
       expect(wrapper.vm.tooltipConfig).toBe('Updated text')
+    })
+
+    it('preserves the tooltip arrow when visible text changes', async () => {
+      const wrapper = mount(TestComponent, {
+        props: { tooltipConfig: 'Initial text' }
+      })
+      const button = wrapper.find('[data-testid="tooltip-button"]')
+      await button.trigger('mouseenter')
+      vi.advanceTimersByTime(1000)
+
+      await wrapper.setProps({ tooltipConfig: 'Updated text' })
+      const tooltip = document.querySelector('.tooltip-directive')
+      expect(tooltip?.querySelector('.content')?.textContent).toBe('Updated text')
+      expect(tooltip?.querySelector('.arrow')).not.toBeNull()
     })
   })
 

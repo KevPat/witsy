@@ -3,7 +3,7 @@
 
     <header>
       <div class="title">{{ t('scratchpad.title') }}</div>
-      <ButtonIcon class="config" v-tooltip="{ text: t('common.settings'), position: 'bottom' }" @click="onSettings">
+      <ButtonIcon class="config" v-tooltip="{ text: t('common.settings'), position: 'bottom' }" @click="onSettings" :label="t('common.settings')">
         <Settings2Icon />
       </ButtonIcon>
     </header>

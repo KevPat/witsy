@@ -16,10 +16,10 @@
         <div class="title">{{ t('agent.run.details') }}</div>
 
         <div class="actions">
-          <ButtonIcon v-if="isRunning()" class="stop" v-tooltip="{ text: t('agent.help.stopThisRun'), position: 'bottom-left' }" @click="(event) => { event?.stopPropagation(); emit('stop', { agentId: agent.uuid, runId: run.uuid }) }">
+          <ButtonIcon v-if="isRunning()" class="stop" v-tooltip="{ text: t('agent.help.stopThisRun'), position: 'bottom-left' }" :label="t('agent.help.stopThisRun')" @click="(event) => { event?.stopPropagation(); emit('stop', { agentId: agent.uuid, runId: run.uuid }) }">
             <SquareIcon />
           </ButtonIcon>
-          <ButtonIcon class="delete" v-tooltip="{ text: t('agent.help.deleteRun'), position: 'bottom-left' }" @click="(event) => { event?.stopPropagation(); emit('delete') }">
+          <ButtonIcon class="delete" v-tooltip="{ text: t('agent.help.deleteRun'), position: 'bottom-left' }" :label="t('agent.help.deleteRun')" @click="(event) => { event?.stopPropagation(); emit('delete') }">
             <Trash2Icon />
           </ButtonIcon>
         </div>

@@ -353,6 +353,9 @@ contextBridge.exposeInMainWorld(
       install: (): Promise<{ success: boolean, message: string }> => { return ipcRenderer.invoke(IPC.CLI.INSTALL) },
     },
     webview: {
+      initSession: (partition: string): Promise<void> => {
+        return ipcRenderer.invoke(IPC.WEBVIEW.INIT_SESSION, partition)
+      },
       setLinkBehavior: (webviewId: number, isExternal: boolean): Promise<void> => {
         return ipcRenderer.invoke(IPC.WEBVIEW.SET_LINK_BEHAVIOR, webviewId, isExternal)
       },

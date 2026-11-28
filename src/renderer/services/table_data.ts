@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+import { Workbook } from 'exceljs'
 
 /**
  * Parse an HTML table element into a 2D array
@@ -69,13 +69,13 @@ export function arrayToCSV(data: string[][]): string {
 /**
  * Convert a 2D array to XLSX blob
  */
-export function arrayToXLSX(data: string[][]): Blob {
-  const worksheet = XLSX.utils.aoa_to_sheet(data)
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1')
+export async function arrayToXLSX(data: string[][]): Promise<Blob> {
+  const workbook = new Workbook()
+  const worksheet = workbook.addWorksheet('Sheet1')
+  worksheet.addRows(data)
 
-  const xlsxBuffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })
-  return new Blob([xlsxBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const xlsxBuffer = await workbook.xlsx.writeBuffer()
+  return new Blob([new Uint8Array(xlsxBuffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
 }
 
 /**

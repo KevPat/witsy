@@ -6,7 +6,7 @@ import { createWindow, emitIpcEvent, ensureOnCurrentScreen, releaseFocus } from 
 //import MacosAutomator from '@main/automations/macos';
 //import WindowsAutomator from '@main/automations/windows';
 //import Computer from '@main/automations/computer_nut';
-import autolib from 'autolib';
+import autolib from '../native_automation';
 import { wait } from '../utils';
 
 export let commandPicker: BrowserWindow = null;

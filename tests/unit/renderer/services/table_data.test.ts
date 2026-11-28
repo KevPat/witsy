@@ -96,7 +96,7 @@ test('arrayToXLSX - creates blob with correct content', async () => {
     ['Alice', '30'],
     ['Bob', '25']
   ]
-  const result = arrayToXLSX(data)
+  const result = await arrayToXLSX(data)
   expect(result).toBeInstanceOf(Blob)
   expect(result.type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 

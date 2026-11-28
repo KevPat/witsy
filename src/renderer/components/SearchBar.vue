@@ -16,13 +16,13 @@
     <span v-else-if="showInput" class="match-count">
       {{ t('chat.search.noMatches') }}
     </span>
-    <ButtonIcon class="nav-prev" @click="emit('navigate', -1)" :disabled="matchCount === 0" v-tooltip="{ text: t('chat.search.previousMatch'), position: 'left' }">
+    <ButtonIcon class="nav-prev" @click="emit('navigate', -1)" :disabled="matchCount === 0" v-tooltip="{ text: t('chat.search.previousMatch'), position: 'left' }" :label="t('chat.search.previousMatch')">
       <ArrowUpIcon />
     </ButtonIcon>
-    <ButtonIcon class="nav-next" @click="emit('navigate', 1)" :disabled="matchCount === 0" v-tooltip="{ text: t('chat.search.nextMatch'), position: 'right' }">
+    <ButtonIcon class="nav-next" @click="emit('navigate', 1)" :disabled="matchCount === 0" v-tooltip="{ text: t('chat.search.nextMatch'), position: 'right' }" :label="t('chat.search.nextMatch')">
       <ArrowDownIcon />
     </ButtonIcon>
-    <ButtonIcon class="nav-close" @click="emit('close')">
+    <ButtonIcon :label="t('common.close')" class="nav-close" @click="emit('close')">
       <XIcon />
     </ButtonIcon>
   </div>

@@ -16,7 +16,7 @@
 import Dialog from '@renderer/utils/dialog'
 import { SearchState } from '@screens/Chat.vue'
 import { t } from '@services/i18n'
-import { Block } from '@services/message_block_parser'
+import { Block, highlightSearch } from '@services/message_block_parser'
 import { InfoIcon } from 'lucide-vue-next'
 import { h, inject, nextTick, PropType, ref, render } from 'vue'
 import MessageItemArtifactBlock from './MessageItemArtifactBlock.vue'
@@ -86,8 +86,7 @@ const mdRender = (content: string) => {
 
   // highlight search
   if (searchState?.filter.value) {
-    const regex = new RegExp(searchState.filter.value, 'gi')
-    html = html.replace(regex, (match) => `<mark>${match}</mark>`);
+    html = highlightSearch(html, searchState.filter.value)
   }
 
   // render error icons and mermaid blocks

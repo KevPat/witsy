@@ -76,8 +76,22 @@ Non-exhaustive feature list:
 
 You can download a binary from from the [releases](https://github.com/Kochava-Studios/witsy/releases) page or build yourself:
 
+On Debian/Ubuntu, install the native input dependency first:
+
+```bash
+sudo apt-get install libevdev-dev
+npm ci --onnxruntime-node-install-cuda=skip
+```
+
+On macOS and Windows:
+
 ```
 npm ci
+```
+
+Then start Witsy:
+
+```
 npm start
 ```
 
@@ -282,14 +296,15 @@ Witsy includes a command-line interface that allows you to interact with the AI 
 The CLI is automatically installed when you launch Witsy for the first time:
 - **macOS**: Creates a symlink at `/usr/local/bin/witsy` (requires admin password)
 - **Windows**: Adds the CLI to your user PATH (restart terminal for changes to take effect)
-- **Linux**: Creates a symlink at `/usr/local/bin/witsy` (uses pkexec if needed)
+- **Linux**: Creates a symlink at `/usr/local/bin/witsy-cli` (uses pkexec if needed). This avoids shadowing the desktop launcher installed as `/usr/bin/witsy` by deb/rpm packages.
 
 **Usage**
 
-Once installed, you can use the `witsy` command from any terminal:
+Once installed, use `witsy` on macOS and Windows, or `witsy-cli` on Linux:
 
 ```bash
-witsy
+witsy-cli # Linux
+witsy     # macOS and Windows
 ```
 
 The CLI will connect to your running Witsy application and provide an interactive chat interface. It uses the same configuration (engine, model, API keys) as your desktop application.

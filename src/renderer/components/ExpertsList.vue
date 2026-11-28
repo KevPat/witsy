@@ -55,7 +55,7 @@
 
       <div class="actions">
 
-        <ContextMenuTrigger class="sort-button" position="below-right" :bordered="true">
+        <ContextMenuTrigger :label="t('common.sortBy')" class="sort-button" position="below-right" :bordered="true">
           <template #trigger>
             <div class="button sort">{{ t('settings.experts.sortAlpha') }}<ChevronDownIcon /></div>
           </template>
@@ -66,7 +66,7 @@
         </ContextMenuTrigger>
 
 
-        <ContextMenuTrigger class="toolbar-menu" position="below-right" :bordered="true">
+        <ContextMenuTrigger :label="t('common.actions')" class="toolbar-menu" position="below-right" :bordered="true">
           <template #menu>
             <div class="item" @click="handleActionClick('manageCategories')">{{ t('settings.experts.manageCategories') }}</div>
             <!-- <div class="item" @click="handleActionClick('export')">{{ t('settings.experts.export') }}</div>
@@ -105,8 +105,8 @@
           </td>
           <td>
             <div class="actions">
-              <ButtonIcon class="edit" @click="onEdit(expert)"><PencilIcon /></ButtonIcon>
-              <ContextMenuTrigger position="above-right">
+              <ButtonIcon :label="t('common.edit')" class="edit" @click="onEdit(expert)"><PencilIcon /></ButtonIcon>
+              <ContextMenuTrigger :label="t('common.actions')" position="above-right">
                 <template #menu>
                   <div class="item" @click="onDeleteSingle(expert)">{{ t('common.delete') }}</div>
                   <div class="item" @click="onMoveUp(expert)">{{ t('common.moveUp') }}</div>

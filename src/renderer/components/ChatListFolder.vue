@@ -7,10 +7,10 @@
         {{ f.name }}
       </span>
       <div class="flex-push" />
-      <ButtonIcon @click="onNewChat(f.id)">
+      <ButtonIcon :label="t('common.newChat')" @click="onNewChat(f.id)">
         <MessageCirclePlusIcon />
       </ButtonIcon>
-      <ButtonIcon class="menu" @click="showFolderContextMenu($event, f.id)" v-if="f.id != store.rootFolder.id">
+      <ButtonIcon :label="t('common.actions')" class="menu" @click="showFolderContextMenu($event, f.id)" v-if="f.id != store.rootFolder.id">
         <EllipsisVertical />
       </ButtonIcon>
     </div>

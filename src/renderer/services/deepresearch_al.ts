@@ -1,6 +1,7 @@
 import { addUsages, LlmChunk, LlmChunkToolAbort, LlmEngine, Plugin } from 'multi-llm-ts'
 import { Configuration } from 'types/config'
-import { z } from 'zod'
+import { z } from 'zod/v3'
+import { v3Structure } from './schema'
 import Agent from '@models/agent'
 import Chat from '@models/chat'
 import Message from '@models/message'
@@ -948,7 +949,7 @@ Decide which deepresearch agent to invoke next to fulfill this research request.
 // Add structured output schema
 mainLoopAgent.steps[0].structuredOutput = {
   name: 'research_decision',
-  structure: z.object({
+  structure: v3Structure(z.object({
     status: z.enum(['continue', 'done']).describe("Status: continue with work or done (complete)"),
     nextAction: z.string().nullable().optional().describe("Human-readable description of next action"),
     agentName: z.string().nullable().optional().describe("Which deepresearch agent to call: planning, search, analysis, writer, title, or synthesis"),
@@ -956,5 +957,5 @@ mainLoopAgent.steps[0].structuredOutput = {
     reasoning: z.string().describe("Explanation of decision and current progress"),
     estimatedRemaining: z.number().nullable().optional().describe("Estimated number of remaining actions (helps with progress tracking)"),
     deliveryMessage: z.string().nullable().optional().describe("Summary message when status='done'")
-  })
+  }))
 }

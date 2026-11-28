@@ -23,7 +23,7 @@ jobs:
       - name: Install required packages
         run: npm install -g node-gyp
       - name: Install Dependencies
-        run: npm ci
+        run: npm ci --onnxruntime-node-install-cuda=skip
       - name: Build script
         run: make linux-x64
         env:

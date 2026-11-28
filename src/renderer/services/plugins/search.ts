@@ -210,8 +210,10 @@ export default class extends Plugin {
 
       const exa = new Exa(this.config.exaApiKey)
       const results = await this.runWithAbort(
-        exa.searchAndContents(parameters.query, {
-          text: true,
+        // exa-js 2: searchAndContents is deprecated; search() with contents
+        // sends the identical POST /search body
+        exa.search(parameters.query, {
+          contents: { text: true },
           numResults: maxResults,
         }),
         context.abortSignal

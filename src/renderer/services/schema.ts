@@ -1,5 +1,14 @@
 import { LlmStructuredOutput } from 'multi-llm-ts'
-import { z, ZodType } from 'zod'
+import { z, ZodType } from 'zod/v3'
+
+// Structured-output schemas are built with the zod/v3 API that ships inside
+// zod 4. multi-llm-ts hands them to openai's zodResponseFormat (OpenAI) and to
+// zod-to-json-schema (Google, Ollama), and zod-to-json-schema only reads v3
+// schemas: a zod 4 schema comes out as an empty {} and the provider gets no
+// schema. multi-llm-ts types `structure` as zod 4's ZodType, hence the cast.
+export const v3Structure = (schema: ZodType): LlmStructuredOutput['structure'] => {
+  return schema as unknown as LlmStructuredOutput['structure']
+}
 
 export const generateSimpleSchema = (data: any): any => {
   // Handle null/undefined
@@ -104,7 +113,7 @@ export const processJsonSchema = (name: string, jsonSchema?: string): LlmStructu
   try {
     return {
       name,
-      structure: parseSimpleFormatToZod(parsedSchema)
+      structure: v3Structure(parseSimpleFormatToZod(parsedSchema))
     }
   } catch (e) {
     console.error('Failed to parse structured output schema:', e)

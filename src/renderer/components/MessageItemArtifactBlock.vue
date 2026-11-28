@@ -3,11 +3,11 @@
     <div class="panel-header">
       <ChevronDownIcon class="icon toggle" @click.stop="togglePanel" />
       <label>{{ title }}</label>
-      <ButtonIcon>
+      <ButtonIcon :label="t('common.copy')">
         <ClipboardCheckIcon v-if="copying" />
         <ClipboardIcon @click="onCopy" v-else />
       </ButtonIcon>
-      <ContextMenuTrigger class="download" position="below-right" ref="downloadButton">
+      <ContextMenuTrigger :label="t('common.download')" class="download" position="below-right" ref="downloadButton">
         <template #trigger>
           <DownloadIcon />
         </template>
@@ -35,6 +35,7 @@ import { useArtifactCopy } from '@composables/artifact_copy'
 import { togglePanel } from '@renderer/utils/panel'
 import Message from '@models/message'
 import { exportToDocx, saveDocxBlob } from '@services/docx'
+import { t } from '@services/i18n'
 import { addExtension, extractCodeBlockContent } from '@services/markdown'
 import { exportToPdf, stripLeadingBodyTitle } from '@services/pdf'
 import ButtonIcon from './ButtonIcon.vue'

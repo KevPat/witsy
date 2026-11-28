@@ -114,7 +114,7 @@ vi.mock('@services/download.ts', async () => {
 // exa
 vi.mock('exa-js', async () => {
   const Exa = vi.fn()
-  Exa.prototype.searchAndContents = vi.fn(() => ({ results: [
+  Exa.prototype.search = vi.fn(() => ({ results: [
     { title: 'title', url: 'url', text: 'fetched_' }
   ] }))
   return { Exa }
@@ -367,7 +367,7 @@ test('Search Plugin Exa', async () => {
       { title: 'title', url: 'url', content: 'fetched_' }
     ]
   })
-  expect(Exa.prototype.searchAndContents).toHaveBeenLastCalledWith('test', { text: true, numResults: 5 })
+  expect(Exa.prototype.search).toHaveBeenLastCalledWith('test', { contents: { text: true }, numResults: 5 })
   expect(window.api.search.query).not.toHaveBeenCalled()
 })
 

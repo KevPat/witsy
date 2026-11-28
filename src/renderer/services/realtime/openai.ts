@@ -5,7 +5,7 @@
 import { Agent, FunctionTool, protocol, tool, UnknownContext } from '@openai/agents'
 import { RealtimeAgent, RealtimeContextData, RealtimeItem, RealtimeSession } from '@openai/agents/realtime'
 import { LlmTool, LlmToolOpenAI, MultiToolPlugin, normalizeToToolDefinition, Plugin, PluginExecutionContext, toOpenAITool } from 'multi-llm-ts'
-import { z, ZodTypeAny } from 'zod'
+import { z, ZodTypeAny } from 'zod/v3'
 import { Configuration } from 'types/config'
 import { availablePlugins, enabledPlugins, PluginInstance } from '../plugins/plugins'
 import {
@@ -17,6 +17,11 @@ import {
   RealtimeVoice,
   TRANSCRIPTION_UNAVAILABLE,
 } from './engine'
+
+// @openai/agents-core 0.3.7 ships .d.ts files generated against zod 3 types, so
+// with zod 4 installed z.infer<protocol.ToolCallItem> collapses to unknown. The
+// runtime objects are unchanged: read the fields Witsy uses through this shape.
+type ToolCallFields = { type: string, callId?: string, arguments?: string }
 
 /**
  * Convert JSON Schema to Zod schema
@@ -553,11 +558,12 @@ export class RealtimeOpenAI extends RealtimeEngine {
     tool: FunctionTool<RealtimeContextData<UnknownContext>>,
     details: { toolCall: protocol.ToolCallItem }
   ): void {
-    if (details.toolCall.type !== 'function_call') {
+    const toolCall = details.toolCall as ToolCallFields
+    if (toolCall.type !== 'function_call') {
       return
     }
 
-    const callId = details.toolCall.callId || crypto.randomUUID()
+    const callId = toolCall.callId || crypto.randomUUID()
     const messageId = this.getLastAssistantMessageId()
 
     // console.log(`[realtime] tool start: ${tool.name}, callId=${callId}, messageId=${messageId}`)
@@ -569,7 +575,7 @@ export class RealtimeOpenAI extends RealtimeEngine {
       id: callId,
       name: tool.name,
       status: 'running',
-      params: details.toolCall.arguments,
+      params: toolCall.arguments,
       result: null,
     })
   }
@@ -580,11 +586,12 @@ export class RealtimeOpenAI extends RealtimeEngine {
     tool: FunctionTool<RealtimeContextData<UnknownContext>>,
     result: string, details: { toolCall: protocol.ToolCallItem }
   ): void {
-    if (details.toolCall.type !== 'function_call') {
+    const toolCall = details.toolCall as ToolCallFields
+    if (toolCall.type !== 'function_call') {
       return
     }
 
-    const callId = details.toolCall.callId || ''
+    const callId = toolCall.callId || ''
     // Use the message we recorded at start, or find last assistant
     const messageId = this.toolCallToMessage.get(callId) || this.getLastAssistantMessageId()
 
@@ -594,7 +601,7 @@ export class RealtimeOpenAI extends RealtimeEngine {
       id: callId,
       name: tool.name,
       status: 'completed',
-      params: details.toolCall.arguments,
+      params: toolCall.arguments,
       result: result,
     })
 
