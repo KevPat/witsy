@@ -4,7 +4,6 @@ import { app } from 'electron'
 import fs from 'fs'
 import DocumentMonitor from '@main/rag/docmonitor'
 import DocumentSourceImpl from '@main/rag/docsource'
-import { bug } from './bug'
 
 // the monitor is run with the Windows flavour of `path` so its drive handling can be checked on any host
 vi.mock('path', async () => {
@@ -171,7 +170,7 @@ describe('DocumentMonitor on Windows: one drive', () => {
 
 describe('DocumentMonitor on Windows: several drives', () => {
 
-  bug('deleting a sub directory on D: does not remove a folder source located on C:', async () => {
+  test('deleting a sub directory on D: does not remove a folder source located on C:', async () => {
     // path.relative() across drives returns the absolute target, which passes the "does not start with .." test
     start(docBase('base', [folder('c-docs', 'C:\\Docs', ['a.txt', 'b.txt']), folder('d-notes', 'D:\\Notes', ['old\\x.txt'])]))
     emit('unlinkDir', 'D:\\Notes\\old')
@@ -179,7 +178,7 @@ describe('DocumentMonitor on Windows: several drives', () => {
     expect(removedSources()).toEqual([])
   })
 
-  bug('deleting a sub directory on D: does not remove folder sources of other bases', async () => {
+  test('deleting a sub directory on D: does not remove folder sources of other bases', async () => {
     // same defect: every folder source of every base that lives on another drive is "inside" the deleted directory
     start(
       docBase('work', [folder('c-work', 'C:\\Work')]),
@@ -191,7 +190,7 @@ describe('DocumentMonitor on Windows: several drives', () => {
     expect(removedSources()).toEqual([])
   })
 
-  bug('a file created on D: is only indexed in the folder source that contains it', async () => {
+  test('a file created on D: is only indexed in the folder source that contains it', async () => {
     // the relative path from C:\Docs to D:\Notes\new.txt is "D:\Notes\new.txt", so C:\Docs is considered a parent
     start(docBase('base', [folder('c-docs', 'C:\\Docs'), folder('d-notes', 'D:\\Notes')]))
     emit('add', 'D:\\Notes\\new.txt')
@@ -199,7 +198,7 @@ describe('DocumentMonitor on Windows: several drives', () => {
     expect(parentsOfAddedChildren()).toEqual(['d-notes'])
   })
 
-  bug('a file created on D: is not indexed into a base that only has sources on C:', async () => {
+  test('a file created on D: is not indexed into a base that only has sources on C:', async () => {
     // same defect, here it copies a document of one base (possibly of another workspace) into another one
     start(docBase('private', [folder('d-private', 'D:\\Private')]), docBase('shared', [folder('c-shared', 'C:\\Shared')]))
     emit('add', 'D:\\Private\\salary.txt')
@@ -207,7 +206,7 @@ describe('DocumentMonitor on Windows: several drives', () => {
     expect(docRepo.addChildDocumentSource.mock.calls.map(call => call[0])).toEqual(['private'])
   })
 
-  bug('a file created on a network share is only indexed in the folder source that contains it', async () => {
+  test('a file created on a network share is only indexed in the folder source that contains it', async () => {
     // UNC paths have no relative path to a drive letter path either
     start(docBase('base', [folder('c-docs', 'C:\\Docs'), folder('share', '\\\\server\\share\\notes')]))
     emit('add', '\\\\server\\share\\notes\\new.txt')
@@ -215,7 +214,7 @@ describe('DocumentMonitor on Windows: several drives', () => {
     expect(parentsOfAddedChildren()).toEqual(['share'])
   })
 
-  bug('fuzz: with sources spread over several drives a file is attributed to exactly the folders that contain it', async () => {
+  test('fuzz: with sources spread over several drives a file is attributed to exactly the folders that contain it', async () => {
     // fails for every file whose drive differs from the drive of at least one folder source
     const rand = mulberry32(20261127)
     const drives = ['C:', 'D:', 'E:', '\\\\nas\\media']
@@ -236,6 +235,73 @@ describe('DocumentMonitor on Windows: several drives', () => {
       if (JSON.stringify(actual) !== JSON.stringify(expected)) wrong.push(`${path} -> ${actual.join(',')} instead of ${expected.join(',')}`)
     }
     expect(wrong.slice(0, 3)).toEqual([])
+  })
+
+  test('deleting a directory on D: only removes the folder sources of that drive, even with the same sub path on C:', async () => {
+    start(docBase('base', [folder('d-data', 'D:\\Data'), folder('d-old', 'D:\\Data\\Notes\\old'), folder('c-old', 'C:\\Data\\Notes\\old')]))
+    emit('unlinkDir', 'D:\\Data\\Notes')
+    await settle()
+    expect(removedSources()).toEqual(['d-old'])
+  })
+
+  test('deleting a directory on a network share does not remove sources of a drive or of another share', async () => {
+    start(docBase('base', [
+      folder('share', '\\\\server\\share'),
+      folder('share-notes', '\\\\server\\share\\team\\notes'),
+      folder('other-share', '\\\\server\\other\\team\\notes'),
+      folder('c-notes', 'C:\\team\\notes'),
+    ]))
+    emit('unlinkDir', '\\\\server\\share\\team')
+    await settle()
+    expect(removedSources()).toEqual(['share-notes'])
+  })
+
+  test('a file source on C: is not touched by an event for the same sub path on D:', async () => {
+    start(docBase('base', [new DocumentSourceImpl('c-file', 'file', 'C:\\Docs\\a.txt'), folder('d-docs', 'D:\\Docs')]))
+    emit('change', 'D:\\Docs\\a.txt')
+    emit('unlink', 'D:\\Docs\\b.txt')
+    await settle()
+    expect(docRepo.addDocumentSource).not.toHaveBeenCalled()
+    expect(removedSources()).toEqual([])
+  })
+
+})
+
+describe('DocumentMonitor on Windows: containment', () => {
+
+  const inside = (dir: string, target: string) => new DocumentMonitor(app, docRepo as any)['isInside'](dir, target)
+
+  test.each([
+    ['C:\\Docs', 'C:\\Docs\\a.txt'],
+    ['C:\\Docs', 'C:\\Docs\\sub\\deep\\a.txt'],
+    ['C:\\Docs', 'c:\\docs\\A.TXT'],
+    ['C:\\Docs\\', 'C:\\Docs\\a.txt'],
+    ['C:\\Docs', 'C:/Docs/sub/a.txt'],
+    ['C:\\Docs', 'C:\\Docs\\..archive\\a.txt'],
+    ['C:\\Docs', 'C:\\Docs\\...'],
+    ['C:\\', 'C:\\Docs'],
+    ['\\\\server\\share\\notes', '\\\\server\\share\\notes\\a.txt'],
+  ])('%s contains %s', (dir, target) => {
+    expect(inside(dir, target)).toBe(true)
+  })
+
+  test.each([
+    ['C:\\Docs', 'C:\\Docs'],
+    ['C:\\Docs', 'c:\\docs\\'],
+    ['C:\\Docs', 'C:\\'],
+    ['C:\\Docs', 'C:\\Docs-other\\a.txt'],
+    ['C:\\Docs', 'C:\\Docs2'],
+    ['C:\\Docs', 'C:\\Other\\Docs\\a.txt'],
+    ['C:\\Docs\\sub', 'C:\\Docs\\a.txt'],
+    ['C:\\Docs', 'D:\\Docs\\a.txt'],
+    ['C:\\Docs', 'D:\\'],
+    ['C:\\', 'D:\\Docs'],
+    ['C:\\Docs', '\\\\server\\share\\Docs\\a.txt'],
+    ['\\\\server\\share\\notes', 'C:\\notes\\a.txt'],
+    ['\\\\server\\share\\notes', '\\\\server\\other\\notes\\a.txt'],
+    ['\\\\server\\share\\notes', '\\\\backup\\share\\notes\\a.txt'],
+  ])('%s does not contain %s', (dir, target) => {
+    expect(inside(dir, target)).toBe(false)
   })
 
 })

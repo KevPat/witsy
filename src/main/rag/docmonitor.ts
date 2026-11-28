@@ -299,8 +299,7 @@ export default class DocumentMonitor implements DocRepoListener {
               await this.docRepo.removeDocumentSource(docBase.uuid, docSource.uuid)
             } else {
               // This is a subdirectory that was affected by the parent directory deletion
-              const relativePath = path.relative(dirPath, docSource.origin)
-              if (!relativePath.startsWith('..') && relativePath !== '') {
+              if (this.isInside(dirPath, docSource.origin)) {
                 console.log(`[docmonitor] Removing subdirectory document source: ${docSource.origin}`)
                 await this.docRepo.removeDocumentSource(docBase.uuid, docSource.uuid)
               }
@@ -350,8 +349,7 @@ export default class DocumentMonitor implements DocRepoListener {
 
     // For folders, check if the file is within the folder (but not the folder itself)
     if (docSource.type === 'folder') {
-      const relativePath = path.relative(docSource.origin, filePath)
-      return !relativePath.startsWith('..') && relativePath !== ''
+      return this.isInside(docSource.origin, filePath)
     }
 
     // Check sub-items for folder-type documents
@@ -370,12 +368,20 @@ export default class DocumentMonitor implements DocRepoListener {
 
     // Check if this document source is a subdirectory of the deleted directory
     if (docSource.type === 'folder') {
-      const relativePath = path.relative(dirPath, docSource.origin)
-      // If the relative path doesn't start with '..', then docSource.origin is within dirPath
-      return !relativePath.startsWith('..') && relativePath !== ''
+      return this.isInside(dirPath, docSource.origin)
     }
 
     return false
+  }
+
+  // true when target is located below dir (dir itself is not inside dir)
+  private isInside(dir: string, target: string): boolean {
+    const relativePath = path.relative(dir, target)
+    // between two Windows drives or shares there is no relative path: path.relative returns the absolute target
+    return relativePath !== ''
+      && relativePath !== '..'
+      && !relativePath.startsWith(`..${path.sep}`)
+      && !path.isAbsolute(relativePath)
   }
 
   private async cleanupDuplicateDocuments(docBase: any, filePath: string): Promise<void> {

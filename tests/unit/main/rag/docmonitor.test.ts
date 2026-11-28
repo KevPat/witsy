@@ -313,6 +313,40 @@ test('DocMonitor isFileAffectedByDocSource works correctly', () => {
   expect(monitor['isFileAffectedByDocSource']('/any/file.txt', urlDoc)).toBe(false)
 })
 
+test('DocMonitor only attributes a path to the folders that contain it', () => {
+  const monitor = new DocumentMonitor(app, mockDocRepo as any)
+  const folderDoc = new DocumentSourceImpl('folder-doc-id', 'folder', '/path/to/docs')
+
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs/a.txt', folderDoc)).toBe(true)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs/sub/a.txt', folderDoc)).toBe(true)
+  // a name that starts with two dots is not a way out of the folder
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs/..archive/a.txt', folderDoc)).toBe(true)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs/..a.txt', folderDoc)).toBe(true)
+
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs/', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/a.txt', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs-other/a.txt', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs2/a.txt', folderDoc)).toBe(false)
+  expect(monitor['isFileAffectedByDocSource']('/path/to/docs.bak', folderDoc)).toBe(false)
+})
+
+test('DocMonitor unlinkDir removes the folder sources inside the directory and not its siblings', async () => {
+  const inside = new DocumentSourceImpl('inside-id', 'folder', '/path/to/docs/projects')
+  const dotted = new DocumentSourceImpl('dotted-id', 'folder', '/path/to/docs/..archive/2025')
+  const sibling = new DocumentSourceImpl('sibling-id', 'folder', '/path/to/docs-other')
+  const parent = new DocumentSourceImpl('parent-id', 'folder', '/path/to')
+  testDocBase.documents = [inside, dotted, sibling, parent]
+  mockDocRepo.contents = [testDocBase]
+
+  const monitor = new DocumentMonitor(app, mockDocRepo as any)
+
+  await monitor['processDirectoryEvent']('/path/to/docs', 'unlinkDir')
+
+  expect(mockDocRepo.removeDocumentSource.mock.calls.map(call => call[1]).sort()).toEqual(['dotted-id', 'inside-id'])
+})
+
 test('DocMonitor registers and unregisters as listener', () => {
   const monitor = new DocumentMonitor(app, mockDocRepo as any)
   
