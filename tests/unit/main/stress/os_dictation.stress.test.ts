@@ -1,6 +1,5 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { bug } from './bug'
 
 // config is only used by the shortcut handlers, not by insertTranscription; keep it inert.
 vi.mock('@main/config', () => ({ loadSettings: vi.fn(() => ({ stt: {} })) }))
@@ -52,7 +51,7 @@ describe('Dictation.insertTranscription', () => {
     expect(Automator.prototype.pasteText).toHaveBeenCalledWith('Hello there')
   })
 
-  bug('still pastes the transcription when there is no main window', async () => {
+  test('still pastes the transcription when there is no main window', async () => {
     // fails today: window.mainWindow.minimize() is called with no null/isDestroyed guard, so it
     // throws on a null main window (e.g. hideOnStartup) and the paste never runs.
     const { Dictation, Automator } = await loadWith(null)
@@ -60,7 +59,7 @@ describe('Dictation.insertTranscription', () => {
     expect(Automator.prototype.pasteText).toHaveBeenCalledWith('Hello there')
   })
 
-  bug('returns focus to the originating app so the paste lands there', async () => {
+  test('returns focus to the originating app so the paste lands there', async () => {
     // fails today: insertTranscription calls releaseFocus() with no sourceApp, so focus goes
     // nowhere in particular and the text can be pasted into the wrong window.
     const { Dictation, win } = await loadWith({ minimize: vi.fn() })

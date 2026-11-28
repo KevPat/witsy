@@ -3,6 +3,7 @@ import { App } from 'electron'
 import * as window from '../window'
 import { loadSettings } from '../config'
 import Automator from './automator'
+import { Application } from 'types/automation'
 
 const DOUBLE_TAP_TIMEOUT = 400 // ms
 
@@ -84,21 +85,53 @@ export default class Dictation {
 
   }
 
-  static insertTranscription = async (text: string): Promise<void> => {
-      
-      // done
-      window.mainWindow.minimize();
-      await window.releaseFocus();
+  static insertTranscription = async (text: string, sourceApp?: Application|null): Promise<void> => {
 
-      // now paste
-      console.debug(`Processing transcription output: ${text.slice(0, 50)}…`);
+    // the main window may not exist (hide on startup) or may be gone
+    try {
+      if (window.mainWindow && !window.mainWindow.isDestroyed?.()) {
+        window.mainWindow.minimize();
+      }
+    } catch (error) {
+      console.error('Error minimizing main window', error);
+    }
 
-      // we need an automator
-      const automator = new Automator();
-      await automator.pasteText(text)
+    // the text must land in the app the user came from: when the caller does not know it,
+    // ask which app came to the front once our window is out of the way
+    if (!sourceApp) {
+      try {
+        const foremost = await new Automator().getForemostApp();
+        if (foremost && !Dictation.isOurselves(foremost)) {
+          sourceApp = foremost;
+        }
+      } catch (error) {
+        console.error('Error getting foremost app', error);
+      }
+    }
 
-      // done
-      return;
+    // release focus (never fatal: we still want to paste)
+    try {
+      await window.releaseFocus(sourceApp ? { sourceApp } : undefined);
+    } catch (error) {
+      console.error('Error releasing focus', error);
+    }
+
+    // now paste
+    console.debug(`Processing transcription output: ${text.slice(0, 50)}…`);
+
+    // we need an automator
+    const automator = new Automator();
+    await automator.pasteText(text)
 
   }
+
+  private static isOurselves(application: Application): boolean {
+    const normalize = (p: string) => (p || '').replace(/\\/g, '/').toLowerCase()
+    const appPath = normalize(application.path)
+    if (!appPath) return false
+    const execPath = normalize(process.execPath)
+    // on macOS the application path is the bundle that holds the executable
+    return appPath === execPath || execPath.startsWith(appPath + '/')
+  }
+
 }
