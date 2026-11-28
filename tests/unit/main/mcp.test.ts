@@ -1,6 +1,8 @@
 
 import { vi, test, expect, beforeEach, afterEach, describe } from 'vitest'
 import { EventEmitter } from 'events'
+import fs from 'fs'
+import path from 'path'
 import type { McpServer } from '@/types/mcp'
 import { app } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -1627,4 +1629,91 @@ test('updateTokens ignores an mcp server without extra config', async () => {
   expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
   expect(await mcp.updateTokens(server!, { access_token: 'token', token_type: 'bearer' }, 'read')).toBe(true)
   expect(config.mcp.mcpServersExtra['s1']).toBeUndefined()
+})
+
+describe('Stdio command line on Windows', () => {
+
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+  })
+
+  const connect = async (command: string, url: string): Promise<{ command: string, args: string[] }> => {
+    config.mcp.servers = [{ uuid: 'win', registryId: 'win', state: 'enabled', type: 'stdio', command, url, toolSelection: null }]
+    config.mcpServers = {}
+    const mcp = new Mcp(app)
+    await mcp.connect()
+    expect(StdioClientTransport).toHaveBeenCalledTimes(1)
+    return vi.mocked(StdioClientTransport).mock.calls[0][0]
+  }
+
+  test('starts the server command itself, not cmd', async () => {
+    const params = await connect('npx', '-y @scope/pkg --flag=value C:\\data\\dir')
+    expect(params.command).toBe('npx')
+    expect(params.args).toStrictEqual(['-y', '@scope/pkg', '--flag=value', 'C:\\data\\dir'])
+  })
+
+  test('characters that cmd interprets stay inside their argument', async () => {
+    const params = await connect('npx', '-y pkg https://x/?a=1&b=%PATH%\\" a&calc.exe b|more %APPDATA% !x! c^d >out.txt (e)')
+    expect(params.command).toBe('npx')
+    expect(params.args).toStrictEqual([
+      '-y', 'pkg', 'https://x/?a=1&b=%PATH%"', 'a&calc.exe', 'b|more', '%APPDATA%', '!x!', 'c^d', '>out.txt', '(e)',
+    ])
+  })
+
+  test('no argument is a command line', async () => {
+    const params = await connect('npx', '-y pkg https://x/?a=1&b=%PATH%\\" & calc.exe')
+    expect(params.args).toStrictEqual(['-y', 'pkg', 'https://x/?a=1&b=%PATH%"', '&', 'calc.exe'])
+    expect([params.command, ...params.args].some((value) => /\s/.test(value))).toBe(false)
+    expect([params.command, ...params.args].map((value) => value.toLowerCase())).not.toContain('cmd')
+  })
+
+  test('double quotes group an argument and are removed', async () => {
+    const params = await connect('node', 'server.js "C:\\Users\\me\\My Documents" --name="two words" \'single quoted\' ""')
+    expect(params.args).toStrictEqual(['server.js', 'C:\\Users\\me\\My Documents', '--name=two words', '\'single', 'quoted\'', ''])
+  })
+
+  test('escaped quotes are literal quotes', async () => {
+    const params = await connect('node', 'server.js --config "{\\"key\\":\\"a b\\"}" "say ""hi""" "C:\\dir\\\\" C:\\dir\\ last')
+    expect(params.args).toStrictEqual(['server.js', '--config', '{"key":"a b"}', 'say "hi"', 'C:\\dir\\', 'C:\\dir\\', 'last'])
+  })
+
+  test('an unterminated quote runs to the end of the arguments', async () => {
+    const params = await connect('node', 'server.js "a & b')
+    expect(params.args).toStrictEqual(['server.js', 'a & b'])
+  })
+
+  test('a command path with spaces is passed as the command', async () => {
+    const params = await connect('C:\\Program Files\\nodejs\\node.exe', 'server.js')
+    expect(params.command).toBe('C:\\Program Files\\nodejs\\node.exe')
+    expect(params.args).toStrictEqual(['server.js'])
+  })
+
+  test('a server configured with cmd /c is started as configured', async () => {
+    const params = await connect('cmd', '/c npx -y @smithery/cli@latest run @owner/server --key key-123')
+    expect(params.command).toBe('cmd')
+    expect(params.args).toStrictEqual(['/c', 'npx', '-y', '@smithery/cli@latest', 'run', '@owner/server', '--key', 'key-123'])
+  })
+
+  test('a server without arguments gets none', async () => {
+    const params = await connect('my-mcp-server.exe', '')
+    expect(params.args).toStrictEqual([])
+  })
+
+})
+
+test('The MCP SDK is not patched to start stdio servers through a shell', () => {
+  // connectToStdioServer relies on the transport spawning with `shell: false`:
+  // with a shell, Node joins the command and its arguments without any escaping
+  const patches = fs.readdirSync('patches').filter((file) => file.startsWith('@modelcontextprotocol+sdk'))
+  for (const patch of patches) {
+    const added = fs.readFileSync(path.join('patches', patch), 'utf8').split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+    expect(added.filter((line) => /\bshell\b/.test(line) && !/\bshell:\s*false\b/.test(line)), patch).toStrictEqual([])
+  }
 })

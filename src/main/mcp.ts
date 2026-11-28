@@ -37,6 +37,73 @@ const isInstallValue = (value: unknown, pattern: RegExp): value is string => {
   return typeof value === 'string' && value.length <= INSTALL_VALUE_MAX_LENGTH && pattern.test(value)
 }
 
+// Splits the arguments field of a stdio server into an argument vector.
+// On Windows the field used to be handed to cmd.exe, so it follows the rules Windows programs
+// apply to their own command line: double quotes group and are removed, \" and "" (inside
+// quotes) are a literal quote, other backslashes are kept (paths).
+// Elsewhere quoted groups are kept together, quotes included, as they always were.
+const splitStdioArgs = (line: string): string[] => {
+
+  if (typeof line !== 'string') {
+    return []
+  }
+
+  if (process.platform !== 'win32') {
+    return line.match(/"[^"]+"|'[^']+'|\S+/g) || []
+  }
+
+  const args: string[] = []
+  let current = ''
+  let started = false
+  let quoted = false
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    if (char === '\\') {
+      let end = i
+      while (line[end + 1] === '\\') end++
+      const count = end - i + 1
+      if (line[end + 1] === '"') {
+        // 2n backslashes + quote: n backslashes, the quote delimits
+        // 2n+1 backslashes + quote: n backslashes, the quote is literal
+        current += '\\'.repeat(Math.floor(count / 2))
+        if (count % 2 === 1) {
+          current += '"'
+          end++
+        }
+      } else {
+        current += '\\'.repeat(count)
+      }
+      started = true
+      i = end
+    } else if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"'
+        i++
+      } else {
+        quoted = !quoted
+      }
+      started = true
+    } else if (!quoted && /\s/.test(char)) {
+      if (started) {
+        args.push(current)
+        current = ''
+        started = false
+      }
+    } else {
+      current += char
+      started = true
+    }
+  }
+
+  if (started) {
+    args.push(current)
+  }
+
+  return args
+
+}
+
 type McpSdkTool = {
   name: string
   description?: string | undefined
@@ -751,21 +818,16 @@ export default class Mcp {
 
     try {
 
-      // build command and args
-      const command = process.platform === 'win32' ? 'cmd' : server.command
-      const args = process.platform === 'win32'
-        ? ['/C', `"${server.command}" ${server.url}`]
-        : server.url.match(/"[^"]+"|'[^']+'|\S+/g) || [];
-      
+      // the transport starts the command without a shell, on every platform (on Windows
+      // it resolves .cmd shims such as npx and escapes their arguments itself):
+      // each argument reaches the server as it is, whatever characters it holds
+      const command = server.command
+      const args = splitStdioArgs(server.url)
+
       // now environment
       let env = {
         ...getDefaultEnvironment(),
         ...server.env,
-      }
-
-      // clean up double cmd /c with smithery on windows
-      if (command === 'cmd' && args.length > 0 && args[1].toLowerCase().startsWith('"cmd" /c')) {
-        args[1] = args[1].slice(9)
       }
 
       // if env is empty, remove it
