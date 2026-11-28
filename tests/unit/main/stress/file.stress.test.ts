@@ -1,6 +1,6 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { app } from 'electron'
+import { app, dialog } from 'electron'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -110,11 +110,40 @@ describe('downloadFile', () => {
     expect(filesUnder(root)).toEqual([])
   })
 
-  bug.each([403, 404, 500, 503])('an HTTP %i error page is not saved as the downloaded file', async (status) => {
+  test.each([403, 404, 500, 503])('an HTTP %i error page is not saved as the downloaded file', async (status) => {
     vi.mocked(fetch).mockResolvedValue(new Response('<html>error</html>', { status }))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
     expect(url).toBeNull()
     expect(filesUnder(root)).toEqual([])
+  })
+
+  test('an HTTP error does not ask where to save the file', async () => {
+    vi.mocked(dialog.showSaveDialogSync).mockClear()
+    vi.mocked(fetch).mockResolvedValue(new Response('<html>error</html>', { status: 404 }))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads', prompt: true } })
+    expect(url).toBeNull()
+    expect(dialog.showSaveDialogSync).not.toHaveBeenCalled()
+    expect(filesUnder(root)).toEqual([])
+  })
+
+  test('an HTTP error leaves a file that already has that name untouched', async () => {
+    const existing = path.join(root, 'downloads', 'cat.png')
+    fs.writeFileSync(existing, 'previous-image')
+    vi.mocked(fetch).mockResolvedValue(new Response('<html>error</html>', { status: 500 }))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
+    expect(url).toBeNull()
+    expect(fs.readFileSync(existing, 'utf-8')).toBe('previous-image')
+    expect(filesUnder(root)).toEqual([existing])
+  })
+
+  test.each([200, 201, 206])('the body of an HTTP %i answer is saved', async (status) => {
+    vi.mocked(fetch).mockResolvedValue(new Response('image-bytes', { status }))
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
+    expect(url).toBe(`file://${path.join(root, 'downloads', 'cat.png')}`)
+    expect(fs.readFileSync(path.join(root, 'downloads', 'cat.png'), 'utf-8')).toBe('image-bytes')
   })
 
   bug('a local file can be copied without giving a file name', async () => {
@@ -161,8 +190,8 @@ describe.runIf(isPosix)('listFilesRecursively', () => {
     expect(new Set(files).size).toBe(expected)
   })
 
-  bug('a symbolic link to a parent directory does not make files appear more than once', () => {
-    // statSync follows links and nothing remembers visited directories: recursion only ends at ELOOP
+  test('a symbolic link to a parent directory does not make files appear more than once', () => {
+    // statSync follows links: without remembering visited directories, recursion only ends at ELOOP
     const docs = path.join(root, 'documents')
     fs.writeFileSync(path.join(docs, 'a.txt'), '')
     fs.mkdirSync(path.join(docs, 'sub'))
@@ -170,18 +199,78 @@ describe.runIf(isPosix)('listFilesRecursively', () => {
     fs.symlinkSync(docs, path.join(docs, 'sub', 'loop'))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const files = file.listFilesRecursively(docs)
-    expect(files).toHaveLength(2)
+    expect(files.sort()).toEqual([path.join(docs, 'a.txt'), path.join(docs, 'sub', 'b.txt')])
+    expect(console.error).not.toHaveBeenCalled()
   })
 
-  bug('a broken symbolic link does not hide the other files of its directory', () => {
-    // the statSync error aborts the loop over the directory
+  test('a symbolic link of a directory to itself, and directories linked to each other, end', () => {
+    const docs = path.join(root, 'documents')
+    fs.symlinkSync(docs, path.join(docs, 'self'))
+    for (const name of ['one', 'two']) {
+      fs.mkdirSync(path.join(docs, name))
+      fs.writeFileSync(path.join(docs, name, `${name}.txt`), '')
+    }
+    fs.symlinkSync(path.join(docs, 'two'), path.join(docs, 'one', 'to-two'))
+    fs.symlinkSync(path.join(docs, 'one'), path.join(docs, 'two', 'to-one'))
+    const files = file.listFilesRecursively(docs)
+    expect(files.map(f => path.basename(f)).sort()).toEqual(['one.txt', 'two.txt'])
+  })
+
+  test('a symbolic link to a directory outside of the tree is still followed', () => {
+    const docs = path.join(root, 'documents')
+    const outside = path.join(root, 'downloads')
+    fs.mkdirSync(path.join(outside, 'deep'))
+    fs.writeFileSync(path.join(outside, 'x.txt'), '')
+    fs.writeFileSync(path.join(outside, 'deep', 'y.txt'), '')
+    fs.symlinkSync(outside, path.join(docs, 'link'))
+    fs.symlinkSync(path.join(outside, 'x.txt'), path.join(docs, 'file-link.txt'))
+    const files = file.listFilesRecursively(docs)
+    expect(files.sort()).toEqual([
+      path.join(docs, 'file-link.txt'),
+      path.join(docs, 'link', 'deep', 'y.txt'),
+      path.join(docs, 'link', 'x.txt'),
+    ])
+  })
+
+  test('a directory reached through two symbolic links is listed once', () => {
+    const docs = path.join(root, 'documents')
+    const outside = path.join(root, 'downloads')
+    fs.writeFileSync(path.join(outside, 'x.txt'), '')
+    fs.symlinkSync(outside, path.join(docs, 'link1'))
+    fs.symlinkSync(outside, path.join(docs, 'link2'))
+    const files = file.listFilesRecursively(docs)
+    expect(files.map(f => path.basename(f))).toEqual(['x.txt'])
+  })
+
+  test('listing the same directory again gives the same files', () => {
+    const docs = path.join(root, 'documents')
+    fs.mkdirSync(path.join(docs, 'sub'))
+    fs.writeFileSync(path.join(docs, 'a.txt'), '')
+    fs.writeFileSync(path.join(docs, 'sub', 'b.txt'), '')
+    const first = file.listFilesRecursively(docs)
+    expect(first).toHaveLength(2)
+    expect(file.listFilesRecursively(docs)).toEqual(first)
+  })
+
+  test('a broken symbolic link does not hide the other files of its directory', () => {
+    // the statSync error used to abort the loop over the directory
     const docs = path.join(root, 'documents')
     fs.symlinkSync(path.join(docs, 'missing'), path.join(docs, 'a-broken-link'))
     fs.writeFileSync(path.join(docs, 'b.txt'), '')
     fs.writeFileSync(path.join(docs, 'c.txt'), '')
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const files = file.listFilesRecursively(docs).map(f => path.basename(f))
-    expect(files).toEqual(expect.arrayContaining(['b.txt', 'c.txt']))
+    expect(files.sort()).toEqual(['b.txt', 'c.txt'])
+  })
+
+  test('a symbolic link that points to itself does not hide the other files of its directory', () => {
+    const docs = path.join(root, 'documents')
+    fs.symlinkSync(path.join(docs, 'a-link'), path.join(docs, 'a-link'))
+    fs.mkdirSync(path.join(docs, 'sub'))
+    fs.writeFileSync(path.join(docs, 'b.txt'), '')
+    fs.writeFileSync(path.join(docs, 'sub', 'c.txt'), '')
+    const files = file.listFilesRecursively(docs).map(f => path.basename(f))
+    expect(files.sort()).toEqual(['b.txt', 'c.txt'])
   })
 
 })
@@ -224,11 +313,43 @@ describe('searchContent', () => {
     expect(() => file.searchContent(path.join(root, 'missing'), 'needle')).not.toThrow()
   })
 
-  bug('more than 1000 files are searched, or the result says it is incomplete', () => {
+  test('more than 1000 files are searched, or the result says it is incomplete', () => {
     const docs = path.join(root, 'documents')
     for (let i = 0; i < 1010; i++) fs.writeFileSync(path.join(docs, `f${i}.txt`), 'needle')
     const result = file.searchContent(docs, 'needle', { maxResults: 5000 })
     expect(result.matches.length === 1010 || result.truncated).toBe(true)
+  })
+
+  test('the 1000 files limit is reported as a truncated result, also when nothing matches', () => {
+    const docs = path.join(root, 'documents')
+    for (let i = 0; i < 1001; i++) fs.writeFileSync(path.join(docs, `f${i}.txt`), 'hay')
+    const result = file.searchContent(docs, 'needle')
+    expect(result).toEqual({ matches: [], filesSearched: 1000, truncated: true })
+  })
+
+  test('exactly 1000 files are all searched and the result is complete', () => {
+    const docs = path.join(root, 'documents')
+    for (let i = 0; i < 1000; i++) fs.writeFileSync(path.join(docs, `f${i}.txt`), 'needle')
+    const result = file.searchContent(docs, 'needle', { maxResults: 5000 })
+    expect(result.matches).toHaveLength(1000)
+    expect(result.filesSearched).toBe(1000)
+    expect(result.truncated).toBe(false)
+  })
+
+  test('files excluded by the glob do not count towards the 1000 files limit', () => {
+    const docs = path.join(root, 'documents')
+    for (let i = 0; i < 1005; i++) fs.writeFileSync(path.join(docs, `f${i}.md`), 'needle')
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(docs, `f${i}.txt`), 'needle')
+    const result = file.searchContent(docs, 'needle', { glob: '*.txt', maxResults: 5000 })
+    expect(result.matches).toHaveLength(5)
+    expect(result.filesSearched).toBe(5)
+    expect(result.truncated).toBe(false)
+  })
+
+  test('a complete search of a directory or of a single file is not reported as truncated', () => {
+    const docs = makeTree()
+    expect(file.searchContent(docs, 'needle', { maxResults: 5000 }).truncated).toBe(false)
+    expect(file.searchContent(path.join(docs, 'file0.txt'), 'needle').truncated).toBe(false)
   })
 
 })

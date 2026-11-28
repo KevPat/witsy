@@ -193,11 +193,21 @@ export const pickDirectory = (app: App): string|null => {
 
 }
 
-export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[]): string[] => {
+export const listFilesRecursively = (directoryPath: string, excludePatterns?: string[], visited: Set<string> = new Set()): string[] => {
 
   let fileList: string[] = []
 
   try {
+
+    // a directory is listed once: a symbolic link that leads back to it (a link to a parent) would never end
+    let realPath = path.resolve(directoryPath)
+    try {
+      realPath = fs.realpathSync(directoryPath)
+    } catch { /* not resolvable: listed by its own path */ }
+    if (visited.has(realPath)) {
+      return fileList
+    }
+    visited.add(realPath)
 
     // Read the contents of the directory
     const files = fs.readdirSync(directoryPath)
@@ -215,11 +225,18 @@ export const listFilesRecursively = (directoryPath: string, excludePatterns?: st
       }
 
       const filePath = path.join(directoryPath, file)
-      const stat = fs.statSync(filePath);
+
+      // a broken symbolic link (or a file removed meanwhile) is skipped, not the rest of its directory
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue
+      }
 
       if (stat.isDirectory()) {
         // If it's a directory, recursively call the function
-        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns));
+        fileList = fileList.concat(listFilesRecursively(filePath, excludePatterns, visited));
       } else {
         // If it's a file, add it to the list
         fileList.push(filePath);
@@ -483,6 +500,11 @@ export const downloadFile = async (app: App, payload: FileDownloadParams) => {
       // }
 
       const response = await fetch(payload.url);
+      if (!response.ok) {
+        // the body of an error answer is an error page, not the file
+        console.error(`Error while downloading file: HTTP ${response.status}`);
+        return null
+      }
       const contents = await response.arrayBuffer();
       savePayload.contents = Buffer.from(contents).toString('base64');
 
@@ -556,11 +578,14 @@ const SKIP_DIRECTORIES = new Set([
 /**
  * Find files recursively with glob filtering
  */
-const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): string[] => {
+const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number = 1000): { files: string[], capped: boolean } => {
   const files: string[] = []
   const stack: string[] = [dir]
 
-  while (stack.length > 0 && files.length < maxFiles) {
+  // set when a file had to be left out because of maxFiles
+  let capped = false
+
+  while (stack.length > 0 && !capped) {
     const currentDir = stack.pop()!
 
     let entries: fs.Dirent[]
@@ -571,8 +596,6 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
     }
 
     for (const entry of entries) {
-      if (files.length >= maxFiles) break
-
       // Skip hidden files and common non-code directories
       if (entry.name.startsWith('.') || SKIP_DIRECTORIES.has(entry.name)) {
         continue
@@ -589,12 +612,16 @@ const findFilesForSearch = (dir: string, globPattern?: string, maxFiles: number 
             continue
           }
         }
+        if (files.length >= maxFiles) {
+          capped = true
+          break
+        }
         files.push(fullPath)
       }
     }
   }
 
-  return files
+  return { files, capped }
 }
 
 /**
@@ -620,7 +647,10 @@ export const searchContent = (
 
   // Handle file vs directory
   const stats = fs.statSync(basePath)
-  const files = stats.isFile() ? [basePath] : findFilesForSearch(basePath, glob)
+  const { files, capped } = stats.isFile() ? { files: [basePath], capped: false } : findFilesForSearch(basePath, glob)
+
+  // the result is also incomplete when not every file could be searched
+  if (capped) truncated = true
 
   for (const file of files) {
     if (matches.length >= maxResults) {
