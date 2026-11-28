@@ -91,11 +91,6 @@ const config: ForgeConfig = {
             signDarwinBinaries(buildPath, arch);
           }
 
-          // Sign Windows binaries before the zip and the Squirrel installer are built.
-          if (platform === 'win32') {
-            signWindowsBinaries(buildPath, arch);
-          }
-
           callback();
         } catch (error: any) {
           callback(error);
@@ -168,6 +163,15 @@ const config: ForgeConfig = {
       // Build CLI before packaging
       execSync('npm run build:cli', { stdio: 'inherit' })
       prePackage(platform, arch)
+    },
+    postPackage: async (_forgeConfig, packageResult) => {
+      // Fuses mutate the executable after afterCopy. Sign the finalized package
+      // so ZIP and Squirrel makers receive a valid Authenticode signature.
+      if (packageResult.platform === 'win32') {
+        for (const outputPath of packageResult.outputPaths) {
+          signWindowsBinaries(outputPath, packageResult.arch)
+        }
+      }
     },
     
     /*

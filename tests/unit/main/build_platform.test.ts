@@ -55,8 +55,12 @@ describe('platform release configuration', () => {
   })
 
   test('packaging does not mutate the working dependency tree and signs the app executable', () => {
+    const forge = read('forge.config.ts')
+    const afterCopy = forge.match(/afterCopy:\s*\[([\s\S]*?)\n\s*\],/)?.[1]
     expect(read('build/prepackage.js')).not.toMatch(/npm (uninstall|install)/)
     expect(read('build/sign_binaries.ts')).toContain("'Witsy.exe'")
+    expect(forge).toMatch(/postPackage:[\s\S]*signWindowsBinaries/)
+    expect(afterCopy).not.toContain('signWindowsBinaries')
   })
 
   test('PR quality workflow covers every supported OS and architecture', () => {
