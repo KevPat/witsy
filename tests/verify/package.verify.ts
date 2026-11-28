@@ -184,7 +184,7 @@ describe('officeparser 8 in the packaged app', () => {
   }
   const asarJson = async (variant: BuildVariant, file: string) => {
     const asar = await import('@electron/asar')
-    return JSON.parse(asar.extractFile(path.join(resourcesPath(variant), 'app.asar'), file).toString('utf8'))
+    return JSON.parse(asar.extractFile(path.join(resourcesPath(variant), 'app.asar'), file.split('/').join(path.sep)).toString('utf8'))
   }
   // where node would find a package from officeparser: its own node_modules first, then the top
   const fromOfficeparser = (files: Set<string>, name: string) => [`/node_modules/officeparser/node_modules/${name}`, `/node_modules/${name}`].find((d) => files.has(`${d}/package.json`)) || null

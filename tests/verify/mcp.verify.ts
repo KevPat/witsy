@@ -29,10 +29,16 @@ server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [{ type:
 server.connect(new StdioServerTransport())
 `
 
+// a local package with a bin: npx runs it through its own .cmd shim on Windows, with no registry involved
+const npxPackage = path.join(path.dirname(serverFile), 'npx-package')
+fs.mkdirSync(npxPackage, { recursive: true })
+fs.writeFileSync(path.join(npxPackage, 'package.json'), JSON.stringify({ name: 'witsy-verify-mcp-server', version: '1.0.0', bin: { 'witsy-verify-mcp-server': 'server.cjs' } }))
+fs.writeFileSync(path.join(npxPackage, 'server.cjs'), '#!/usr/bin/env node\n' + serverSource)
+
 type Case = { uuid: string, label: string, command: string, url: string, expectArgs?: string[] }
 const cases: Case[] = [
   { uuid: 'verify-node', label: 'node', command: 'node', url: `${serverFile} plain-arg second`, expectArgs: ['plain-arg', 'second'] },
-  { uuid: 'verify-npx', label: 'npx (an npm .cmd shim on Windows)', command: 'npx', url: `--no-install node ${serverFile} via-npx`, expectArgs: ['via-npx'] },
+  { uuid: 'verify-npx', label: 'npx (an npm .cmd shim on Windows)', command: 'npx', url: `--yes ${npxPackage} via-npx`, expectArgs: ['via-npx'] },
 ]
 if (win) {
   cases.push({ uuid: 'verify-cmd', label: 'cmd /c', command: 'cmd', url: `/c node ${serverFile} via-cmd`, expectArgs: ['via-cmd'] })
