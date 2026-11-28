@@ -23,6 +23,7 @@ const loadWith = async (mainWindow: unknown): Promise<{
     dictationWindow: null,
     releaseFocus: win.releaseFocus,
     openDictationWindow: win.openDictationWindow,
+    openAudioBooth: vi.fn(),
     isMainWindowFocused: vi.fn(() => false),
     emitIpcEvent: vi.fn(),
   }))
@@ -65,6 +66,15 @@ describe('Dictation.insertTranscription', () => {
     const { Dictation, win } = await loadWith({ minimize: vi.fn() })
     await Dictation.insertTranscription('Hello there').catch(() => undefined)
     expect(win.releaseFocus).toHaveBeenCalledWith(expect.objectContaining({ sourceApp: expect.anything() }))
+  })
+
+  test('an Audio Booth opened without a main window to watch records no app, and the text is still pasted', async () => {
+    // the recorded app is only trusted while the main window tells when the user leaves it
+    const { Dictation, Automator } = await loadWith(null)
+    await Dictation.openAudioBooth()
+    expect(Dictation.getAudioBoothSourceApp()).toBeNull()
+    await Dictation.insertTranscription('Hello there')
+    expect(Automator.prototype.pasteText).toHaveBeenCalledWith('Hello there')
   })
 
 })
