@@ -173,7 +173,7 @@ describe('commands.json', () => {
     expect(fs.readFileSync(commandsFile(), 'utf-8')).toBe(before)
   })
 
-  bug.each([
+  test.each([
     ['{}'],
     ['null'],
     ['42'],
@@ -191,7 +191,7 @@ describe('commands.json', () => {
     expect(loaded.map(command => command.id)).toEqual(expect.arrayContaining(defaultCommands.map(command => command.id)))
   })
 
-  bug('fuzz: a commands file truncated at any point is not replaced by the defaults without a backup', () => {
+  test('fuzz: a commands file truncated at any point is not replaced by the defaults without a backup', () => {
     // parse error leaves an empty list, the defaults are appended, and the "updated" list is saved over the user's file
     const full = JSON.stringify([...defaultCommands.slice(0, 4), userCommand(1), userCommand(2)], null, 2)
     const lost: number[] = []
@@ -205,7 +205,7 @@ describe('commands.json', () => {
     expect(lost).toEqual([])
   })
 
-  bug.each([
+  test.each([
     ['an experts export', JSON.stringify(defaultExperts)],
     ['a settings file', JSON.stringify({ general: { locale: 'fr' }, engines: {} })],
     ['a truncated commands export', JSON.stringify([userCommand(7)]).slice(0, 40)],
