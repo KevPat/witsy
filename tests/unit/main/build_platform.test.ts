@@ -28,6 +28,20 @@ describe('platform release configuration', () => {
     expect(read('build/build.ps1')).toContain('electron-forge make')
   })
 
+  test('arm64 release workflows keep signing secrets out of GITHUB_ENV and pin their actions (L-09)', () => {
+    for (const file of ['build-win32-arm64.yml', 'build-linux-arm64.yml']) {
+      const workflow = read(`.github/workflows/${file}`)
+      const envWrites = workflow.split('\n').filter(line => line.includes('GITHUB_ENV'))
+      expect(envWrites.filter(line => /\bsecrets\./.test(line)), file).toEqual([])
+      const unpinned = [...workflow.matchAll(/^\s*(?:- )?uses:\s*(.+)$/gm)].map(match => match[1].trim())
+        .filter(ref => !ref.startsWith('./') && !/@[0-9a-f]{40} # v\d+(\.\d+)*$/.test(ref))
+      expect(unpinned, file).toEqual([])
+    }
+    // the build only signs when the certificate sync worked
+    expect(read('.github/workflows/build-win32-arm64.yml'))
+      .toContain("SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ steps.certsync.outcome == 'success' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}")
+  })
+
   test('Linux CLI does not shadow the desktop executable', () => {
     expect(read('src/main/cli_installer.ts')).toContain("'witsy-cli'")
     expect(read('README.md')).toContain('/usr/local/bin/witsy-cli')
