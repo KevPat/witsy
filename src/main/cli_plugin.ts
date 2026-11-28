@@ -5,6 +5,7 @@ import * as fs from 'fs'
 import { Plugin, PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import * as path from 'path'
 import { searchContent } from './file'
+import { resolveInside } from './path_containment'
 import { analyzeCommand, executeCommand as shellExecuteCommand } from './shell'
 
 // Maximum file size for AI read operations (10,000 tokens × 4 characters per token)
@@ -346,23 +347,10 @@ export default class CliPlugin extends Plugin {
     return `${firstLines}\n${truncationMessage}`
   }
 
+  // Returns the absolute path when it stays inside the working directory, also once
+  // symlinks are resolved. Every action that takes a path has to go through here.
   validatePath(targetPath: string): string | null {
-    const workDirPath = path.normalize(this.config.workDirPath)
-
-    // Handle relative paths
-    let fullPath: string
-    if (path.isAbsolute(targetPath)) {
-      fullPath = path.normalize(targetPath)
-    } else {
-      fullPath = path.normalize(path.join(workDirPath, targetPath))
-    }
-
-    // Security check: ensure path is within working directory
-    if (!fullPath.startsWith(workDirPath)) {
-      return null
-    }
-
-    return fullPath
+    return resolveInside(this.config.workDirPath, targetPath)
   }
 
   formatLineNumbered(lines: string[], startLine: number = 1): string {

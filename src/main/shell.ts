@@ -1,8 +1,8 @@
 import { exec } from 'child_process'
-import { realpathSync } from 'fs'
-import { sep } from 'path'
+import { statSync } from 'fs'
 import { promisify } from 'util'
 import PowerShell from 'powershell'
+import { isPathInside, resolveRealPath } from './path_containment'
 
 const execAsync = promisify(exec)
 
@@ -42,16 +42,19 @@ interface CommandAnalysis {
 // Path validation with symlink resolution
 export function validateWorkingDirectory(cwd: string, projectPath: string): PathValidationResult {
   try {
-    // Resolve symlinks to real paths
-    const realCwd = realpathSync(cwd)
-    const realProject = realpathSync(projectPath)
+    if (typeof cwd !== 'string' || !cwd.length || typeof projectPath !== 'string' || !projectPath.length) {
+      return { valid: false, error: `Invalid path: ${String(cwd)}` }
+    }
 
-    // Ensure trailing separator for safe prefix matching
-    const projectPrefix = realProject.endsWith(sep) ? realProject : realProject + sep
-    const cwdWithSep = realCwd.endsWith(sep) ? realCwd : realCwd + sep
+    const realCwd = resolveRealPath(cwd)
+    const realProject = resolveRealPath(projectPath)
 
-    // Check if cwd is within project (or equals project)
-    if (realCwd === realProject || cwdWithSep.startsWith(projectPrefix)) {
+    // resolveRealPath accepts paths that do not exist yet, a working directory has to exist
+    if (!statSync(realCwd).isDirectory()) {
+      return { valid: false, error: `Invalid path: ${cwd} is not a directory` }
+    }
+
+    if (isPathInside(realCwd, realProject)) {
       return { valid: true, normalizedPath: realCwd }
     }
 

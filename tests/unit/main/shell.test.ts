@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { executeCommand, analyzeCommand, validateWorkingDirectory } from '../../../src/main/shell'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join, sep } from 'path'
 
 describe('Shell Executor', () => {
   let tempDir: string
@@ -147,6 +147,72 @@ describe('Shell Executor', () => {
     it('should reject invalid paths', () => {
       const result = validateWorkingDirectory('/nonexistent/path', tempDir)
       expect(result.valid).toBe(false)
+    })
+
+    it('should accept sub-directories and return the real path', () => {
+      mkdirSync(join(tempDir, 'src', 'deep'), { recursive: true })
+      const realTemp = realpathSync(tempDir)
+      expect(validateWorkingDirectory(tempDir, tempDir)).toEqual({ valid: true, normalizedPath: realTemp })
+      expect(validateWorkingDirectory(tempDir + sep, tempDir).valid).toBe(true)
+      expect(validateWorkingDirectory(join(tempDir, 'src', 'deep'), tempDir)).toEqual({
+        valid: true, normalizedPath: join(realTemp, 'src', 'deep')
+      })
+      expect(validateWorkingDirectory(join(tempDir, 'src', '..', 'src'), tempDir).normalizedPath).toBe(join(realTemp, 'src'))
+    })
+
+    it('should reject a sibling directory that shares the project prefix', () => {
+      const sibling = `${tempDir}-other`
+      mkdirSync(sibling)
+      try {
+        expect(validateWorkingDirectory(sibling, tempDir).valid).toBe(false)
+        expect(validateWorkingDirectory(join(tempDir, '..', basename(sibling)), tempDir).valid).toBe(false)
+        expect(validateWorkingDirectory(sibling, tempDir).error).toContain('outside project directory')
+      } finally {
+        rmSync(sibling, { recursive: true, force: true })
+      }
+    })
+
+    it.runIf(process.platform !== 'win32')('should reject a symlink to a directory outside the project', () => {
+      const outside = mkdtempSync(join(tmpdir(), 'shell-test-outside-'))
+      try {
+        const link = join(tempDir, 'escape')
+        symlinkSync(outside, link)
+        const result = validateWorkingDirectory(link, tempDir)
+        expect(result.valid).toBe(false)
+        expect(result.error).toContain('outside project directory')
+        expect(validateWorkingDirectory(tempDir, tempDir).valid).toBe(true)
+
+        // a link that stays inside is followed
+        mkdirSync(join(tempDir, 'real'))
+        symlinkSync(join(tempDir, 'real'), join(tempDir, 'alias'))
+        expect(validateWorkingDirectory(join(tempDir, 'alias'), tempDir)).toEqual({
+          valid: true, normalizedPath: join(realpathSync(tempDir), 'real')
+        })
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+    it('should reject a working directory that does not exist or is a file', () => {
+      writeFileSync(join(tempDir, 'file.txt'), 'content')
+      for (const cwd of [join(tempDir, 'missing'), join(tempDir, 'missing', 'deeper'), join(tempDir, 'file.txt')]) {
+        const result = validateWorkingDirectory(cwd, tempDir)
+        expect(result.valid, cwd).toBe(false)
+        expect(result.error, cwd).toContain('Invalid path')
+      }
+    })
+
+    it('should report garbage input as invalid instead of throwing', () => {
+      for (const cwd of ['', ' ', '\0', 'relative/missing', 'x'.repeat(5000), undefined, null, 42, {}]) {
+        const result = validateWorkingDirectory(cwd as string, tempDir)
+        expect(result.valid).toBe(false)
+        expect(result.error).toBeTruthy()
+      }
+      for (const project of ['', undefined, null, 42]) {
+        const result = validateWorkingDirectory(tempDir, project as string)
+        expect(result.valid).toBe(false)
+        expect(result.error).toBeTruthy()
+      }
     })
   })
 
