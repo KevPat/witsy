@@ -4,6 +4,32 @@ import { LocalSearchResponse, LocalSearchResult } from 'types/index'
 import { getTextContent } from './text'
 import { getCleanUserAgent } from './utils'
 import { Mutex } from './sync'
+import { getUrlRefusal } from '../renderer/utils/url_guard'
+
+// how many redirects a result page may go through
+const kMaxRedirects = 5
+
+/**
+ * Downloads a page found by the search. The url comes from the web: nothing on this machine, on a
+ * private network or in a file is requested, and a redirect is only followed to a url that passes
+ * the same check (redirects are followed here, one by one, instead of by fetch).
+ */
+export const fetchPublicUrl = async (url: string, signal?: AbortSignal): Promise<Response> => {
+  let target = url
+  for (let hop = 0; hop <= kMaxRedirects; hop++) {
+    const refusal = getUrlRefusal(target)
+    if (refusal) {
+      throw new Error(refusal)
+    }
+    const response = await fetch(target, { signal, redirect: 'manual' })
+    const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null
+    if (!location) {
+      return response
+    }
+    target = new URL(location, target).toString()
+  }
+  throw new Error('Too many redirects')
+}
 
 const grabGoogleResults = `
   const results = []
@@ -323,7 +349,7 @@ export default class LocalSearch {
 
         // Race between fetch and 5-second timeout
         const response = await Promise.race([
-          fetch(result.url, { signal: abortSignal }),
+          fetchPublicUrl(result.url, abortSignal),
           createTimeout(5000)
         ])
 
