@@ -1062,6 +1062,44 @@ describe('CodeExecutionProgramPlugin', () => {
       expect(result).toEqual({ error: 'inner failure', failedStep: 'step1' })
     })
 
+    test.each([
+      { response: { result: { data: 0 } }, expected: 0 },
+      { response: { result: { data: false } }, expected: false },
+      { response: { result: { data: '' } }, expected: '' },
+      { response: { result: { data: null } }, expected: null },
+      { response: { result: 0 }, expected: 0 },
+      { response: '', expected: '' },
+    ])('keeps falsy final result $expected visible to the engine', async ({ response, expected }) => {
+      const mockTool = new MockPlugin('tool1', () => response)
+      mockEngine.plugins = [mockTool]
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: {
+          program: {
+            steps: [
+              { id: 'step1', tool: 'tool1', args: {} }
+            ]
+          }
+        }
+      })
+
+      // multi-llm-ts turns a falsy result into { error: 'No result from tool' }
+      expect(result).toStrictEqual({ result: expected })
+    })
+
+    test('program without steps still has no result', async () => {
+      await plugin.install(mockEngine)
+
+      const result = await plugin.execute({} as any, {
+        tool: `${kCodeExecutionPluginPrefix}run_program`,
+        parameters: { program: { steps: [] } }
+      })
+
+      expect(result).toBeNull()
+    })
+
     test('handles non-wrapped results', async () => {
       const mockTool = new MockPlugin('tool1', () => 'plain string result')
 

@@ -433,11 +433,12 @@ export default class CodeExecutionProgramPlugin extends CodeExecutionBase implem
       }
     }
 
-    // Return final result
+    // Return final result: the engine replaces a falsy tool result
+    // with a "No result from tool" error so keep those visible
     this.saveSchemas()
     yield {
       type: 'result',
-      result: finalResult
+      result: results.size > 0 && !finalResult ? { result: finalResult } : finalResult
     }
   }
 
