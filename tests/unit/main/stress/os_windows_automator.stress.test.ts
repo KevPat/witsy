@@ -4,7 +4,6 @@ import { runVbs } from '@el3um4s/run-vbs'
 import applescript from 'applescript'
 import WindowsAutomator from '@main/automations/windows'
 import MacosAutomator from '@main/automations/macos'
-import { bug } from './bug'
 
 // Every OS-touching dependency is replaced so the automators only build scripts, never run them.
 vi.mock('electron', () => ({ app: {} }))
@@ -126,9 +125,12 @@ describe('WindowsAutomator fixed-script methods do not interpolate anything', ()
 })
 
 //
-// AppleScript string literals escape a double quote as \" and a backslash as \\, and cannot
-// contain a raw newline. The parser decodes the `whose name is "…"` literal that focusApp builds.
+// AppleScript string literals escape a double quote as \" and a backslash as \\, and write a
+// line feed, return and tab as \n, \r and \t. A raw line break is flagged: focusApp must not let
+// one through. The parser decodes the `whose name is "…"` literal that focusApp builds.
 //
+const kAppleScriptEscapes: Record<string, string> = { '"': '"', '\\': '\\', n: '\n', r: '\r', t: '\t' }
+
 const parseAppleScriptName = (script: string): { malformed: boolean, value: string } => {
   const marker = 'whose name is "'
   const at = script.indexOf(marker)
@@ -140,8 +142,7 @@ const parseAppleScriptName = (script: string): { malformed: boolean, value: stri
     const c = script[j]
     if (c === '\\') {
       const n = script[j + 1]
-      if (n === '"') { value += '"'; j++ }
-      else if (n === '\\') { value += '\\'; j++ }
+      if (n in kAppleScriptEscapes) { value += kAppleScriptEscapes[n]; j++ }
       else value += '\\'
     } else if (c === '"') {
       terminated = true
@@ -177,13 +178,13 @@ describe('MacosAutomator.focusApp AppleScript quoting', () => {
     expect(parsed.value).toBe('say "hi"')
   })
 
-  bug.each([
+  test.each([
     ['trailing backslash', 'C:\\Users\\me\\'],
     ['embedded newline', 'line1\nline2'],
     ['backslash then quote', 'a\\"b'],
   ])('a window title with %s stays a well-formed, intact AppleScript literal', async (_name, payload) => {
-    // fails today: macos.ts escapes `"` but not `\` or newlines, so the title either breaks the
-    // literal (backslash eats the closing quote) or spans lines (syntax error).
+    // M-01: macos.ts used to escape `"` but not `\` or newlines, so a backslash ate the closing
+    // quote or un-escaped the quote that followed it, and a newline went into the script raw.
     const parsed = parseAppleScriptName(await focusScriptFor(payload))
     expect(parsed.malformed).toBe(false)
     expect(parsed.value).toBe(payload)

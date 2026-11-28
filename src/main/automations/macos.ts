@@ -3,6 +3,20 @@ import { Application } from 'types/automation';
 import applescript from 'applescript';
 import NutAutomator from './nut';
 
+// Builds an AppleScript string literal from an untrusted value. The escape character is the
+// backslash, so it must be escaped before the quote. Line breaks and tabs use the escapes that
+// keep the value intact; other control characters cannot be written in a literal and are dropped.
+export const appleScriptString = (value: string): string => {
+  const text = String(value ?? '')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\t', '\\t')
+    .replace(/\p{Cc}/gu, '')
+  return `"${text}"`
+}
+
 export default class extends NutAutomator {
 
   constructor() {
@@ -48,10 +62,10 @@ export default class extends NutAutomator {
 
         const script = `
           tell application "System Events"
-            set appProcess to first application process whose bundle identifier is "${application.id}"
+            set appProcess to first application process whose bundle identifier is ${appleScriptString(application.id)}
             tell appProcess
               set frontmost to true
-              set focusedWindow to first window whose name is "${application.window.replaceAll('"', '\\"')}"
+              set focusedWindow to first window whose name is ${appleScriptString(application.window)}
               perform action "AXRaise" of focusedWindow
               set value of attribute "AXFocused" of focusedWindow to true
             end tell
@@ -65,7 +79,7 @@ export default class extends NutAutomator {
 
         const script = `
           tell application "System Events"
-            set appProcess to first application process whose bundle identifier is "${application.id}"
+            set appProcess to first application process whose bundle identifier is ${appleScriptString(application.id)}
             tell appProcess
               set frontmost to true
             end tell
