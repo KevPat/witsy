@@ -92,8 +92,8 @@ export const getFullscreenBounds = (screen: Display): { x: number, y: number, wi
   const y = screen.workArea.y - 1;
   return {
     x, y,
-    width: screen.bounds.width - x,
-    height: screen.bounds.height - y,
+    width: screen.bounds.x + screen.bounds.width - x,
+    height: screen.bounds.y + screen.bounds.height - y,
   }
 }
 
