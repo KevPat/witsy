@@ -138,40 +138,23 @@ export class HttpServer {
     console.log(`[http] Starting server on port ${this.port}`)
     
     this.server = this.createServer((req, res) => {
-      
-      // Ignore favicon requests
-      if (req.url === '/favicon.ico') {
-        res.writeHead(404)
-        res.end()
-        return
-      }
-
-      // Process logo request
-      if (req.url === '/logo.png') {
-        const assetsFolder = process.env.DEBUG ? 'assets' : process.resourcesPath;
-        const fileData = fs.readFileSync(path.join(assetsFolder, 'icon.png'));
-        res.writeHead(200, { 'Content-Type': 'image/png' });
-        res.write(fileData);
-        res.end();
-        return;
-      }
 
       try {
         const parsedUrl = new URL(req.url || '/', `http://localhost:${this.port}`)
-        const path = parsedUrl.pathname
+        const pathname = parsedUrl.pathname
 
         // Find matching route
         let route: Route | undefined
 
         // First try exact match
-        route = this.routes.get(path)
+        route = this.routes.get(pathname)
 
         // If no exact match, try wildcard matches
         if (!route) {
           for (const [routePath, candidate] of this.routes) {
             if (routePath.endsWith('*')) {
               const prefix = routePath.slice(0, -1) // Remove the *
-              if (path.startsWith(prefix)) {
+              if (pathname.startsWith(prefix)) {
                 route = candidate
                 break
               }
@@ -180,7 +163,7 @@ export class HttpServer {
         }
 
         // the url is never logged: its path may hold a webhook token and its query what the user sent
-        const loggedPath = route ? route.path : redactPath(path)
+        const loggedPath = route ? route.path : redactPath(pathname)
         console.log(`[http] ${req.method} ${loggedPath}`)
 
         // unknown paths are checked too so that a web page cannot probe the routes
@@ -190,6 +173,26 @@ export class HttpServer {
           res.writeHead(403, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: false, error: rejection }))
           return
+        }
+
+        // the two built-in answers come after the checks, like every route: a web page gets
+        // neither the logo nor a 404 that tells this server apart from another one
+
+        // Ignore favicon requests
+        if (req.url === '/favicon.ico') {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+
+        // Process logo request (the OAuth callback page shows it)
+        if (req.url === '/logo.png') {
+          const assetsFolder = process.env.DEBUG ? 'assets' : process.resourcesPath;
+          const fileData = fs.readFileSync(path.join(assetsFolder, 'icon.png'));
+          res.writeHead(200, { 'Content-Type': 'image/png' });
+          res.write(fileData);
+          res.end();
+          return;
         }
 
         const handler = route?.handler

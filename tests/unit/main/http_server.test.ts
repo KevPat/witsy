@@ -414,6 +414,59 @@ describe('request guard', () => {
     expect(send('/api/unknown', { host: 'localhost:8090' }).statusCode).toBe(404)
   })
 
+  describe('built-in favicon and logo', () => {
+
+    const debug = process.env.DEBUG
+
+    beforeEach(() => {
+      // the logo is read from ./assets in debug mode
+      process.env.DEBUG = '1'
+    })
+
+    afterEach(() => {
+      if (debug === undefined) delete process.env.DEBUG
+      else process.env.DEBUG = debug
+    })
+
+    test.each(['/favicon.ico', '/logo.png'])('%s is refused to a web page, a rebound host and a preflight', (url) => {
+      expectRefused(send(url, { host: 'localhost:8090', origin: 'https://evil.example' }))
+      expectRefused(send(url, { host: 'localhost:8090', 'sec-fetch-site': 'cross-site' }))
+      expectRefused(send(url, { host: 'localhost:8090', 'sec-fetch-site': 'same-site' }))
+      expectRefused(send(url, { host: 'evil.example' }))
+      expectRefused(send(url, {}))
+      expectRefused(send(url, { host: 'localhost:8090' }, 'OPTIONS'))
+      expect(warn).toHaveBeenCalledTimes(6)
+    })
+
+    test('the favicon is still a 404 for a local client and for a page of this server', () => {
+      for (const headers of [{ host: 'localhost:8090' }, { host: 'localhost:8090', 'sec-fetch-site': 'same-origin' }]) {
+        const res = send('/favicon.ico', headers)
+        expect(res.statusCode).toBe(404)
+        expect(res.end).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    test('the logo is still served to a local client and to the OAuth callback page', () => {
+      // the callback page is a document of this server: its image request is same-origin
+      for (const headers of [{ host: 'localhost:8090' }, { host: '127.0.0.1:8090', 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'image' }]) {
+        const res: any = { headersSent: false, writeHead: vi.fn(), write: vi.fn(), end: vi.fn() }
+        requestListener({ method: 'GET', url: '/logo.png', headers } as any as IncomingMessage, res as ServerResponse)
+        expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'image/png' })
+        expect(res.write).toHaveBeenCalledTimes(1)
+        expect(res.write.mock.calls[0][0].subarray(1, 4).toString()).toBe('PNG')
+        expect(res.end).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    test('a registered route cannot be shadowed by them', () => {
+      // they are matched on the whole url, as before: a query string is not the built-in answer
+      expect(send('/favicon.ico?x=1', { host: 'localhost:8090' }).statusCode).toBe(404)
+      expect(send('/logo.png?x=1', { host: 'localhost:8090' }).statusCode).toBe(404)
+      expect(send('/api/test', { host: 'localhost:8090' }).statusCode).toBe(200)
+    })
+
+  })
+
   test('a route can opt out of each check separately', () => {
     const anyHost = vi.fn()
     const anyOrigin = vi.fn()

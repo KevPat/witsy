@@ -110,14 +110,17 @@ describe('local http server', () => {
     }
   })
 
-  bug('the logo request is answered when the icon file is not in the resources folder', async () => {
-    // assets/icon.png is not listed in forge extraResource, so this is every packaged build;
-    // readFileSync runs outside the try block: the exception escapes the request listener and the request is never answered
+  test('the logo request is answered when the icon file is not in the resources folder', async () => {
+    // assets/icon.png is not listed in forge extraResource, so this is every packaged build (D-17).
+    // readFileSync used to run outside the try block: the exception escaped the request listener and the
+    // request was never answered. The logo is now read after the request checks, inside the try block,
+    // so a missing file is a 500. The missing asset itself is still D-17.
     const server = newServer()
     await server.ensureServerRunning(8090)
     let res: any
     expect(() => res = get('/logo.png')).not.toThrow()
     expect(res.end).toHaveBeenCalled()
+    expect(res.writeHead).toHaveBeenCalledWith(500, { 'Content-Type': 'text/plain' })
   })
 
   bug('concurrent startup requests create a single server', async () => {
