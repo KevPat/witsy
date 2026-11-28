@@ -451,9 +451,17 @@
     "uptodate": "You are already using the latest version of @:{'common.appName'}."
   },
   "backup": {
+    "export": {
+      "done": {
+        "detail": "API keys, tokens and passwords are never written to a backup. On another computer, you will have to enter them again in Settings.",
+        "message": "Your data and settings have been saved to {file}.",
+        "title": "Backup Created"
+      }
+    },
     "restore": {
       "confirm": {
         "detail": "This will overwrite your current settings, history, experts, and commands. This action cannot be undone.",
+        "keys": "API keys, tokens and passwords are not part of a backup and are never restored. The API keys stored on this computer are kept. Only restore a backup that you made yourself or that you trust.",
         "message": "Are you sure you want to restore your data and settings from a backup?",
         "restore": "Restore",
         "title": "Restore Backup"
@@ -468,6 +476,7 @@
       "files": "Backup files",
       "restart": {
         "detail": "The application will now restart to apply all changes.",
+        "keys": "API keys, tokens and passwords are not part of a backup. The API keys that were on this computer have been kept. On a new computer, enter your keys again in Settings.",
         "message": "Data and settings have been successfully restored from backup.",
         "title": "Restore Complete"
       }
