@@ -8,9 +8,11 @@ import path from 'path'
  * Pyodide Manager - Provides sandboxed Python execution using WebAssembly
  *
  * Security model:
- * - Runs Python in WASM sandbox with no access to filesystem or network
- * - Isolated from host system
- * - Same security model as Pyodide in browsers
+ * - Python runs in WASM: the host filesystem and environment variables are not visible to it
+ * - `import js` and `pyodide.code.run_js` resolve against an empty object, not the main process globals
+ * - This is not a complete sandbox: Pyodide lives in the main process and a JavaScript object that
+ *   Python gets hold of (JsProxy) can still lead back to the host realm. Isolating that needs a
+ *   separate process without Node.js access.
  *
  * Features:
  * - Lazy loading: Only initializes on first use
@@ -43,6 +45,10 @@ const FILES_TO_CACHE = [
   'pyodide.js',
   'pyodide.mjs',
 ]
+
+// What python sees as the `js` module. The default is the global object of the process that loaded
+// Pyodide, which here would be the main process (process.env, require...).
+const createJsGlobals = (): object => Object.create(null)
 
 // Runtime state
 let pyodideInstance: PyodideInterface | null = null
@@ -197,7 +203,8 @@ async function initializePyodide(): Promise<PyodideInterface> {
 
     initializationPromise = loadPyodide({
       indexURL: cacheDir,
-      packages: PYODIDE_PACKAGES
+      packages: PYODIDE_PACKAGES,
+      jsglobals: createJsGlobals(),
     })
     pyodideInstance = await initializationPromise
 
@@ -210,7 +217,8 @@ async function initializePyodide(): Promise<PyodideInterface> {
     // Fallback to CDN - use default indexURL (Pyodide handles CDN loading in Node.js)
     // Note: Don't specify indexURL with URLs in Node.js, it tries to parse them as paths
     initializationPromise = loadPyodide({
-      packages: PYODIDE_PACKAGES
+      packages: PYODIDE_PACKAGES,
+      jsglobals: createJsGlobals(),
     })
 
     try {

@@ -217,8 +217,26 @@ describe('Pyodide Manager', () => {
     // Should use filesystem path for cached files (not file:// URL in Node.js)
     expect(mockLoadPyodide).toHaveBeenCalledWith({
       indexURL: expect.stringContaining('pyodide-cache'),
-      packages: ['numpy', 'pandas', 'scipy', 'scikit-learn', 'statsmodels', 'matplotlib']
+      packages: ['numpy', 'pandas', 'scipy', 'scikit-learn', 'statsmodels', 'matplotlib'],
+      jsglobals: expect.any(Object),
     })
+  })
+
+  test('should not give python the globals of the main process', async () => {
+    mockLoadPyodide
+      .mockRejectedValueOnce(new Error('Cache initialization failed'))
+      .mockResolvedValueOnce(mockPyodide)
+    mockPyodide.runPythonAsync.mockResolvedValue(42)
+
+    await runPythonCode('1+1')
+
+    // both the cache and the CDN path
+    expect(mockLoadPyodide).toHaveBeenCalledTimes(2)
+    for (const [options] of mockLoadPyodide.mock.calls) {
+      expect(options.jsglobals).not.toBe(globalThis)
+      expect(Object.getPrototypeOf(options.jsglobals)).toBeNull()
+      expect(Reflect.ownKeys(options.jsglobals)).toEqual([])
+    }
   })
 
   test('should download files if cache incomplete', async () => {
@@ -254,7 +272,8 @@ describe('Pyodide Manager', () => {
 
     // Second call should include packages but no indexURL
     expect(mockLoadPyodide.mock.calls[1][0]).toEqual({
-      packages: ['numpy', 'pandas', 'scipy', 'scikit-learn', 'statsmodels', 'matplotlib']
+      packages: ['numpy', 'pandas', 'scipy', 'scikit-learn', 'statsmodels', 'matplotlib'],
+      jsglobals: expect.any(Object),
     })
   })
 
