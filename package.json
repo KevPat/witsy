@@ -42,7 +42,8 @@
     "verify:archiver": "node tools/verify.mjs archiver",
     "verify:rfc6902": "node tools/verify.mjs rfc6902",
     "typecheck": "npm run lint",
-    "type-check": "npm run typecheck"
+    "type-check": "npm run typecheck",
+    "verify:cli": "node tools/verify.mjs cli"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.4.0",

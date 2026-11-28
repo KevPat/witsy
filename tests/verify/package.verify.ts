@@ -5,6 +5,9 @@
 // - the release build starts and answers on its local API;
 // - app.asar holds every runtime dependency the main process loads (the bundle keeps them external),
 //   no development dependency and no key file;
+// - officeparser 8 and what it loads (its pdfjs-dist 6.5, tesseract.js, the optional native
+//   @napi-rs/canvas) are packaged, load in the packaged app and extract text from docx, pptx, xlsx and pdf;
+// - the size of the packaged app (recorded, compared by hand between runs);
 // - the CLI launcher runs on the app binary.
 //
 
@@ -13,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { BuildVariant, executablePath, makeHome, record, repoRoot, resourcesPath, sleep, waitFor } from './harness'
+import { BuildVariant, buildFolder, executablePath, launchApp, makeHome, record, repoRoot, resourcesPath, sleep, waitFor, walkFiles } from './harness'
 
 const suite = 'package'
 const ENABLE = 49 // '1'
@@ -164,6 +167,99 @@ describe('app.asar', () => {
     record(suite, { devDependenciesInAsar: devFound, keyFilesInAsar: keyFiles, asarEntries: files.length })
     expect(devFound).toEqual([])
     expect(keyFiles).toEqual([])
+  })
+})
+
+describe('officeparser 8 in the packaged app', () => {
+  const asarList = async (variant: BuildVariant) => {
+    const asar = await import('@electron/asar')
+    return new Set(asar.listPackage(path.join(resourcesPath(variant), 'app.asar'), { isPack: false }).map((p: string) => p.replace(/\\/g, '/')))
+  }
+  const asarJson = async (variant: BuildVariant, file: string) => {
+    const asar = await import('@electron/asar')
+    return JSON.parse(asar.extractFile(path.join(resourcesPath(variant), 'app.asar'), file).toString('utf8'))
+  }
+  // where node would find a package from officeparser: its own node_modules first, then the top
+  const fromOfficeparser = (files: Set<string>, name: string) => [`/node_modules/officeparser/node_modules/${name}`, `/node_modules/${name}`].find((d) => files.has(`${d}/package.json`)) || null
+
+  test('officeparser, its pdfjs-dist 6.5 and tesseract.js are in app.asar; @napi-rs/canvas, when there, has its binary unpacked', async () => {
+    const files = await asarList('release')
+    const office = await asarJson('release', 'node_modules/officeparser/package.json')
+    const pdfjsDir = fromOfficeparser(files, 'pdfjs-dist')
+    const tesseractDir = fromOfficeparser(files, 'tesseract.js')
+    const pdfjs = pdfjsDir ? await asarJson('release', `${pdfjsDir.slice(1)}/package.json`) : null
+    const appPdfjs = await asarJson('release', 'node_modules/pdfjs-dist/package.json').catch(() => null)
+    // the optional canvas of pdfjs-dist: a .node file only loads from app.asar.unpacked
+    const canvasDir = [`${pdfjsDir}/node_modules/@napi-rs/canvas`, '/node_modules/officeparser/node_modules/@napi-rs/canvas', '/node_modules/@napi-rs/canvas'].find((d) => files.has(`${d}/package.json`)) || null
+    const unpackedRoot = path.join(resourcesPath('release'), 'app.asar.unpacked')
+    const nativeInAsar = [...files].filter((f) => f.includes('/@napi-rs/canvas') && f.endsWith('.node'))
+    const nativeUnpacked = fs.existsSync(unpackedRoot) ? walkFiles(unpackedRoot).filter((f) => f.replace(/\\/g, '/').includes('/@napi-rs/canvas') && f.endsWith('.node')).map((f) => path.relative(unpackedRoot, f)) : []
+    record(suite, { officeparser: { version: office.version, pdfjsDist: pdfjs?.version ?? null, pdfjsDir, appPdfjsDist: appPdfjs?.version ?? null, tesseractDir, canvasDir, nativeCanvasUnpacked: nativeUnpacked, nativeCanvasInAsar: nativeInAsar } })
+    expect(office.version).toMatch(/^8\./)
+    expect(pdfjs?.version).toMatch(/^6\.5\./)
+    expect(tesseractDir).not.toBeNull()
+    if (canvasDir) expect(nativeUnpacked.length, 'a native canvas binary packed inside app.asar cannot be loaded').toBeGreaterThan(0)
+  })
+
+  test('the packaged app loads them and extracts text from docx, pptx, xlsx and pdf', async () => {
+    const home = makeHome('pkg-officeparser')
+    const launched = await launchApp(home)
+    try {
+      const fixtures = path.join(repoRoot, 'tests', 'fixtures')
+      const extracted: Record<string, string> = {}
+      for (const [file, format] of [['sample.docx', 'docx'], ['sample.pptx', 'pptx'], ['sample.xlsx', 'xlsx'], ['sample.pdf', 'pdf']]) {
+        const b64 = fs.readFileSync(path.join(fixtures, file)).toString('base64')
+        extracted[format] = await launched.window.evaluate(([b64, format]) => (window as any).api.file.extractText(b64, format), [b64, format])
+      }
+      // officeparser itself, on a pdf (its own pdfjs-dist 6.5), and the optional native canvas, from the main process
+      const pdf = fs.readFileSync(path.join(fixtures, 'sample.pdf')).toString('base64')
+      const direct = await launched.app.evaluate(async (_electron, pdf) => {
+        const g = globalThis as any
+        const mod = g.process.mainModule.require('module')
+        const req = mod.createRequire(g.process.resourcesPath + '/app.asar/node_modules/officeparser/package.json')
+        const out: Record<string, any> = {}
+        try {
+          const op = req('officeparser')
+          const ast = await op.parseOffice(Buffer.from(pdf, 'base64'), { fileType: 'pdf', allowRemoteAssets: false, ocr: false })
+          out.pdfText = (await ast.to('text', { includeImages: false })).value
+        } catch (e: any) { out.pdfError = String(e?.message || e) }
+        try { out.pdfjs = req('pdfjs-dist/package.json').version } catch (e: any) { out.pdfjsError = String(e?.message || e) }
+        try { out.tesseract = typeof req('tesseract.js').createWorker } catch (e: any) { out.tesseractError = String(e?.message || e) }
+        try {
+          const pdfjsReq = mod.createRequire(req.resolve('pdfjs-dist/package.json'))
+          const canvas = pdfjsReq('@napi-rs/canvas')
+          const c = canvas.createCanvas(4, 4)
+          c.getContext('2d').fillRect(0, 0, 4, 4)
+          out.canvas = c.toBuffer('image/png').length > 0 ? 'loaded and drew' : 'loaded'
+        } catch (e: any) { out.canvas = `not loaded: ${String(e?.code || e?.message || e).slice(0, 160)}` }
+        return out
+      }, pdf)
+      record(suite, { officeparserLoad: { extracted: Object.fromEntries(Object.entries(extracted).map(([k, v]) => [k, String(v).slice(0, 80)])), direct: { ...direct, pdfText: String(direct.pdfText ?? '').slice(0, 80) } } })
+      expect(extracted.docx).toContain('Hello from Word')
+      expect(extracted.pptx).toContain('Hello from PowerPoint')
+      expect(extracted.xlsx).toContain('Sheet')
+      expect(extracted.pdf).toContain('Hello from PDF')
+      expect(direct.pdfError).toBeUndefined()
+      expect(direct.pdfText).toContain('Hello from PDF')
+      expect(direct.pdfjs).toMatch(/^6\.5\./)
+      expect(direct.tesseract).toBe('function')
+    } finally {
+      await launched.close()
+    }
+  }, 180000)
+
+  test('size of the packaged app (recorded)', () => {
+    const size = (dir: string) => walkFiles(dir).reduce((n, f) => n + fs.statSync(f).size, 0)
+    const root = buildFolder('release')
+    const res = resourcesPath('release')
+    const sizes = {
+      appBytes: size(root),
+      resourcesBytes: size(res),
+      appAsarBytes: fs.statSync(path.join(res, 'app.asar')).size,
+      unpackedBytes: fs.existsSync(path.join(res, 'app.asar.unpacked')) ? size(path.join(res, 'app.asar.unpacked')) : 0,
+    }
+    record(suite, { packagedSize: sizes })
+    expect(sizes.appAsarBytes).toBeGreaterThan(0)
   })
 })
 

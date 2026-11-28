@@ -35,6 +35,7 @@ export const suites = {
   sandbox: [],
   archiver: [],
   rfc6902: [],
+  cli: process.platform === 'win32' ? ['release', 'release-node'] : [],
 }
 
 const args = process.argv.slice(2)
