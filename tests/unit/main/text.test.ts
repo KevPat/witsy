@@ -124,13 +124,14 @@ test('PDF text reconstruction ignores same-height prose rows', () => {
   expect(text).not.toContain('Notice text:')
 })
 
-test('Word', async () => {
+// officeparser 8's first import is slow under a full parallel run
+test('Word', { timeout: 30000 }, async () => {
   const contents = fs.readFileSync('./tests/fixtures/sample.docx', 'base64')
   const text = await getTextContent(contents, 'docx')
   expect(text).toContain('Hello from Word')
 })
 
-test('PowerPoint', async () => {
+test('PowerPoint', { timeout: 30000 }, async () => {
   const contents = fs.readFileSync('./tests/fixtures/sample.pptx', 'base64')
   const text = await getTextContent(contents, 'pptx')
   expect(text).toContain('Hello from PowerPoint')

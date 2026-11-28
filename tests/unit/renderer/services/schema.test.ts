@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'vitest'
 import { generateSimpleSchema, parseSimpleFormatToZod, processJsonSchema } from '@services/schema'
-import { z } from 'zod'
+import { z } from 'zod/v3'
 
 describe('generateSimpleSchema', () => {
   test('handles primitive types', () => {
