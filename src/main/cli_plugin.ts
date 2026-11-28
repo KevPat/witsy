@@ -80,19 +80,23 @@ export default class CliPlugin extends Plugin {
   }
 
   getDescription(): string {
-    const access = this.config.workDirAccess === 'rw' ? 'read and write' : 'read'
-    return `Filesystem operations to ${access} files and run shell commands in the working directory: ${this.config.workDirPath}`
+    if (this.config.workDirAccess === 'rw') {
+      return `Filesystem operations to read and write files and run shell commands in the working directory: ${this.config.workDirPath}`
+    }
+    return `Filesystem operations to read files in the working directory: ${this.config.workDirPath}`
   }
 
   getParameters(): PluginParameter[] {
-    const writeActions: CliAction[] = this.config.workDirAccess === 'rw'
-      ? ['edit_file', 'write_file', 'create_directory', 'delete_file', 'move_file']
+    // a shell command can write anything, so run_command is a write action
+    const canWrite = this.config.workDirAccess === 'rw'
+    const writeActions: CliAction[] = canWrite
+      ? ['run_command', 'edit_file', 'write_file', 'create_directory', 'delete_file', 'move_file']
       : []
 
-    return [{
+    const parameters: PluginParameter[] = [{
       name: 'action',
       type: 'string',
-      enum: ['read_file', 'list_files', 'search', 'run_command', ...writeActions],
+      enum: ['read_file', 'list_files', 'search', ...writeActions],
       description: 'The operation to perform',
       required: true,
     }, {
@@ -166,6 +170,10 @@ export default class CliPlugin extends Plugin {
       description: 'Maximum number of matches to return (for search, default: 100)',
       required: false,
     }]
+
+    return canWrite
+      ? parameters
+      : parameters.filter((parameter) => !['command', 'cwd', 'timeout'].includes(parameter.name))
   }
 
   getPreparationDescription(): string {
@@ -461,6 +469,15 @@ export default class CliPlugin extends Plugin {
           return this.moveFile(parameters.path, parameters.newPath)
 
         case 'run_command':
+          if (this.config.workDirAccess !== 'rw') {
+            return {
+              success: false,
+              stdout: '',
+              stderr: 'Shell commands are not available with read-only access. Use read_file, list_files and search instead.',
+              exitCode: 1,
+              error: 'Write access not granted'
+            }
+          }
           if (!parameters.command) {
             return { success: false, error: 'Missing command parameter' }
           }
@@ -760,7 +777,8 @@ export default class CliPlugin extends Plugin {
     cwd?: string,
     timeout?: number
   ): Promise<CliResponse> {
-    // Analyze command for blocked/dangerous patterns
+    // Advisory only (see analyzeCommand): this sends the model to the tracked file actions and
+    // stops obvious mistakes. What a command can reach is not restricted by it.
     const analysis = analyzeCommand(command, this.config.workDirPath)
 
     if (analysis.blockedCommand) {

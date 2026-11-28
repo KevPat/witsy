@@ -158,12 +158,12 @@ describe('CliPlugin read-only mode', () => {
     expect(fs.readdirSync(workDir)).toEqual(['data.txt'])
   })
 
-  bug.runIf(isPosix)('run_command cannot modify files when access is read-only', async () => {
+  test.runIf(isPosix)('run_command cannot modify files when access is read-only', async () => {
     await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'echo changed > data.txt' })
     expect(fs.readFileSync(path.join(workDir, 'data.txt'), 'utf-8')).toBe('original')
   })
 
-  bug.runIf(isPosix)('run_command cannot delete files when access is read-only', async () => {
+  test.runIf(isPosix)('run_command cannot delete files when access is read-only', async () => {
     // "rm" is on the deny list, "find -delete" is not
     await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'find . -name data.txt -delete' })
     expect(fs.existsSync(path.join(workDir, 'data.txt'))).toBe(true)

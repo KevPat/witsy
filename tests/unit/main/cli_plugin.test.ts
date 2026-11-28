@@ -62,6 +62,13 @@ describe('CliPlugin', () => {
       expect(roPlugin.getDescription()).toContain('read')
       expect(roPlugin.getDescription()).not.toContain('read and write')
     })
+
+    test('mentions shell commands for rw access only', () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      expect(plugin.getDescription()).toContain('run shell commands')
+      expect(roPlugin.getDescription()).not.toContain('shell')
+      expect(roPlugin.getDescription()).toContain(tempDir)
+    })
   })
 
   describe('getParameters', () => {
@@ -74,6 +81,8 @@ describe('CliPlugin', () => {
       expect(actionParam?.enum).toContain('create_directory')
       expect(actionParam?.enum).toContain('delete_file')
       expect(actionParam?.enum).toContain('move_file')
+      expect(actionParam?.enum).toContain('run_command')
+      expect(params.map(p => p.name)).toEqual(expect.arrayContaining(['command', 'cwd', 'timeout']))
     })
 
     test('excludes write actions for ro access', () => {
@@ -83,6 +92,17 @@ describe('CliPlugin', () => {
       expect(actionParam?.enum).toContain('read_file')
       expect(actionParam?.enum).not.toContain('write_file')
       expect(actionParam?.enum).not.toContain('edit_file')
+    })
+
+    test('offers run_command and its parameters for rw access only', () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      const params = roPlugin.getParameters()
+      expect(params.find(p => p.name === 'action')?.enum).toEqual(['read_file', 'list_files', 'search'])
+      const names = params.map(p => p.name)
+      expect(names).not.toContain('command')
+      expect(names).not.toContain('cwd')
+      expect(names).not.toContain('timeout')
+      expect(names).toEqual(expect.arrayContaining(['path', 'start', 'end', 'pattern', 'glob']))
     })
   })
 
@@ -1015,6 +1035,75 @@ describe('CliPlugin', () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('blocked')
+    })
+
+    test('blocks rm and mv wherever they are the command', async () => {
+      fs.writeFileSync(path.join(tempDir, 'keep.txt'), 'keep')
+      for (const command of ['/bin/rm keep.txt', 'echo a && rm keep.txt', 'echo $(rm keep.txt)', 'ls | xargs rm', 'sh -c "mv keep.txt gone.txt"']) {
+        const result = await plugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toContain('blocked')
+        expect(result.stderr, command).toContain('Use the file operation actions instead')
+      }
+      expect(fs.readdirSync(tempDir)).toEqual(['keep.txt'])
+    })
+
+    test('blocks dangerous commands', async () => {
+      for (const command of ['sudo ls', 'dd if=/dev/zero of=out.bin count=1', 'chmod +x script.sh']) {
+        const result = await plugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toBe('Dangerous command blocked')
+      }
+      expect(fs.readdirSync(tempDir)).toEqual([])
+    })
+
+    test('runs commands that only mention a blocked word', async () => {
+      fs.writeFileSync(path.join(tempDir, 'format.txt'), 'formatted')
+      fs.writeFileSync(path.join(tempDir, 'dd.txt'), 'dd')
+
+      const cat = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'cat format.txt' })
+      expect(cat.success).toBe(true)
+      expect(cat.stdout).toContain('formatted')
+
+      const echo = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'echo rm mv del sudo' })
+      expect(echo.success).toBe(true)
+      expect(echo.stdout).toContain('rm mv del sudo')
+
+      const grep = await plugin.execute({ model: 'test' }, { action: 'run_command', command: 'ls | grep dd' })
+      expect(grep.success).toBe(true)
+      expect(grep.stdout).toContain('dd.txt')
+    })
+
+    test('is refused with ro access', async () => {
+      fs.writeFileSync(path.join(tempDir, 'data.txt'), 'original')
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+
+      const commands = [
+        'echo hello',
+        'ls',
+        'echo changed > data.txt',
+        'touch created.txt',
+        'find . -name data.txt -delete',
+        'rm data.txt',
+      ]
+      for (const command of commands) {
+        const result = await roPlugin.execute({ model: 'test' }, { action: 'run_command', command })
+        expect(result.success, command).toBe(false)
+        expect(result.error, command).toContain('Write access not granted')
+        expect(result.stdout, command).toBe('')
+        expect(result.exitCode, command).toBe(1)
+      }
+
+      // nothing ran
+      expect(fs.readdirSync(tempDir)).toEqual(['data.txt'])
+      expect(fs.readFileSync(path.join(tempDir, 'data.txt'), 'utf-8')).toBe('original')
+    })
+
+    test('is refused with ro access before its parameters are looked at', async () => {
+      const roPlugin = new CliPlugin({ workDirPath: tempDir, workDirAccess: 'ro' })
+      const result = await roPlugin.execute({ model: 'test' }, { action: 'run_command' })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Write access not granted')
     })
 
     test('allows command chaining with &&', async () => {
