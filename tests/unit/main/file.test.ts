@@ -2,9 +2,24 @@
 import { vi, expect, test } from 'vitest'
 import * as file from '@main/file'
 import { app, dialog } from 'electron'
+import * as childProcess from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>()
+  const mocked = {
+    ...actual,
+    exec: vi.fn(actual.exec),
+    execSync: vi.fn(actual.execSync),
+    execFile: vi.fn(actual.execFile),
+    execFileSync: vi.fn(actual.execFileSync),
+    spawn: vi.fn(actual.spawn),
+    spawnSync: vi.fn(actual.spawnSync),
+  }
+  return { ...mocked, default: mocked }
+})
 
 vi.mock('electron', async() => {
   return {
@@ -45,6 +60,95 @@ test('Find program', async () => {
     expect(file.findProgram(app, 'sh')).toMatch(/^.*\/sh$/)
     expect(file.findProgram(app, 'sh2')).toBeNull()
   }
+})
+
+test('Find program runs the lookup tool without a shell', async () => {
+  vi.mocked(childProcess.execFileSync).mockClear()
+  const program = process.platform == 'win32' ? 'cmd.exe' : 'sh'
+  expect(file.findProgram(app, program)).toBeTruthy()
+  expect(childProcess.execFileSync).toHaveBeenCalledTimes(1)
+  const [tool, args, options] = vi.mocked(childProcess.execFileSync).mock.calls[0] as [string, string[], Record<string, unknown>]
+  expect(tool).toBe(process.platform == 'win32' ? 'where' : 'which')
+  expect(args).toStrictEqual([program])
+  expect(options.shell).toBeFalsy()
+  expect(options.timeout).toBeGreaterThan(0)
+  expect(childProcess.execSync).not.toHaveBeenCalled()
+  expect(childProcess.exec).not.toHaveBeenCalled()
+})
+
+test('Find program accepts usual program names', async () => {
+  vi.mocked(childProcess.execFileSync).mockClear()
+  vi.mocked(childProcess.execFileSync).mockImplementation(((tool: string, args: string[]) => `/usr/bin/${args[0]}\r\n/opt/bin/${args[0]}\n`) as any)
+  try {
+    for (const program of ['python3', 'python3.12', 'node', 'npx', 'uvx', 'g++', 'notepad.exe', 'docker-compose', 'x86_64-linux-gnu-gcc', '7z']) {
+      expect(file.findProgram(app, program), program).toBe(`/usr/bin/${program}`)
+    }
+    vi.mocked(childProcess.execFileSync).mockImplementation((() => '\n') as any)
+    expect(file.findProgram(app, 'python3')).toBeNull()
+  } finally {
+    const actual = await vi.importActual<typeof import('child_process')>('child_process')
+    vi.mocked(childProcess.execFileSync).mockImplementation(actual.execFileSync as any)
+  }
+})
+
+test('Find program refuses anything but a bare program name', async () => {
+  const marker = path.join(os.tmpdir(), `witsy-find-program-${process.pid}`)
+  fs.rmSync(marker, { force: true })
+  for (const fn of [childProcess.exec, childProcess.execSync, childProcess.execFile, childProcess.execFileSync, childProcess.spawn, childProcess.spawnSync]) {
+    vi.mocked(fn).mockClear()
+  }
+  const names: any[] = [
+    `python3; touch ${marker}`,
+    `sh; touch "${marker}"`,
+    `sh && touch ${marker}`,
+    `sh | touch ${marker}`,
+    `sh > ${marker}`,
+    '`id`',
+    `\`touch ${marker}\``,
+    '$(id)',
+    `$(touch ${marker})`,
+    'a b',
+    ' sh',
+    'sh ',
+    'sh\t',
+    '../x',
+    '..',
+    '.',
+    './sh',
+    '/bin/sh',
+    'C:\\Windows\\System32\\cmd.exe',
+    'bin\\sh',
+    'python3\nrm',
+    'python3\r\nrm',
+    'sh\n',
+    'sh\0',
+    '"sh"',
+    `'sh'`,
+    'sh&',
+    'sh*',
+    'sh?',
+    '$PATH',
+    '$env:PATH:sh',
+    '%COMSPEC%',
+    '~',
+    '-a',
+    '--help',
+    '/?',
+    '',
+    'a'.repeat(129),
+    null,
+    undefined,
+    42,
+    ['sh'],
+    { toString: () => 'sh' },
+  ]
+  for (const name of names) {
+    expect(file.findProgram(app, name), JSON.stringify(name)).toBeNull()
+  }
+  for (const fn of [childProcess.exec, childProcess.execSync, childProcess.execFile, childProcess.execFileSync, childProcess.spawn, childProcess.spawnSync]) {
+    expect(fn).not.toHaveBeenCalled()
+  }
+  expect(fs.existsSync(marker)).toBe(false)
 })
 
 test('Get file contents', async () => {

@@ -1,5 +1,5 @@
 import autolib from 'autolib';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { App, dialog } from 'electron';
 import icns from 'icns-lib';
 import { minimatch } from 'minimatch';
@@ -382,11 +382,23 @@ export const normalizePath = (app: App, filePath: string): string => {
   }
 }
 
-export const findProgram = (app: App, program: string) => {
+// a bare program name: no path, no whitespace, nothing a shell or the lookup tool could interpret
+const PROGRAM_NAME_PATTERN = /^[A-Za-z0-9_+][A-Za-z0-9._+-]{0,127}$/
+
+export const findProgram = (app: App, program: string): string|null => {
+  if (typeof program !== 'string' || !PROGRAM_NAME_PATTERN.test(program)) {
+    console.error('Refusing to look up an invalid program name');
+    return null;
+  }
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
-    const path = execSync(`${which} ${program}`).toString().split('\n')[0].trim();
-    return path;
+    const output = execFileSync(which, [program], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.split('\n')[0].trim() || null;
   } catch (error) {
     console.error(`Error while finding program ${program}`, error);
   }
