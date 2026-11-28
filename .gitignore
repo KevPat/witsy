@@ -107,3 +107,6 @@ autolib/build
 
 # claude code
 .claude/settings*.json
+
+# verification suites (npm run verify)
+verify-report/
