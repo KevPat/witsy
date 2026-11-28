@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Skill support with easy install from GitHub and skills.sh
 - Scratchpad enhancements: auto-save, model response view, version history
+- Witsy CLI on Windows: `witsy` from cmd.exe and PowerShell
 
 ### Changed
 - Faster and nicer PDF Export

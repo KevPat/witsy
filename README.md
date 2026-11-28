@@ -318,6 +318,10 @@ witsy     # macOS and Windows
 
 The CLI will connect to your running Witsy application and provide an interactive chat interface. It uses the same configuration (engine, model, API keys) as your desktop application.
 
+**Windows**
+
+The installer (Squirrel) copies the `witsy.cmd` and `witsy.ps1` launchers next to the `app-X.Y.Z` folders of Witsy (`%LOCALAPPDATA%\Witsy`) and adds that folder to your user PATH; the launchers always run the highest installed version. A zip install adds its own `resources\cli\bin` folder to the PATH instead. Open a new terminal afterwards. `witsy` then works from cmd.exe (`witsy.cmd`) and from PowerShell (`witsy.ps1`, Windows PowerShell 5.1 or PowerShell 7). If the execution policy does not allow scripts, run `witsy.cmd` from PowerShell instead; the launchers never change the policy. `witsy.ps1` writes straight to the console: to capture or pipe the output inside PowerShell, use `witsy.cmd` as well. The launchers start the `Witsy.exe` of the app with `ELECTRON_RUN_AS_NODE` (set for the CLI process only), or, in a build made with `WITSY_CLI_RUNTIME=node`, the `node.exe` found on your PATH (Node.js 18 or later; the current folder is never searched).
+
 **Available Commands**
 - `/help` - Show available commands
 - `/model` - Select engine and model

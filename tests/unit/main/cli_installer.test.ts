@@ -4,6 +4,7 @@ import { execFileSync, execSync } from 'child_process'
 import { app } from 'electron'
 import { checkAndInstallCLI, retryInstallCLI } from '@main/cli_installer'
 import * as config from '@main/config'
+import fs from 'fs'
 
 // The Windows branch is exercised on any OS: process.platform is stubbed, `path` is path.win32,
 // and child_process is mocked so that no command ever runs.
@@ -121,6 +122,24 @@ describe('Windows CLI install', () => {
     }) as any)
     expect(await retryInstallCLI()).toEqual({ success: false })
     expect(execFileSync).toHaveBeenCalledTimes(2)
+  })
+
+  test('a Squirrel install copies both launchers next to its app-X.Y.Z folders and puts that folder on the PATH', async () => {
+    const calls = await install('C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy\\app-1.10.0\\Witsy.exe', 'C:\\Users\\me\\bin')
+    expect(vi.mocked(fs.copyFileSync).mock.calls).toEqual([
+      ['C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy\\app-1.10.0\\resources\\cli\\bin\\witsy.cmd', 'C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy\\witsy.cmd'],
+      ['C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy\\app-1.10.0\\resources\\cli\\bin\\witsy.ps1', 'C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy\\witsy.ps1'],
+    ])
+    expect(calls[1]).toEqual(['powershell.exe', [...kPowerShellArgs, kAppendScript], { env: { ...process.env, WITSY_CLI_DIR: 'C:\\Users\\A & B (x86)\\AppData\\Local\\Witsy' } }])
+  })
+
+  test.each([
+    ['a folder above the app named app-*', 'D:\\app-tools\\Witsy'],
+    ['an app folder that is not a version', 'D:\\Tools\\app-witsy'],
+  ])('a zip install in %s keeps its own launchers on the PATH', async (_name, dir) => {
+    const calls = await install(`${dir}\\Witsy.exe`, 'C:\\Users\\me\\bin')
+    expect(fs.copyFileSync).not.toHaveBeenCalled()
+    expect(calls[1]).toEqual(['powershell.exe', [...kPowerShellArgs, kAppendScript], { env: { ...process.env, WITSY_CLI_DIR: `${dir}\\resources\\cli\\bin` } }])
   })
 
   test('a successful PATH update reports success', async () => {

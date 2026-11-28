@@ -214,21 +214,16 @@ async function installWindowsCLI(): Promise<boolean> {
   const appPath = app.getPath('exe')
   const appDir = path.dirname(appPath)
 
-  // Detect if we're running under Squirrel (versioned app-X.X.X folder)
-  const isSquirrel = appDir.includes('\\app-')
+  // Squirrel runs the app from a versioned folder, <root>\app-X.Y.Z: the launchers are copied to <root>,
+  // where they pick the highest version by themselves. Only the folder of the app itself counts (a zip
+  // install may sit below any folder) and its name is the one the launchers look for.
+  const isSquirrel = /^app-[0-9]+\.[0-9]+\.[0-9]+$/i.test(path.basename(appDir))
 
   let targetDir: string
   let sourceCmd: string
 
   if (isSquirrel) {
-    // Extract root directory (parent of app-X.X.X)
-    const appMatch = appDir.match(/^(.*?)\\app-[^\\]+$/)
-    if (!appMatch) {
-      log.error('Failed to extract root directory from Squirrel path:', appDir)
-      return false
-    }
-
-    const rootDir = appMatch[1]
+    const rootDir = path.dirname(appDir)
     targetDir = rootDir
 
     for (const ext of ['.cmd', '.ps1']) {
