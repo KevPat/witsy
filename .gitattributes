@@ -1,0 +1,5 @@
+# cmd.exe misreads the labels of a batch file without CRLF line ends: bin/*.cmd is stored with them, as is
+bin/*.cmd -text
+bin/*.ps1 text eol=crlf
+# the bash launcher (macOS, Linux, Git Bash) must keep LF: bash fails on CRLF
+bin/witsy text eol=lf

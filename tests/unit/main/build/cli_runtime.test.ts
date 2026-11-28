@@ -80,12 +80,25 @@ describe('the launchers', () => {
 
   const launcher = read('bin/witsy').replace(/\r/g, '')
 
-  test('the Windows launchers do not start the app binary as Node.js', () => {
-    for (const file of ['bin/witsy.cmd', 'bin/witsy.ps1']) {
-      const script = read(file)
-      expect(script, file).not.toContain('ELECTRON_RUN_AS_NODE')
-      expect(script, file).not.toMatch(/Witsy\.exe/i)
-    }
+  test('the Windows launchers read the same choice and only ask the app binary to be Node.js for the electron runtime', () => {
+    // what they do is tested in cli_windows_launchers.test.ts
+    const cmd = read('bin/witsy.cmd').replace(/\r/g, '')
+    const cmdLines = cmd.split('\n')
+    const cmdChoice = cmdLines.indexOf('if "%WITSY_RUNTIME%"=="node" goto :run_node')
+    const cmdUse = cmdLines.indexOf('set "ELECTRON_RUN_AS_NODE=1"')
+    expect(cmd).toContain('"%WITSY_CLI_DIR%runtime"')
+    expect(cmdChoice).toBeGreaterThan(-1)
+    expect(cmdUse).toBeGreaterThan(cmdChoice)
+    expect(cmdLines.slice(cmdChoice, cmdUse).some((line) => line.includes('%WITSY_NODE%'))).toBe(false)
+
+    const ps1 = read('bin/witsy.ps1')
+    expect(ps1).toContain('$runtimeFile = Join-Path (Split-Path -Parent $cli) \'runtime\'')
+    const psChoice = ps1.indexOf('if ($runtime -eq \'node\') {')
+    const psElse = ps1.indexOf('} else {', psChoice)
+    const psUse = ps1.indexOf('$environment[\'ELECTRON_RUN_AS_NODE\'] = \'1\'')
+    expect(psChoice).toBeGreaterThan(-1)
+    expect(psUse).toBeGreaterThan(psElse)
+    expect(psElse).toBeGreaterThan(psChoice)
   })
 
   test('bin/witsy only asks the app binary to be Node.js on one line, after the choice was read', () => {
