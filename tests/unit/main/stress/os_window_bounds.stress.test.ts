@@ -1,8 +1,7 @@
 
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Display } from 'electron'
 import { getFullscreenBounds, titleBarOptions } from '@main/window'
-import { bug } from './bug'
 
 // @ts-expect-error test globals injected by the bundler at runtime
 global.MAIN_WINDOW_VITE_DEV_SERVER_URL = 'http://localhost:3000/'
@@ -147,29 +146,57 @@ describe('getFullscreenBounds', () => {
 
 })
 
-describe('titleBarOptions height on win32', () => {
+describe('titleBarOptions height', () => {
 
   const original = Object.getOwnPropertyDescriptor(process, 'platform')!
 
-  beforeEach(() => {
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-  })
+  const overlayHeight = (platform: string, opts?: unknown): number | undefined => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+    const options = titleBarOptions(opts)
+    expect(options.titleBarOverlay).toBeTruthy()
+    return (options.titleBarOverlay as { height?: number }).height
+  }
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', original)
   })
 
   test('an explicit height yields a finite overlay height', () => {
-    const opts = titleBarOptions({ height: 48 })
-    expect(opts.titleBarOverlay).toBeTruthy()
-    expect((opts.titleBarOverlay as { height: number }).height).toBe(47)
+    expect(overlayHeight('win32', { height: 48 })).toBe(47)
+    expect(overlayHeight('win32', { height: 32 })).toBe(31)
   })
 
-  bug('a caller that omits height does not produce NaN on win32', () => {
-    // fails today: `opts.height - 1` is `undefined - 1` === NaN when the caller omits height.
-    const opts = titleBarOptions()
-    const height = (opts.titleBarOverlay as { height: number }).height
+  test('a caller that omits height does not produce NaN on win32', () => {
+    // used to fail: `opts.height - 1` is `undefined - 1` === NaN when the caller omits height.
+    const height = overlayHeight('win32')
     expect(Number.isNaN(height)).toBe(false)
+    expect(height).toBe(47)
+  })
+
+  test.each([
+    ['no height key', {}],
+    ['undefined', { height: undefined }],
+    ['null', { height: null }],
+    ['NaN', { height: NaN }],
+    ['Infinity', { height: Infinity }],
+    ['not a number', { height: 'tall' }],
+    ['zero', { height: 0 }],
+    ['one (overlay would be 0)', { height: 1 }],
+    ['negative', { height: -20 }],
+  ])('win32: an unusable height (%s) falls back to the toolbar height', (_name, opts) => {
+    const height = overlayHeight('win32', opts)
+    expect(Number.isFinite(height)).toBe(true)
+    expect(height).toBe(47)
+  })
+
+  test('win32: a numeric string still works', () => {
+    expect(overlayHeight('win32', { height: '40' })).toBe(39)
+  })
+
+  test.each(['darwin', 'linux'])('%s: the overlay height is left to the system, never NaN', (platform) => {
+    expect(overlayHeight(platform)).toBeUndefined()
+    expect(overlayHeight(platform, { height: 48 })).toBeUndefined()
+    expect(overlayHeight(platform, { height: NaN })).toBeUndefined()
   })
 
 })

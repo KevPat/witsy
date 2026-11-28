@@ -38,6 +38,9 @@ export const addWindowListener = (listener: WindowListener) => {
   listeners.push(listener);
 }
 
+// same as --window-toolbar-height (3rem)
+const kDefaultTitleBarHeight = 48;
+
 // titlebarOptions
 export const titleBarOptions = (opts?: any): BrowserWindowConstructorOptions => {
 
@@ -53,6 +56,10 @@ export const titleBarOptions = (opts?: any): BrowserWindowConstructorOptions => 
     ...opts
   }
 
+  // a missing or invalid height must not end up as NaN in the overlay
+  const height = Number(opts.height);
+  const overlayHeight = (Number.isFinite(height) && height > 1 ? height : kDefaultTitleBarHeight) - 1;
+
   return {
     titleBarStyle: opts.titleBarStyle,
     titleBarOverlay: {
@@ -61,7 +68,7 @@ export const titleBarOptions = (opts?: any): BrowserWindowConstructorOptions => 
       // windows
       symbolColor: nativeTheme.shouldUseDarkColors ? '#fff' : '#000',
       // windows
-      height: process.platform === 'win32' ? opts.height - 1 : undefined,
+      height: process.platform === 'win32' ? overlayHeight : undefined,
     },
     trafficLightPosition: { x: 12, y: 16 },
   }
