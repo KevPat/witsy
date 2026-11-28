@@ -31,17 +31,17 @@ describe('npm scripts on Windows', () => {
 
   const offenders = (pattern: RegExp) => Object.keys(pkg.scripts).filter(name => pattern.test(pkg.scripts[name]))
 
-  bug('no script relies on single quotes', () => {
+  test('no script relies on single quotes', () => {
     // cmd.exe, which npm uses on Windows, passes single quotes through literally: the globs match nothing
     expect(offenders(/'/)).toEqual([])
   })
 
-  bug('no script sets environment variables with POSIX syntax', () => {
+  test('no script sets environment variables with POSIX syntax', () => {
     // VAR=value command is not understood by cmd.exe or PowerShell (the start script uses cross-env for this)
     expect(offenders(/^(\w+=\S+\s+)+\w/)).toEqual([])
   })
 
-  bug('no script uses a POSIX-only path', () => {
+  test('no script uses a POSIX-only path', () => {
     expect(offenders(/(^|[\s=])\/tmp\b/)).toEqual([])
   })
 
@@ -88,7 +88,7 @@ describe('forge configuration', () => {
     expect(forgeConfig).toMatch(/extraResource:\s*\[[^\]]*'assets\/icon\.png'/)
   })
 
-  bug('the build version is not the text "undefined" when BUILD_NUMBER is not set', () => {
+  test('the build version is not the text "undefined" when BUILD_NUMBER is not set', () => {
     // a template literal around an undefined environment variable
     expect(forgeConfig).not.toMatch(/buildVersion:\s*`\$\{process\.env\.BUILD_NUMBER\}`/)
   })
