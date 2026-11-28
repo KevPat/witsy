@@ -13,6 +13,7 @@ import WindowsAutomator from '@main/automations/windows';
 import interceptNetwork from '../network';
 import { openExternalUrl } from '../external_links';
 import { isolateWebviews } from '../webview';
+import { isPyodideSandboxWindow } from '../pyodide';
 import * as config from '../config';
 import Store from 'electron-store';
 import process from 'node:process';
@@ -411,7 +412,8 @@ export const persistentWindows = (): BrowserWindow[] => {
 export const areAllWindowsClosed = () => {
   let windows = BrowserWindow.getAllWindows();
   const permanentWindows = persistentWindows();
-  windows = windows.filter(window => !permanentWindows.includes(window));
+  // the hidden window python runs in is not a window of the app
+  windows = windows.filter(window => !permanentWindows.includes(window) && !isPyodideSandboxWindow(window));
   return windows.length === 0;
 };
 
@@ -429,6 +431,7 @@ export const emitIpcEventToAll = (signal: IpcSignal, ...args: unknown[]) => {
   try {
     const windows = BrowserWindow.getAllWindows();
     for (const window of windows) {
+      if (isPyodideSandboxWindow(window)) continue;
       emitIpcEvent(window, signal, ...args);
     }
   } catch (error) {
