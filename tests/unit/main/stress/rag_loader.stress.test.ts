@@ -5,7 +5,6 @@ import os from 'os'
 import path from 'path'
 import Loader from '@main/rag/loader'
 import { Configuration } from '@/types/config'
-import { bug } from './bug'
 
 let root: string
 let loader: Loader
@@ -97,7 +96,7 @@ describe('Loader web sources', () => {
     await expect(loader.getSitemapUrls('https://example.com/sitemap.xml')).rejects.toThrow('Failed to load sitemap')
   })
 
-  bug.each([403, 404, 500, 503])('an HTTP %i error page is not returned as the text of a web page', async (status) => {
+  test.each([403, 404, 500, 503])('an HTTP %i error page is not returned as the text of a web page', async (status) => {
     // loadUrl() never looks at response.ok
     vi.mocked(fetch).mockResolvedValue(new Response('<html><body><h1>Error</h1><p>Something went wrong</p></body></html>', { status }))
     const text = await loader.load('url', 'https://example.com/page').catch((): string => null)
@@ -118,7 +117,7 @@ describe('Loader web sources', () => {
     expect(await loader.getSitemapUrls('https://example.com/sitemap.xml')).toEqual([])
   })
 
-  bug.each([403, 404, 500, 503])('an HTTP %i answer to a sitemap request is an error, not an empty sitemap', async (status) => {
+  test.each([403, 404, 500, 503])('an HTTP %i answer to a sitemap request is an error, not an empty sitemap', async (status) => {
     // getSitemapUrls() parses whatever body it gets: the error page has no <urlset>, so the sitemap "has no pages"
     vi.mocked(fetch).mockResolvedValue(new Response('<html><body><h1>Error</h1></body></html>', { status }))
     await expect(loader.getSitemapUrls('https://example.com/sitemap.xml')).rejects.toThrow()
