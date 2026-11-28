@@ -140,8 +140,11 @@ describe('forge configuration', () => {
 
   test('the patched MCP SDK CommonJS build still parses', () => {
     // the patch replaces the `shell: false,` property with a bare expression
-    const patch = read(fs.readdirSync(path.join(root, 'patches')).map(f => `patches/${f}`).find(f => f.includes('modelcontextprotocol'))!)
-    const cjs = patch.split('diff --git').find(section => section.includes('/dist/cjs/client/stdio.js'))!
+    // since S-12 (no shell for stdio servers) the SDK is not patched at all, which is the simplest way to parse
+    const file = fs.readdirSync(path.join(root, 'patches')).map(f => `patches/${f}`).find(f => f.includes('modelcontextprotocol'))
+    if (!file) return
+    const cjs = read(file).split('diff --git').find(section => section.includes('/dist/cjs/client/stdio.js'))
+    if (!cjs) return
     const added = cjs.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++'))
     expect(added.every(line => /^\+\s*(shell:|\/\/)/.test(line))).toBe(true)
   })

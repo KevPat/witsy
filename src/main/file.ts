@@ -473,7 +473,7 @@ const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null
   // parse properties
   const properties = payload.properties;
   if (!isSaveDirectoryAccepted(properties)) {
-    return null;
+    return { url: null, cancelled: false };
   }
 
   // the file name is a single segment: directory parts of the requested name are dropped
@@ -481,7 +481,7 @@ const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null
   const filename = requestedName ? safeBasename(requestedName) : null;
   if (!filename) {
     console.error('Refusing to save file without a valid name', requestedName);
-    return null;
+    return { url: null, cancelled: false };
   }
 
   // workspace and subdir come from the caller: they select a folder below the base directory, never one outside of it
@@ -493,7 +493,7 @@ const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null
       : null;
     if (!workspaceFolder) {
       console.error('Refusing to save file in invalid workspace', properties.workspace);
-      return null;
+      return { url: null, cancelled: false };
     }
     defaultPath = workspaceFolder;
   }
@@ -501,7 +501,7 @@ const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null
     const subdirPath = resolveInside(defaultPath, properties.subdir);
     if (!subdirPath) {
       console.error('Refusing to save file in sub-directory outside of target directory', properties.subdir);
-      return null;
+      return { url: null, cancelled: false };
     }
     defaultPath = subdirPath;
   }
@@ -512,7 +512,7 @@ const saveFileContents = (app: App, payload: FileSaveParams): { url: string|null
     : resolveInside(defaultPath, filename, { excludeBase: true });
   if (!destinationURL) {
     console.error('Refusing to save file outside of target directory', filename);
-    return null;
+    return { url: null, cancelled: false };
   }
   if (!fs.existsSync(defaultPath)) {
     fs.mkdirSync(defaultPath, { recursive: true });

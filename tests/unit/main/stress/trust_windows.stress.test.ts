@@ -244,7 +244,7 @@ describe('pdf export: the window that prints the page', () => {
     expect(electron.windows[0].destroy).toHaveBeenCalledTimes(1)
   })
 
-  bug('the scripts of the page do not run with web security disabled', async () => {
+  test('the scripts of the page do not run with web security disabled', async () => {
     // webSecurity: false and scripts enabled on a file: page: the page can read any local file and post it anywhere
     await printPdfFromHtml({ html: kHtml })
     const preferences = electron.windows[0].options.webPreferences

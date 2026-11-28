@@ -3,7 +3,7 @@ import { app, safeStorage } from 'electron'
 import Store from 'electron-store'
 import fs from 'fs'
 import path from 'path'
-import { afterEach, beforeEach, describe, expect, test, vi, Mock } from 'vitest'
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi, Mock } from 'vitest'
 import defaultSettings from '@root/defaults/settings.json'
 import * as config from '@main/config'
 import { migrateMcpToolNames } from '@main/migrations/mcp_tool_names'
@@ -416,6 +416,11 @@ describe('MCP secrets', () => {
   })
 
   test('Load decrypts MCP secrets and does not save clear text ones with safeKeys disabled', () => {
+
+    // no stored API key: with safeKeys disabled a stored key is moved to the file on load (D-01), which is a save of its own
+    const storedKeys = Store.prototype.store
+    Store.prototype.store = {}
+    onTestFinished(() => { Store.prototype.store = storedKeys })
 
     config.saveSettings(app, loadWithServers())
     const encrypted = JSON.parse(savedSettings().at(-1))

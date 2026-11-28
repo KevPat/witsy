@@ -152,34 +152,36 @@ describe('downloadFile', () => {
 
   test.each([200, 201, 206])('the body of an HTTP %i answer is saved', async (status) => {
     vi.mocked(fetch).mockResolvedValue(new Response('image-bytes', { status }))
-    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'downloads' } })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'cat.png')}`)
-    expect(fs.readFileSync(path.join(root, 'downloads', 'cat.png'), 'utf-8')).toBe('image-bytes')
+    const url = await file.downloadFile(app, { url: 'https://example.com/cat.png', properties: { filename: 'cat.png', directory: 'temp' } })
+    expect(url).toBe(`file://${path.join(root, 'temp', 'cat.png')}`)
+    expect(fs.readFileSync(path.join(root, 'temp', 'cat.png'), 'utf-8')).toBe('image-bytes')
   })
 
   test('a local file can be copied without giving a file name', async () => {
     // url is reset to null, so the name has to be derived from it before
     const source = path.join(root, 'documents', 'source.png')
     fs.writeFileSync(source, 'image-bytes')
-    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { directory: 'downloads' } })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'source.png')}`)
-    expect(fs.readFileSync(path.join(root, 'downloads', 'source.png'), 'utf-8')).toBe('image-bytes')
+    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { directory: 'temp' } })
+    expect(url).toBe(`file://${path.join(root, 'temp', 'source.png')}`)
+    expect(fs.readFileSync(path.join(root, 'temp', 'source.png'), 'utf-8')).toBe('image-bytes')
   })
 
-  test('a local file can be copied without any properties', async () => {
+  test('a local file copied without any properties is refused: the default folder needs a save dialog', async () => {
+    // unprompted saves are limited to userData and temp (S-10); the default directory is downloads
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     const source = path.join(root, 'documents', 'source.png')
     fs.writeFileSync(source, 'image-bytes')
     const url = await file.downloadFile(app, { url: `file://${source}` })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'source.png')}`)
-    expect(filesUnder(root).sort()).toEqual([source, path.join(root, 'downloads', 'source.png')].sort())
+    expect(url).toBeNull()
+    expect(filesUnder(root)).toEqual([source])
   })
 
   test('a local file copied with a file name gets that name', async () => {
     const source = path.join(root, 'documents', 'source.png')
     fs.writeFileSync(source, 'image-bytes')
-    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'copy.png', directory: 'downloads' } })
-    expect(url).toBe(`file://${path.join(root, 'downloads', 'copy.png')}`)
-    expect(fs.readFileSync(path.join(root, 'downloads', 'copy.png'), 'utf-8')).toBe('image-bytes')
+    const url = await file.downloadFile(app, { url: `file://${source}`, properties: { filename: 'copy.png', directory: 'temp' } })
+    expect(url).toBe(`file://${path.join(root, 'temp', 'copy.png')}`)
+    expect(fs.readFileSync(path.join(root, 'temp', 'copy.png'), 'utf-8')).toBe('image-bytes')
   })
 
   test('a local file that does not exist is reported as null and writes nothing', async () => {

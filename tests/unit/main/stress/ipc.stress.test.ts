@@ -242,10 +242,21 @@ describe('IPC sender checks', () => {
     returnValue: undefined as any,
   })
 
-  bug.each([
+  // the renderer file write and delete are confined to the app folders in the main process (fixall/security, second pass of S-10):
+  // a frame that is not the app cannot reach outside them either, although the sender itself is still not checked
+  test.each([
     ['delete a file', IPC.FILE.DELETE_FILE, 'on', 'file.deleteFile', '/home/me/.ssh/id_rsa'],
-    ['read a file', IPC.FILE.READ_FILE, 'on', 'file.getFileContents', '/home/me/.ssh/id_rsa'],
     ['write a file', IPC.FILE.WRITE_FILE, 'on', 'file.writeFile', '/home/me/.bashrc'],
+  ])('a frame that is not the app cannot %s', async (_, channel, kind, implementation, payload) => {
+    const handlers = kind === 'on' ? state.on : state.handle
+    try {
+      await handlers.get(channel)!(untrusted(), payload, payload)
+    } catch { /* a rejection is an acceptable way to refuse */ }
+    expect(state.calls).not.toContain(implementation)
+  })
+
+  bug.each([
+    ['read a file', IPC.FILE.READ_FILE, 'on', 'file.getFileContents', '/home/me/.ssh/id_rsa'],
     ['look up a program through a shell', IPC.FILE.FIND_PROGRAM, 'on', 'file.findProgram', 'x; id'],
     ['run native python', IPC.INTERPRETER.PYTHON_RUN, 'handle', 'interpreter.runPython', 'import os'],
     ['install an MCP server', IPC.MCP.INSTALL_SERVER, 'handle', 'mcp.installServer', { registry: 'smithery', server: 'x' }],
