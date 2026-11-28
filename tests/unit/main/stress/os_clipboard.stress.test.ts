@@ -5,10 +5,11 @@ import Automation, { AutomationAction } from '@main/automations/automation'
 import Automator from '@main/automations/automator'
 
 // A clipboard double that behaves like the real one: writing text replaces the whole clipboard,
-// so any image that was there is gone unless it was explicitly saved and restored.
+// so any image that was there is gone unless it was explicitly saved and restored. Same for the
+// platform formats (the files copied in a file manager): any write removes them.
 type Img = { empty: boolean, id: string }
 const emptyImg: Img = { empty: true, id: '' }
-let state: { text: string, image: Img } = { text: '', image: emptyImg }
+let state: { text: string, image: Img, buffers?: Record<string, Buffer> } = { text: '', image: emptyImg }
 
 vi.mock('electron', () => ({
   clipboard: {
@@ -16,6 +17,9 @@ vi.mock('electron', () => ({
     writeText: vi.fn((t: string) => { state = { text: t, image: emptyImg } }),
     readImage: vi.fn(() => state.image),
     writeImage: vi.fn((img: Img) => { state = { text: '', image: img } }),
+    readBuffer: vi.fn((format: string) => state.buffers?.[format] ?? Buffer.alloc(0)),
+    writeBuffer: vi.fn((format: string, data: Buffer) => { state = { text: '', image: emptyImg, buffers: { [format]: data } } }),
+    has: vi.fn((format: string) => format in (state.buffers ?? {})),
     availableFormats: vi.fn(() => state.image.empty ? (state.text ? ['text/plain'] : []) : ['image/png']),
   },
 }))
@@ -33,12 +37,22 @@ vi.mock('@main/automations/automator', () => {
   return { default: Mock }
 })
 
+const platform = process.platform
+
+// the format that lists the files copied in the file manager of each platform
+const fileLists: [string, string, Buffer][] = [
+  ['win32', 'Shell IDList Array', Buffer.from([2, 0, 0, 0, 12, 0, 0, 0, 9, 9, 9, 9])],
+  ['darwin', 'NSFilenamesPboardType', Buffer.from('<plist version="1.0"><array><string>/Users/me/one.txt</string></array></plist>')],
+  ['linux', 'x-special/gnome-copied-files', Buffer.from('copy\nfile:///home/me/one.txt')],
+]
+
 beforeEach(() => {
   vi.clearAllMocks()
   state = { text: '', image: emptyImg }
 })
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
   vi.restoreAllMocks()
 })
 
@@ -68,6 +82,40 @@ describe('Automation.automate clipboard save/restore', () => {
     const ok = await Automation.automate('AI output', null, AutomationAction.REPLACE)
     expect(ok).toBe(false)
     expect(state.text).toBe('ORIGINAL')
+  })
+
+  test.each(fileLists)('%s: files copied in the file manager survive an automation', async (os, format, data) => {
+    // before: only text, HTML, RTF and images were saved, so the files were replaced by the LLM text and never put back
+    Object.defineProperty(process, 'platform', { value: os, configurable: true })
+    state = { text: '', image: emptyImg, buffers: { [format]: data } }
+    const ok = await Automation.automate('AI output', null, AutomationAction.REPLACE)
+    expect(ok).toBe(true)
+    // the text was really on the clipboard for the paste, and the files are back after it
+    expect(clipboard.writeText).toHaveBeenCalledWith('AI output')
+    expect(clipboard.readBuffer(format).equals(data)).toBe(true)
+    expect(clipboard.readText()).toBe('')
+  })
+
+  test.each(fileLists)('%s: the files are restored even when pasting throws', async (os, format, data) => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    Object.defineProperty(process, 'platform', { value: os, configurable: true })
+    vi.mocked(Automator.prototype.pasteClipboard).mockRejectedValueOnce(new Error('paste failed'))
+    state = { text: '', image: emptyImg, buffers: { [format]: data } }
+    const ok = await Automation.automate('AI output', null, AutomationAction.REPLACE)
+    expect(ok).toBe(false)
+    expect(clipboard.readBuffer(format).equals(data)).toBe(true)
+  })
+
+  test('a list of files that cannot be written back does not stop the automation from succeeding', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    vi.mocked(clipboard.writeBuffer).mockImplementationOnce(() => { throw new Error('refused') })
+    state = { text: '', image: emptyImg, buffers: { 'Shell IDList Array': Buffer.from([1, 2, 3]) } }
+    const ok = await Automation.automate('AI output', null, AutomationAction.REPLACE)
+    expect(ok).toBe(true)
+    expect(Automator.prototype.pasteClipboard).toHaveBeenCalledTimes(1)
+    // the clipboard does not keep the text of the automation
+    expect(clipboard.readText()).toBe('')
   })
 
 })
