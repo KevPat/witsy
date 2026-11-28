@@ -199,21 +199,21 @@ The current HTTP server port is displayed in the tray menu below the Settings op
 
 ### Available Endpoints
 
-All endpoints support both `GET` (with query parameters) and `POST` (with query parameters or a JSON body) requests.
+Endpoints that trigger an action only accept `POST` requests (`405` otherwise), with their parameters in the query string or in a JSON body. Read-only endpoints use `GET`.
 
 | Endpoint | Description | Optional Parameters |
 |----------|-------------|---------------------|
 | `GET /api/health` | Server health check | - |
-| `GET/POST /api/chat` | Open main window in chat view | `text` - Pre-fill chat input |
-| `GET/POST /api/scratchpad` | Open scratchpad | - |
-| `GET/POST /api/settings` | Open settings window | - |
-| `GET/POST /api/studio` | Open design studio | - |
-| `GET/POST /api/forge` | Open agent forge | - |
-| `GET/POST /api/realtime` | Open realtime chat (voice mode) | - |
-| `GET/POST /api/prompt` | Trigger Prompt Anywhere | `text` - Pre-fill prompt |
-| `GET/POST /api/command` | Trigger AI command picker | `text` - Pre-fill command text |
-| `GET/POST /api/transcribe` | Start transcription/dictation | - |
-| `GET/POST /api/readaloud` | Start read aloud | - |
+| `POST /api/chat` | Open main window in chat view | `text` - Pre-fill chat input |
+| `POST /api/scratchpad` | Open scratchpad | - |
+| `POST /api/settings` | Open settings window | - |
+| `POST /api/studio` | Open design studio | - |
+| `POST /api/forge` | Open agent forge | - |
+| `POST /api/realtime` | Open realtime chat (voice mode) | - |
+| `POST /api/prompt` | Trigger Prompt Anywhere | `text` - Pre-fill prompt |
+| `POST /api/command` | Trigger AI command picker | `text` - Pre-fill command text |
+| `POST /api/transcribe` | Start transcription/dictation | - |
+| `POST /api/readaloud` | Start read aloud | - |
 | `GET /api/engines` | List available AI engines | Returns configured chat engines |
 | `GET /api/models/:engine` | List models for an engine | Returns available models for specified engine |
 | `POST /api/complete` | Run chat completion | `stream` (default: true), `engine`, `model`, `thread` (Message[]) |
@@ -226,8 +226,8 @@ All endpoints support both `GET` (with query parameters) and `POST` (with query 
 # Health check
 curl http://localhost:8090/api/health
 
-# Open chat with pre-filled text (GET with query parameter)
-curl "http://localhost:8090/api/chat?text=Hello%20World"
+# Open chat with pre-filled text (POST with query parameter)
+curl -X POST "http://localhost:8090/api/chat?text=Hello%20World"
 
 # Open chat with pre-filled text (POST with JSON)
 curl -X POST http://localhost:8090/api/chat \
@@ -235,7 +235,7 @@ curl -X POST http://localhost:8090/api/chat \
   -d '{"text":"Hello World"}'
 
 # Trigger Prompt Anywhere with text
-curl "http://localhost:8090/api/prompt?text=Write%20a%20poem"
+curl -X POST "http://localhost:8090/api/prompt?text=Write%20a%20poem"
 
 # Trigger AI command on selected text
 curl -X POST http://localhost:8090/api/command \

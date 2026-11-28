@@ -8,7 +8,7 @@ import { WorkDirAccess } from './cli_plugin'
 import * as config from './config'
 import { loadHistory, saveHistory } from './history'
 import { HttpServer } from './http_server'
-import { createApiToken, hasValidApiToken, kApiTokenFile, isHttpEndpointsEnabled, parseParams, sendError, sendHandlerError, sendJson } from './http_utils'
+import { createApiToken, hasValidApiToken, kApiTokenFile, isHttpEndpointsEnabled, parseParams, requirePost, sendError, sendHandlerError, sendJson } from './http_utils'
 import { LlmContext } from './llm_utils'
 import Mcp from './mcp'
 import DocumentRepository from './rag/docrepo'
@@ -113,6 +113,7 @@ export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, 
   // POST /api/complete - Run chat completion
   httpServer.register('/api/complete', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       // Initialize LLM context (global mock + i18n)
       const llmContext = new LlmContext(app, mcp, docRepo)
@@ -229,6 +230,7 @@ export function installApiEndpoints(httpServer: HttpServer, app: App, mcp: Mcp, 
   // POST /api/conversations - Save or update a chat conversation
   httpServer.register('/api/conversations', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       // Load settings to get workspace ID
       const settings = config.loadSettings(app)

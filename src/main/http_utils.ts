@@ -135,6 +135,18 @@ export async function parseParams(req: IncomingMessage, parsedUrl: URL): Promise
 }
 
 /**
+ * Check that an endpoint that changes state is called with POST: a web page can send
+ * a GET without any preflight (image, link, navigation)
+ * If not, sends 405 response and returns false
+ */
+export function requirePost(req: IncomingMessage, res: ServerResponse): boolean {
+  if (req.method === 'POST') return true
+  res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'POST' })
+  res.end(JSON.stringify({ success: false, error: 'Method not allowed: this endpoint requires POST' }))
+  return false
+}
+
+/**
  * Check if HTTP endpoints are enabled in configuration
  * If disabled, sends 404 response and returns false
  * If enabled, returns true

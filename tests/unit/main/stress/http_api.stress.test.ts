@@ -5,6 +5,7 @@ import { HttpServer } from '@main/http_server'
 import LlmFactory from '@services/llms/llm'
 import AssistantApi from '@main/assistant_api'
 import * as config from '@main/config'
+import { saveHistory } from '@main/history'
 import { kDefaultHttpPort } from '@/consts'
 import { state as cliState } from '@/cli/state'
 import { bug } from './bug'
@@ -179,6 +180,32 @@ describe('/api/complete: authentication, Origin and Host', () => {
     const res = await complete({}, validBody)
     expect(res.statusCode).toBe(200)
     expect(assistantInstance.prompt).toHaveBeenCalledTimes(1)
+  })
+
+})
+
+describe('endpoints that change state require POST', () => {
+
+  // a GET needs no preflight and browsers exist that send neither Origin nor Sec-Fetch-Site with it
+  test('a GET cannot save a chat to the history', async () => {
+    const res = await call('/api/conversations', request('GET', {}), new URL('http://localhost:8090/api/conversations?chat=injected'))
+    expect(res.statusCode).toBe(405)
+    expect(res.headers.Allow).toBe('POST')
+    expect(saveHistory).not.toHaveBeenCalled()
+  })
+
+  test('a POST saves the chat', async () => {
+    const body = JSON.stringify({ chat: { uuid: '', title: 'CLI Session', messages: [] } })
+    const res = await call('/api/conversations', request('POST', { 'content-type': 'application/json' }, body), new URL('http://localhost:8090/api/conversations'))
+    expect(res.statusCode).toBe(200)
+    expect(saveHistory).toHaveBeenCalledTimes(1)
+  })
+
+  test('a GET cannot run a completion', async () => {
+    const res = await call('/api/complete', request('GET', {}), new URL('http://localhost:8090/api/complete?thread=x'))
+    expect(res.statusCode).toBe(405)
+    expect(res.headers.Allow).toBe('POST')
+    expect(AssistantApi).not.toHaveBeenCalled()
   })
 
 })

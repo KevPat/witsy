@@ -5,13 +5,14 @@ import Commander from './automations/commander'
 import ReadAloud from './automations/readaloud'
 import Dictation from './automations/dictation'
 import { HttpServer } from './http_server'
-import { isHttpEndpointsEnabled, parseParams, sendHandlerError, sendJson } from './http_utils'
+import { isHttpEndpointsEnabled, parseParams, requirePost, sendHandlerError, sendJson } from './http_utils'
 import { putCachedText } from './utils'
 import * as window from './window'
 
 /**
  * Install HTTP trigger endpoints on the server
  * These endpoints allow external applications to trigger Witsy commands via HTTP
+ * Every endpoint that changes state requires POST
  */
 export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
@@ -28,6 +29,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
   // Window commands
   httpServer.register('/api/chat', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       window.openMainWindow({ queryParams: { view: 'chat', ...(params.text ? { text: params.text } : {}) } })
@@ -39,6 +41,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/scratchpad', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl) // Parse for consistency even if not used
       window.openMainWindow({ queryParams: { view: 'scratchpad' } })
@@ -50,6 +53,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/settings', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openSettingsWindow()
@@ -61,6 +65,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/studio', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openDesignStudioWindow()
@@ -72,6 +77,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/forge', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openAgentForgeWindow()
@@ -83,6 +89,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/realtime', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       window.openRealtimeChatWindow()
@@ -95,6 +102,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
   // Automation commands
   httpServer.register('/api/prompt', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       if (params.text) {
@@ -111,6 +119,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/command', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       const params = await parseParams(req, parsedUrl)
       if (params.text) {
@@ -129,6 +138,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/transcribe', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       await Dictation.initDictation()
@@ -140,6 +150,7 @@ export function installHttpTriggers(httpServer: HttpServer, app: App): void {
 
   httpServer.register('/api/readaloud', async (req, res, parsedUrl) => {
     if (!isHttpEndpointsEnabled(app, res)) return
+    if (!requirePost(req, res)) return
     try {
       await parseParams(req, parsedUrl)
       await ReadAloud.read(app)
