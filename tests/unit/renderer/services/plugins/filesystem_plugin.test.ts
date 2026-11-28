@@ -135,6 +135,31 @@ test('Filesystem plugin read file', async () => {
   expect(result.contents).toBe('/tmp/test.txt_encoded_extracted')
 })
 
+test('Filesystem plugin read file decodes UTF-8 for non-document files', async () => {
+  const text = 'café 😀'
+  const base64 = Buffer.from(text, 'utf-8').toString('base64')
+  const identityAtob = global.atob
+  global.atob = (value: string) => Buffer.from(value, 'base64').toString('latin1')
+  window.api.file.read = vi.fn(() => ({
+    url: '/tmp/note.md',
+    contents: base64,
+    mimeType: 'text/markdown',
+  }))
+  try {
+    const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
+    const result = await plugin.execute(context, {
+      action: 'read',
+      path: '/tmp/note.md'
+    })
+    expect(window.api.file.read).toHaveBeenCalledWith('/tmp/note.md')
+    expect(window.api.file.extractText).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(result.contents).toBe(text)
+  } finally {
+    global.atob = identityAtob
+  }
+})
+
 test('Filesystem plugin write file - new file', async () => {
   const plugin = new FilesystemPlugin(store.config.plugins.filesystem as any, workspaceId)
   const result = await plugin.execute(context, {

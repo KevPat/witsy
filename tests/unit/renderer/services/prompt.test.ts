@@ -255,6 +255,23 @@ test('replacePromptInputs - missing inputs with default values are left unchange
   expect(result).toBe('Hello Alice, you are {{age:Your age:25}} years old.')
 })
 
+test('replacePromptInputs - regex metacharacters in keys are literal', () => {
+  const prompt = 'Hello {{a(b)}} and {{outputX1}} and {{output.1}} again {{a(b)}}'
+  expect(() => replacePromptInputs(prompt, { 'a(b': 'X' })).not.toThrow()
+  expect(replacePromptInputs('{{a(b}} {{a(b}}', { 'a(b': 'X' })).toBe('X X')
+
+  const result = replacePromptInputs(prompt, { 'a(b)': 'X', 'output.1': 'Y' })
+  expect(result).toBe('Hello X and {{outputX1}} and Y again X')
+  expect(replacePromptInputs('{{ab}}', { 'a(b)': 'X' })).toBe('{{ab}}')
+})
+
+test('replacePromptInputs - dollar replacement patterns are literal', () => {
+  const prompt = '{{name}} and {{name}}'
+  const result = replacePromptInputs(prompt, { name: '$& $$ $`' })
+
+  expect(result).toBe('$& $$ $` and $& $$ $`')
+})
+
 test('replacePromptInputs - handles mixed formats', () => {
   const prompt = 'Hello {{name}}, you are {{age::25}} years old and work as {{job:Your job:Developer}}.'
   const inputs = { name: 'Alice', job: 'Designer' }

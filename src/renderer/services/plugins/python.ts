@@ -6,6 +6,28 @@ import Plugin, { PluginConfig } from './plugin'
 
 export const kPythonPluginName = 'run_python_code'
 
+// x = 1, foo.bar += 2, items[0] += 1, a, b = 1, n := 1
+const pythonAssignment = /^(?:[A-Za-z_][\w.]*(?:\s*\[[^\]]*\])?\s*,\s*)*[A-Za-z_][\w.]*(?:\s*\[[^\]]*\])?\s*(?:\*\*|\/\/|<<|>>|[@+\-*/%&|^:])?=(?!=)/
+const pythonWalrus = /^\(?\s*[A-Za-z_][\w.]*\s*:=/
+
+function prepareNativeScript(script: string): string {
+  const lines = script.replace(/\r\n|\r/g, '\n').split('\n')
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+    lines.pop()
+  }
+  if (lines.length === 0) {
+    return ''
+  }
+
+  const lastLine = lines[lines.length - 1]
+  const trimmed = lastLine.trim()
+  const isAssignment = pythonAssignment.test(trimmed) || pythonWalrus.test(trimmed)
+  if (!lastLine.includes('print(') && !trimmed.startsWith('#') && !isAssignment) {
+    lines[lines.length - 1] = `print(${lastLine})`
+  }
+  return lines.join('\n')
+}
+
 export default class extends Plugin {
 
   constructor(config: PluginConfig, workspaceId: string) {
@@ -71,13 +93,8 @@ export default class extends Plugin {
       // Pyodide: Execute directly, returns value automatically
       output = await window.api.interpreter.pyodide(script)
     } else {
-      // Native Python: Make sure last line is a print
-      const lines = script.split('\n')
-      const lastLine = lines[lines.length - 1]
-      if (!lastLine.includes('print(')) {
-        lines[lines.length - 1] = `print(${lastLine})`
-        script = lines.join('\n')
-      }
+      // Native Python: print a trailing expression so its value is captured
+      script = prepareNativeScript(typeof script === 'string' ? script : '')
       output = await window.api.interpreter.python(script)
     }
 

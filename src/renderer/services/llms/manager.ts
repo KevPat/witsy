@@ -96,7 +96,10 @@ export default class LlmManager extends LlmManagerBase {
 
     } catch (e) {
       console.error(`Error igniting engine ${engine}:`, e)
-     }
+      if (this.isFavoriteEngine(engine) || this.isCustomEngine(engine)) {
+        throw e
+      }
+    }
 
     // fallback
     if (llm.OpenAI.isConfigured(this.config.engines.openai)) {

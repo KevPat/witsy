@@ -149,7 +149,18 @@ export default class DeepResearchAgentLoop implements dr.DeepResearch {
 
       // we need a llm
       opts.engine = this.agent.engine || opts.engine
-      opts.model = this.agent.model || this.llmManager.getChatModel(opts.engine, opts.model).id
+      opts.model = this.agent.model || this.llmManager.getChatModel(opts.engine, opts.model)?.id
+      if (!opts.model) {
+        if (llmLocale) {
+          setLlmLocale(llmLocale)
+          this.config.llm.forceLocale = forceLocale
+        }
+        const errorMessage = chat.lastMessage()
+        if (errorMessage) {
+          errorMessage.appendText({ type: 'content', text: t('generator.errors.invalidModel'), done: true })
+        }
+        return 'invalid_model'
+      }
 
       // initialize tools (once per run)
       if (!this.toolCatalog) {
@@ -491,7 +502,8 @@ export default class DeepResearchAgentLoop implements dr.DeepResearch {
     let prompt = agent.steps[0].prompt
     for (const [key, value] of Object.entries(cleanParams)) {
       const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value)
-      prompt = prompt.replace(new RegExp(`{{${key}}}`, 'g'), valueStr)
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      prompt = prompt.replace(new RegExp(`{{${escapedKey}}}`, 'g'), () => valueStr)
     }
 
     messages.push(new Message('user', prompt))

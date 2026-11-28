@@ -182,6 +182,9 @@ export default class LlmUtils {
       const llmManager = LlmFactory.manager(this.config)
       const llm = llmManager.igniteEngine(selectedEngine)
       const model = llmManager.getChatModel(selectedEngine, titlingModel)
+      if (!model) {
+        return null
+      }
       let title = await LlmUtils.complete(llm, model, messages, {
         tools: false,
         toolCallsInThread: false,
@@ -251,7 +254,10 @@ Keep it concise, natural, and user-friendly. Do NOT include prefixes like "Statu
     // now get it
     const llmManager = LlmFactory.manager(this.config)
     const llm = llmManager.igniteEngine(selectedEngine)
-    const actualChatModel: ChatModel = llmManager.getChatModel(selectedEngine, actualModel)
+    const actualChatModel = llmManager.getChatModel(selectedEngine, actualModel)
+    if (!actualChatModel) {
+      return null
+    }
     return await LlmUtils.complete(llm, actualChatModel, messages, {
       tools: false,
       reasoningEffort: 'low',

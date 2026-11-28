@@ -196,6 +196,7 @@ export default class LlmManagerBase implements ILlmManager {
   getChatModel(engine: string, model: string): llm.ChatModel {
     if (this.isFavoriteEngine(engine)) {
       const favorite = this.config.llm.favorites.find(f => f.id === model)
+      if (!favorite) return null
       return this.getChatModel(favorite.engine, favorite.model)
     } else {
       const models = this.getChatModels(engine)
@@ -226,8 +227,15 @@ export default class LlmManagerBase implements ILlmManager {
 
   setChatModel(engine: string, model: string): void {
     console.log('Setting chat model', engine, model)
+    const engineConfig = this.config.engines[engine]
+    if (!engineConfig) {
+      return
+    }
+    if (!engineConfig.model) {
+      engineConfig.model = {}
+    }
     this.config.llm.engine = engine
-    this.config.engines[engine].model.chat = model
+    engineConfig.model.chat = model
     store.saveSettings()
   }
 
@@ -295,8 +303,8 @@ export default class LlmManagerBase implements ILlmManager {
   canProcessFormat(engine: string, model: string, format: string) {
     if (imageFormats.includes(format.toLowerCase())) {
       const m = this.getChatModel(engine, model)
-      if (m.capabilities.vision) return true
-      return !!this.config.engines[engine].model?.vision
+      if (m?.capabilities?.vision) return true
+      return !!this.config.engines[engine]?.model?.vision
     } else {
       return textFormats.includes(format.toLowerCase()) || parseableTextFormats.includes(format.toLowerCase())
     }

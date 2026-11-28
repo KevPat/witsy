@@ -198,9 +198,8 @@ test('Ignite Favorite Engine', async () => {
   store.config.llm.favorites = [ { id: '1', engine: 'anthropic', model: 'chat1' } ]
   store.config.engines[favoriteMockEngine].model.chat = '1'
   expect(await llmManager.igniteEngine(favoriteMockEngine)).toBeInstanceOf(Anthropic)
-  // fallback
   store.config.engines[favoriteMockEngine].model.chat = '2'
-  expect(await llmManager.igniteEngine(favoriteMockEngine)).toBeInstanceOf(OpenAI)
+  expect(() => llmManager.igniteEngine(favoriteMockEngine)).toThrow('Cannot ignite favorite engine')
 })
 
 test('Ignite Custom Engine OpenAI', async () => {

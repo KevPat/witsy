@@ -59,20 +59,27 @@ export default class VideoCreator implements MediaCreator {
   }
    
   async execute(engine: string, model: string, parameters: anyDict, reference?: MediaReference[]): Promise<any> {
-    if (engine === 'replicate') {
-      return this.replicate(model, parameters)
-    } else if (engine === 'falai') {
-      return this.falai(model, parameters, reference)
-    } else if (engine == 'google') {
-      return this.google(model, parameters, reference)
-    } else if (engine == 'openai') {
-      return this.openai(model, parameters, reference)
-    } else if (engine == 'xai') {
-      return this.xai(model, parameters, reference)
-    } else if (engine == 'venice') {
-      return this.venice(model, parameters, reference)
-    } else {
-      throw new Error('Unsupported engine')
+    const controller = new AbortController()
+    this.activeAbort = controller
+    const signal = controller.signal
+    try {
+      if (engine === 'replicate') {
+        return await this.replicate(model, parameters, signal)
+      } else if (engine === 'falai') {
+        return await this.falai(model, parameters, reference, signal)
+      } else if (engine == 'google') {
+        return await this.google(model, parameters, reference, signal)
+      } else if (engine == 'openai') {
+        return await this.openai(model, parameters, reference, signal)
+      } else if (engine == 'xai') {
+        return await this.xai(model, parameters, reference, signal)
+      } else if (engine == 'venice') {
+        return await this.venice(model, parameters, reference, signal)
+      } else {
+        throw new Error('Unsupported engine')
+      }
+    } finally {
+      if (this.activeAbort === controller) this.activeAbort = null
     }
   }
 
@@ -83,35 +90,75 @@ export default class VideoCreator implements MediaCreator {
     this.activeAbort = null
   }
 
-  async replicate(model: string, parameters: anyDict): Promise<any> {
+  private cancelledResult(): { cancelled: true, error: 'cancelled' } {
+    return { cancelled: true, error: 'cancelled' }
+  }
 
-    // init
-    const client = new Replicate({ auth: store.config.engines.replicate.apiKey }); 
+  private aborted(signal?: AbortSignal, error?: unknown): boolean {
+    if (signal?.aborted) return true
+    return !!error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError'
+  }
 
-    // call
-    console.log(`[replicate] prompting model ${model}`)
-    const output: FileOutput[] = await client.run(model as `${string}/${string}`, {
-      input: parameters,
-    }) as FileOutput[];
+  private waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
+    if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+    if (signal.aborted) return Promise.resolve()
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      }, ms)
+      const onAbort = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+    })
+  }
 
-    // save the content on disk
-    const blob = Array.isArray(output) ? await output[0].blob() : await (output as FileOutput).blob()
-    const type = blob.type?.split('/')[1] || 'mp4'
-    const b64 = await this.blobToBase64(blob)
-    const image = b64.split(',')[1]
-    const fileUrl = saveFileContents(type, image)
-    //console.log('[image] saved image to', fileUrl)
+  async replicate(model: string, parameters: anyDict, signal?: AbortSignal): Promise<any> {
 
-    // return an object
-    return {
-      url: fileUrl,
+    if (signal?.aborted) return this.cancelledResult()
+
+    try {
+
+      // init
+      const client = new Replicate({ auth: store.config.engines.replicate.apiKey });
+
+      // call
+      console.log(`[replicate] prompting model ${model}`)
+      const output: FileOutput[] = await client.run(model as `${string}/${string}`, {
+        input: parameters,
+        signal,
+      }) as FileOutput[];
+
+      if (signal?.aborted) return this.cancelledResult()
+
+      // save the content on disk
+      const blob = Array.isArray(output) ? await output[0].blob() : await (output as FileOutput).blob()
+      const type = blob.type?.split('/')[1] || 'mp4'
+      const b64 = await this.blobToBase64(blob)
+      const image = b64.split(',')[1]
+      const fileUrl = saveFileContents(type, image)
+      //console.log('[image] saved image to', fileUrl)
+
+      // return an object
+      return {
+        url: fileUrl,
+      }
+
+    } catch (error) {
+      if (this.aborted(signal, error)) return this.cancelledResult()
+      throw error
     }
 
   }
   
-  async falai(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+  async falai(model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
 
     try {
+
+      if (signal?.aborted) return this.cancelledResult()
 
       // set api key
       fal.config({
@@ -120,11 +167,14 @@ export default class VideoCreator implements MediaCreator {
 
       // submit
       const response = await fal.subscribe(model, {
+        abortSignal: signal,
         input: {
           ...(parameters.prompt ? { prompt: parameters.prompt } : {}),
           ...(reference ? { image_url: `data:${reference[0].mimeType};base64,${reference[0].contents}` } : {}),
         }
       })
+
+      if (signal?.aborted) return this.cancelledResult()
 
       // download
       const video = response.data.video
@@ -132,18 +182,20 @@ export default class VideoCreator implements MediaCreator {
       return { url: fileUrl }
 
     } catch (error) {
+      if (this.aborted(signal, error)) return this.cancelledResult()
       console.error("Error generating content:", error);
       return { error: error.message }
     }
   
   }
      
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async google(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+  async google(model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
 
     const client = new GoogleGenAI({ apiKey: store.config.engines.google.apiKey })
   
     try {
+
+      if (signal?.aborted) return this.cancelledResult()
 
       let operation = await client.models.generateVideos({
         model: model,
@@ -157,10 +209,16 @@ export default class VideoCreator implements MediaCreator {
         },
       });
 
+      if (signal?.aborted) return this.cancelledResult()
+
       while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 2500))
+        if (signal?.aborted) return this.cancelledResult()
+        await this.waitForPoll(2500, signal)
+        if (signal?.aborted) return this.cancelledResult()
         operation = await client.operations.getVideosOperation({operation: operation})
       }
+
+      if (signal?.aborted) return this.cancelledResult()
 
       // if no video was generated, return an error
       if (!operation?.response?.generatedVideos?.[0]?.video) {
@@ -181,6 +239,7 @@ export default class VideoCreator implements MediaCreator {
       return { url: fileUrl, }
 
     } catch (error) {
+      if (this.aborted(signal, error)) return this.cancelledResult()
       console.error("Error generating content:", error);
     }
 
@@ -190,11 +249,11 @@ export default class VideoCreator implements MediaCreator {
 
   }
 
-  async openai(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
-    return this._openai('openai', store.config.engines.openai.apiKey, store.config.engines.openai.baseURL, model, parameters, reference)
+  async openai(model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
+    return this._openai('openai', store.config.engines.openai.apiKey, store.config.engines.openai.baseURL, model, parameters, reference, signal)
   }
 
-  protected async _openai(name: string, apiKey: string, baseURL: string, model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+  protected async _openai(name: string, apiKey: string, baseURL: string, model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
 
     try {
       const endpoint = baseURL || 'https://api.openai.com'
@@ -229,7 +288,8 @@ export default class VideoCreator implements MediaCreator {
         headers: {
           'Authorization': `Bearer ${apiKey}`
         },
-        body: formData
+        body: formData,
+        signal,
       })
 
       if (!createResponse.ok) {
@@ -251,6 +311,8 @@ export default class VideoCreator implements MediaCreator {
       let currentJob = videoJob
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (signal?.aborted) return this.cancelledResult()
+
         if (currentJob.status === 'completed') {
           break
         }
@@ -263,12 +325,14 @@ export default class VideoCreator implements MediaCreator {
         }
 
         // Wait before next poll (10 seconds as recommended)
-        await new Promise(resolve => setTimeout(resolve, 10000))
+        await this.waitForPoll(10000, signal)
+        if (signal?.aborted) return this.cancelledResult()
 
         const statusResponse = await fetch(`${endpoint}/v1/videos/${videoId}`, {
           headers: {
             'Authorization': `Bearer ${apiKey}`
-          }
+          },
+          signal,
         })
 
         if (!statusResponse.ok) {
@@ -286,12 +350,15 @@ export default class VideoCreator implements MediaCreator {
         throw new Error('Video generation timed out')
       }
 
+      if (signal?.aborted) return this.cancelledResult()
+
       // Step 3: Download the video content
       console.log(`[${name}] downloading video content`)
       const downloadResponse = await fetch(`${endpoint}/v1/videos/${videoId}/content`, {
         headers: {
           'Authorization': `Bearer ${apiKey}`
-        }
+        },
+        signal,
       })
 
       if (!downloadResponse.ok) {
@@ -307,13 +374,14 @@ export default class VideoCreator implements MediaCreator {
       return { url: fileUrl }
 
     } catch (error) {
+      if (this.aborted(signal, error)) return this.cancelledResult()
       console.error(`[${name}] Video generation error:`, error)
       return { error: error.message || `Video generation failed with ${name} API` }
     }
 
   }
 
-  async xai(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+  async xai(model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
 
     const apiKey = store.config.engines.xai.apiKey
 
@@ -345,6 +413,8 @@ export default class VideoCreator implements MediaCreator {
       // Step 1: Submit generation/edit request
       // image-to-video uses /generations, video editing uses /edits
       const endpoint = isVideoEdit ? 'videos/edits' : 'videos/generations'
+      if (signal?.aborted) return this.cancelledResult()
+
       const createResponse = await fetch(`${xAIBaseURL}/${endpoint}`, {
         method: 'POST',
         headers: {
@@ -352,6 +422,7 @@ export default class VideoCreator implements MediaCreator {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        signal,
       })
 
       if (!createResponse.ok) {
@@ -372,12 +443,15 @@ export default class VideoCreator implements MediaCreator {
       const maxAttempts = 180
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
 
-        await new Promise(resolve => setTimeout(resolve, 10000))
+        if (signal?.aborted) return this.cancelledResult()
+        await this.waitForPoll(10000, signal)
+        if (signal?.aborted) return this.cancelledResult()
 
         const statusResponse = await fetch(`${xAIBaseURL}/videos/${requestId}`, {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
-          }
+          },
+          signal,
         })
 
         if (!statusResponse.ok) {
@@ -388,6 +462,7 @@ export default class VideoCreator implements MediaCreator {
 
         // completed: video object is present with url
         if (statusResult.video?.url) {
+          if (signal?.aborted) return this.cancelledResult()
           const fileUrl = download(statusResult.video.url)
           return { url: fileUrl }
         }
@@ -405,6 +480,7 @@ export default class VideoCreator implements MediaCreator {
       throw new Error('Video generation timed out')
 
     } catch (error) {
+      if (this.aborted(signal, error)) return this.cancelledResult()
       console.error('[xai] Video generation error:', error)
       return { error: error.message || 'Video generation failed with xAI API' }
     }
@@ -458,11 +534,16 @@ export default class VideoCreator implements MediaCreator {
   //   return { url: fileUrl }
   // }
 
-  async venice(model: string, parameters: anyDict, reference?: MediaReference[]): Promise<anyDict> {
+  async venice(model: string, parameters: anyDict, reference?: MediaReference[], signal?: AbortSignal): Promise<anyDict> {
 
     const apiKey = store.config.engines.venice?.apiKey || ''
-    const controller = new AbortController()
-    this.activeAbort = controller
+    let owned: AbortController | null = null
+    let abortSignal = signal
+    if (!abortSignal) {
+      owned = this.activeAbort ?? new AbortController()
+      if (this.activeAbort == null) this.activeAbort = owned
+      abortSignal = owned.signal
+    }
     const sink = createIpcMediaSink(store.config.workspaceId)
     const meta = this.veniceModelMeta(model)
     const imageRequired = meta?.modelType === 'image-to-video' || (!meta && model.includes('image-to-video'))
@@ -484,7 +565,7 @@ export default class VideoCreator implements MediaCreator {
         imageDataUrl: imageRequired ? this.veniceImageDataUrl(reference) : undefined,
       }, {
         sink,
-        signal: controller.signal,
+        signal: abortSignal,
       })
       return { url }
     } catch (error) {
@@ -494,13 +575,14 @@ export default class VideoCreator implements MediaCreator {
         // The partial file may already be closed.
       }
       if (error instanceof VeniceVideoError && error.code === 'cancelled') {
-        return { cancelled: true, error: 'cancelled' }
+        return this.cancelledResult()
       }
+      if (this.aborted(abortSignal, error)) return this.cancelledResult()
       console.error('[venice] video generation failed')
       const message = error instanceof Error ? error.message : 'Video generation failed with Venice'
       return { error: message || 'Video generation failed with Venice' }
     } finally {
-      if (this.activeAbort === controller) this.activeAbort = null
+      if (owned && this.activeAbort === owned) this.activeAbort = null
     }
   }
 

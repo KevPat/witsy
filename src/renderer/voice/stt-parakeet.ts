@@ -95,17 +95,36 @@ export default class STTParakeet implements STTEngine {
 
     return new Promise((resolve, reject) => {
 
+      let settled = false
+      const fail = (error: unknown) => {
+        console.error(error)
+        if (settled) return
+        settled = true
+        reject(error)
+      }
+      const succeed = (value: TranscribeResponse) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+
       try {
 
         // we need to decode the audio file to PCM Float32 @ 16kHz
         const fileReader = new FileReader()
+        fileReader.onerror = () => {
+          fail(fileReader.error ?? new Error('Failed to read audio file'))
+        }
         fileReader.onloadend = async () => {
           let audioCTX: AudioContext | null = null
           try {
+            const arrayBuffer = fileReader.result
+            if (!(arrayBuffer instanceof ArrayBuffer)) {
+              throw new Error('Failed to read audio file')
+            }
             audioCTX = new AudioContext({
               sampleRate: 16000,
             })
-            const arrayBuffer = fileReader.result as ArrayBuffer
             const decoded = await audioCTX.decodeAudioData(arrayBuffer)
             const pcmData = decoded.getChannelData(0)
 
@@ -116,18 +135,23 @@ export default class STTParakeet implements STTEngine {
               frameStride: 2 // balance between speed and accuracy
             })
 
-            resolve({ text: result.utterance_text || '' })
+            succeed({ text: result.utterance_text || '' })
+          } catch (error) {
+            fail(error)
           } finally {
             // always close the audio context to free resources
-            await audioCTX?.close()
+            try {
+              await audioCTX?.close()
+            } catch (closeError) {
+              console.error(closeError)
+            }
           }
 
         }
         fileReader.readAsArrayBuffer(audioBlob)
 
       } catch (error) {
-        console.error(error)
-        reject(error)
+        fail(error)
       }
     })
   }

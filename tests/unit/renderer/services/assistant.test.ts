@@ -5,6 +5,8 @@ import { useWindowMock } from '@tests/mocks/window'
 import { createI18nMock } from '@tests/mocks'
 import { store } from '@services/store'
 import Assistant, { AssistantCompletionOpts } from '@services/assistant'
+import Generator from '@services/generator'
+import { getLlmLocale, setLlmLocale } from '@services/i18n'
 import Attachment from '@models/attachment'
 import LlmMock, { installMockModels } from '@tests/mocks/llm'
 import LlmUtils from '@services/llm_utils'
@@ -493,4 +495,88 @@ test('Assistant instructions with capabilities', async () => {
   await prompt('Hello LLM')
   const instructions1 = await assistant!.chat.messages[0].content
   expect(instructions1.toLowerCase()).toContain('mermaid')
+})
+
+test('Assistant retries without streaming when streaming is not supported', async () => {
+  const spyGenerate = vi.spyOn(Generator.prototype, 'generate')
+    .mockResolvedValueOnce('streaming_not_supported')
+    .mockResolvedValueOnce('success')
+
+  try {
+    await assistant!.prompt('Hello LLM', { model: 'chat' }, () => {})
+    expect(spyGenerate).toHaveBeenCalledTimes(2)
+    expect(spyGenerate.mock.calls[0][2]).toMatchObject({ streaming: true })
+    expect(spyGenerate.mock.calls[1][2]).toMatchObject({ streaming: false })
+    expect(assistant!.chat.disableStreaming).toBe(true)
+  } finally {
+    spyGenerate.mockRestore()
+  }
+})
+
+test('Assistant restores llm locale when generation throws', async () => {
+  setLlmLocale('en-US')
+  vi.mocked(setLlmLocale).mockClear()
+  store.config.llm.forceLocale = false
+  assistant!.chat.locale = 'es-ES'
+
+  let forceLocaleDuringGenerate: boolean|null = null
+  const spyGenerate = vi.spyOn(Generator.prototype, 'generate').mockImplementationOnce(async () => {
+    forceLocaleDuringGenerate = store.config.llm.forceLocale
+    throw new Error('generation failed')
+  })
+
+  try {
+    await expect(assistant!.prompt('Hello LLM', { model: 'chat' }, () => {})).rejects.toThrow('generation failed')
+    expect(forceLocaleDuringGenerate).toBe(true)
+    expect(setLlmLocale).toHaveBeenNthCalledWith(1, 'es-ES')
+    expect(setLlmLocale).toHaveBeenNthCalledWith(2, 'en-US')
+    expect(setLlmLocale).toHaveBeenCalledTimes(2)
+    expect(getLlmLocale()).toBe('en-US')
+    expect(store.config.llm.forceLocale).toBe(false)
+  } finally {
+    spyGenerate.mockRestore()
+  }
+})
+
+test('Assistant restores llm locale after a successful prompt', async () => {
+  setLlmLocale('en-US')
+  vi.mocked(setLlmLocale).mockClear()
+  store.config.llm.forceLocale = false
+  assistant!.chat.locale = 'es-ES'
+
+  await assistant!.prompt('Hello LLM', { model: 'chat' }, () => {})
+
+  expect(setLlmLocale).toHaveBeenNthCalledWith(1, 'es-ES')
+  expect(setLlmLocale).toHaveBeenNthCalledWith(2, 'en-US')
+  expect(setLlmLocale).toHaveBeenCalledTimes(2)
+  expect(getLlmLocale()).toBe('en-US')
+  expect(store.config.llm.forceLocale).toBe(false)
+})
+
+test('Assistant restores llm locale when llm is missing', async () => {
+  setLlmLocale('en-US')
+  vi.mocked(setLlmLocale).mockClear()
+  store.config.llm.forceLocale = false
+  assistant!.chat.locale = 'de-DE'
+  assistant!.llm = null
+
+  const rc = await assistant!.prompt('Hello LLM', { model: 'chat' }, () => {})
+
+  expect(rc).toBeNull()
+  expect(setLlmLocale).toHaveBeenNthCalledWith(1, 'de-DE')
+  expect(setLlmLocale).toHaveBeenNthCalledWith(2, 'en-US')
+  expect(setLlmLocale).toHaveBeenCalledTimes(2)
+  expect(getLlmLocale()).toBe('en-US')
+  expect(store.config.llm.forceLocale).toBe(false)
+})
+
+test('Assistant does not change llm locale when chat has no locale', async () => {
+  setLlmLocale('en-US')
+  vi.mocked(setLlmLocale).mockClear()
+  store.config.llm.forceLocale = false
+
+  await assistant!.prompt('Hello LLM', { model: 'chat' }, () => {})
+
+  expect(setLlmLocale).not.toHaveBeenCalled()
+  expect(store.config.llm.forceLocale).toBe(false)
 })

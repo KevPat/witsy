@@ -218,11 +218,17 @@ async function postQueue(body: Record<string, string>, apiKey: string, clock: Cl
 async function pollUntilVideo(model: string, queueId: string, downloadUrl: string | undefined, apiKey: string, clock: Clock): Promise<string> {
   const deadline = clock.now() + clock.timeoutMs
   let transient = 0
+  // 502 backoff only. These do not count toward MAX_TRANSIENT.
+  let gateway = 0
   for (let poll = 0; poll < MAX_POLLS; poll++) {
     throwIfStopped(clock, deadline)
     let response: Response
     try {
-      response = await veniceFetch('/video/retrieve', { model, queue_id: queueId }, apiKey, clock)
+      response = await veniceFetch('/video/retrieve', {
+        model,
+        queue_id: queueId,
+        delete_media_on_completion: true,
+      }, apiKey, clock)
     } catch (error) {
       if (isAbort(error, clock.signal)) throw cancelled()
       transient += 1
@@ -231,6 +237,19 @@ async function pollUntilVideo(model: string, queueId: string, downloadUrl: strin
       }
       await sleepWithin(backoff(transient), deadline, clock)
       continue
+    }
+
+    // Retrieve-only: 502 means the job is still processing. 500 is terminal.
+    // Queue posting and private downloads keep their own retry rules.
+    if (response.status === 502) {
+      gateway += 1
+      const delay = retryDelay(response, gateway, clock.now())
+      await drain(response)
+      await sleepWithin(delay, deadline, clock)
+      continue
+    }
+    if (response.status === 500) {
+      throw await failureFrom(response, apiKey)
     }
 
     if (isTransient(response.status)) {
@@ -255,7 +274,7 @@ async function pollUntilVideo(model: string, queueId: string, downloadUrl: strin
     const kind = mediaKind(response.headers.get('content-type'))
     if (kind === 'video') {
       await writeMp4(response, clock, deadline)
-      return commit(model, queueId, downloadUrl, apiKey, clock)
+      return commit(downloadUrl, clock)
     }
     if (kind !== 'json') {
       await drain(response)
@@ -273,7 +292,7 @@ async function pollUntilVideo(model: string, queueId: string, downloadUrl: strin
         throw new VeniceVideoError('Venice completed the video without a download link', 'malformed')
       }
       await downloadPrivate(downloadUrl, clock, deadline)
-      return commit(model, queueId, downloadUrl, apiKey, clock)
+      return commit(downloadUrl, clock)
     }
     if (VIDEO_FAILURE.has(status.status)) {
       throw new VeniceVideoError(redactSecrets(status.message || 'Venice video generation failed', apiKey), 'failed')
@@ -283,33 +302,30 @@ async function pollUntilVideo(model: string, queueId: string, downloadUrl: strin
   throw new VeniceVideoError('Video generation timed out', 'timeout')
 }
 
-async function commit(model: string, queueId: string, downloadUrl: string | undefined, apiKey: string, clock: Clock): Promise<string> {
+async function commit(downloadUrl: string | undefined, clock: Clock): Promise<string> {
   const fileUrl = await clock.sink.finish()
   if (!fileUrl?.startsWith('file://')) {
     throw new VeniceVideoError('Could not save the video', 'failed')
   }
-  await settle(cleanup(model, queueId, downloadUrl, apiKey, clock))
+  await settle(cleanup(downloadUrl, clock))
   return fileUrl
 }
 
-async function cleanup(model: string, queueId: string, downloadUrl: string | undefined, apiKey: string, clock: Clock): Promise<void> {
-  if (downloadUrl) {
-    try {
-      const response = await clock.fetch(downloadUrl, {
-        method: 'DELETE',
-        redirect: 'follow',
-        credentials: 'omit',
-        cache: 'no-store',
-        referrerPolicy: 'no-referrer',
-        signal: clock.signal,
-      })
-      await drain(response)
-    } catch {
-      // The file is already local. Revoking the link is best-effort.
-    }
+async function cleanup(downloadUrl: string | undefined, clock: Clock): Promise<void> {
+  if (!downloadUrl) return
+  try {
+    const response = await clock.fetch(downloadUrl, {
+      method: 'DELETE',
+      redirect: 'follow',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      signal: clock.signal,
+    })
+    await drain(response)
+  } catch {
+    // The file is already local. Revoking the link is best-effort.
   }
-  const response = await veniceFetch('/video/complete', { model, queue_id: queueId }, apiKey, clock)
-  await drain(response)
 }
 
 async function downloadPrivate(url: string, clock: Clock, deadline: number): Promise<void> {
@@ -420,7 +436,7 @@ async function writeMp4(response: Response, clock: Clock, deadline: number): Pro
   }
 }
 
-async function veniceFetch(path: string, body: Record<string, string>, apiKey: string, clock: Clock): Promise<Response> {
+async function veniceFetch(path: string, body: Record<string, string | boolean> | Record<string, string>, apiKey: string, clock: Clock): Promise<Response> {
   if (!path.startsWith('/video/') || path.includes('..') || path.includes('//')) {
     throw new VeniceVideoError('Venice video request was refused', 'invalid')
   }

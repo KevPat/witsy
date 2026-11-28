@@ -95,7 +95,9 @@ export const replacePromptInputs = (prompt: string, inputs: Record<string, strin
   // replace inputs in the prompt with their values
   for (const [key, value] of Object.entries(inputs)) {
     const text = Array.isArray(value) ? value.join(', ') : value
-    prompt = prompt.replace(new RegExp(`{{\\s*${key}\\s*(?::[^:]*?)?(?::[^}]*)?\\s*}}`, 'g'), text)
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`{{\\s*${escapedKey}\\s*(?::[^:]*?)?(?::[^}]*)?\\s*}}`, 'g')
+    prompt = prompt.replace(regex, () => text)
   }
   return prompt
 }
