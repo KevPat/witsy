@@ -30,6 +30,12 @@ vi.mock('electron-store', async () => {
   return { default: Store }
 })
 
+// settings are written through the atomic helper: route it to the mocked fs so that fixtures are never modified
+vi.mock('@main/atomic', async () => {
+  const fs = (await import('fs')).default
+  return { writeFileAtomicSync: (file: string, data: string) => fs.writeFileSync(file, data) }
+})
+
 vi.mock('fs', async (importOriginal) => {
   const mod: any = await importOriginal()
   return { default: {
@@ -57,8 +63,9 @@ test('Load default settings', () => {
   expect(loaded).toStrictEqual(defaultSettings)
   expect(loaded.general.locale).toBe('')
   expect(loaded.engines.openai.models.chat).toStrictEqual([])
-  expect(Store.prototype.delete).toHaveBeenCalledWith('engines.openai.apiKey')
-  expect(Store.prototype.set).toHaveBeenCalledWith('engines.openai.apiKey', 'encrypted-openai-api-key')
+  // the stored key is unchanged: it is neither deleted nor rewritten
+  expect(Store.prototype.delete).not.toHaveBeenCalled()
+  expect(Store.prototype.set).not.toHaveBeenCalled()
 })
 
 test('Uses cache on second load', () => {
@@ -133,7 +140,8 @@ test('Backwards compatibility 2', () => {
   vi.mocked(app.getPath).mockReturnValue('./tests/fixtures/config/compat2')
   const loaded = config.loadSettings(app)
   expect(loaded.engines.openai.apiKey).toBe('openai-api-key2')
-  expect(Store.prototype.delete).toHaveBeenCalledWith('engines.openai.apiKey')
+  // the new value replaces the stored one without deleting it first
+  expect(Store.prototype.delete).not.toHaveBeenCalled()
   expect(Store.prototype.set).toHaveBeenCalledWith('engines.openai.apiKey', 'encrypted-openai-api-key2')
   expect(fs.writeFileSync).toHaveBeenCalledWith('tests/fixtures/config/compat2/settings.json', expect.any(String))
   const calls = (fs.writeFileSync as Mock).mock.calls
@@ -161,8 +169,29 @@ test('Save apiKeys settings', () => {
   const loaded = config.loadSettings(app)
   config.saveSettings(app, loaded, true)
   expect(fs.writeFileSync).toHaveBeenLastCalledWith('tests/fixtures/config/unknown/settings.json', expect.any(String))
+  // @ts-expect-error mock type stuff
+  const calls = (fs.writeFileSync.mock as Mock).calls
+  expect(JSON.parse(calls[calls.length - 1][1]).engines.openai.apiKey).toBeUndefined()
+  expect(Store.prototype.delete).not.toHaveBeenCalled()
+  expect(Store.prototype.set).not.toHaveBeenCalled()
+})
+
+test('Save modified apiKeys settings', () => {
+  vi.mocked(app.getPath).mockReturnValue('./tests/fixtures/config/unknown')
+  const loaded = config.loadSettings(app)
+  loaded.engines.openai.apiKey = 'openai-api-key3'
+  config.saveSettings(app, loaded, true)
+  expect(Store.prototype.delete).not.toHaveBeenCalled()
+  expect(Store.prototype.set).toHaveBeenCalledWith('engines.openai.apiKey', 'encrypted-openai-api-key3')
+})
+
+test('Save removed apiKeys settings', () => {
+  vi.mocked(app.getPath).mockReturnValue('./tests/fixtures/config/unknown')
+  const loaded = config.loadSettings(app)
+  loaded.engines.openai.apiKey = ''
+  config.saveSettings(app, loaded, true)
   expect(Store.prototype.delete).toHaveBeenCalledWith('engines.openai.apiKey')
-  expect(Store.prototype.set).toHaveBeenCalledWith('engines.openai.apiKey', 'encrypted-openai-api-key')
+  expect(Store.prototype.set).not.toHaveBeenCalled()
 })
 
 test('Save apiKeys settings with safeKeys disabled', () => {
