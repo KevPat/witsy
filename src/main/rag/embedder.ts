@@ -171,7 +171,7 @@ export default class Embedder {
     // }
 
     // too bad
-    return null
+    throw new Error(`Unsupported embedding engine: ${this.engine}`)
 
   }
 
