@@ -5,7 +5,7 @@ import { analyzeCommand, executeCommand, normalizeTimeout, validateWorkingDirect
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { bug, isPosix } from './bug'
+import { isPosix } from './bug'
 
 const isAlive = (pid: number): boolean => {
   try {

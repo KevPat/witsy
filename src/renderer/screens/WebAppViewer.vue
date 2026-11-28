@@ -59,7 +59,6 @@ import Loader from '@components/Loader.vue'
 import ButtonIcon from '@components/ButtonIcon.vue'
 import { t } from '@services/i18n'
 import { ArrowLeftIcon, ArrowRightIcon, HomeIcon, RotateCwIcon } from 'lucide-vue-next'
-import { t } from '@services/i18n'
 import { WebApp } from 'types/workspace'
 
 const props = defineProps<{

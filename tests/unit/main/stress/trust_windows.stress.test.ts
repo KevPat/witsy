@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { printPdfFromHtml } from '@main/pdf'
 import { setWebviewLinkBehavior } from '@main/webview'
 import { createWindow } from '@main/windows/index'
-import { bug } from './bug'
 
 // Every window of the app is created by createWindow and gets the preload api. What is shown in
 // those windows is written by models, tools and web pages, so two things have to hold in the main

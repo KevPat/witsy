@@ -7,7 +7,6 @@ import path from 'node:path'
 import { app, shell } from 'electron'
 import { HttpServer } from '@main/http_server'
 import McpOAuthManager from '@main/mcp_auth'
-import { bug } from './bug'
 
 vi.mock('portfinder', () => ({
   default: { getPortPromise: vi.fn(async () => 8090) },

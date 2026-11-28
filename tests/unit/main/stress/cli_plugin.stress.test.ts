@@ -4,7 +4,7 @@ import CliPlugin from '@/main/cli_plugin'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { bug, isPosix } from './bug'
+import { isPosix } from './bug'
 
 // true when child is base itself or sits below it
 const isInside = (base: string, child: string): boolean => {
