@@ -113,7 +113,6 @@ import ButtonIcon from '@components/ButtonIcon.vue'
 import ContextMenuTrigger from '@components/ContextMenuTrigger.vue'
 import SpinningIcon from '@components/SpinningIcon.vue'
 import Dialog from '@renderer/utils/dialog'
-import { escapeHtml } from '@renderer/utils/html'
 import { t } from '@services/i18n'
 import { store } from '@services/store'
 import { EyeIcon, FolderPlusIcon, GlobeIcon, PencilIcon, PlusIcon, Trash2Icon, ZapIcon } from 'lucide-vue-next'
@@ -314,8 +313,7 @@ const uninstallSkill = async (skill: SkillHeader) => {
   const isSystemSkill = isSystemSkillLocation(skill)
   const rc = await Dialog.show({
     target: document.querySelector('.main'),
-    // the title of a dialog is rendered as html, its text is not
-    title: t('settings.plugins.skills.confirmUninstallTitle', { skill: escapeHtml(skill.name) }),
+    title: t('settings.plugins.skills.confirmUninstallTitle', { skill: skill.name }),
     text: isSystemSkill
       ? t('common.confirmation.cannotUndo')
       : t('settings.plugins.skills.confirmUninstallSharedText', { skill: skill.name }),

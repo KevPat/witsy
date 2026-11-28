@@ -144,13 +144,9 @@ test('the name of a skill is text in the delete confirmation', async () => {
   const options = vi.mocked(Dialog.show).mock.calls[0][0]
   expect(options.html).toBeUndefined()
 
-  // the title is rendered as html by the dialog: the name must survive that as plain text
-  expect(options.title).not.toMatch(/[<>]/)
-  const title = document.createElement('div')
-  title.innerHTML = options.title
-  expect(title.children).toHaveLength(0)
-  expect(title.textContent).toContain('report <img src=x onerror=')
-  expect(title.textContent).toContain('& <b>co</b>')
+  // the name only goes to the title, which the dialog escapes for every caller (see dialog.test.ts)
+  expect(options.title).toContain('report <img src=x onerror=')
+  expect(options.text ?? '').not.toContain('<img')
 
   expect(window.api.skills.uninstall).toHaveBeenCalledWith(store.config.workspaceId, 'skill_1')
 })

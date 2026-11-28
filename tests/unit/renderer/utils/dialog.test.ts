@@ -203,3 +203,15 @@ test('waitUntilClosed - wait until closes', async () => {
   expect(Swal.isVisible).toHaveBeenCalledTimes(3)
   vi.useRealTimers()
 })
+
+test('Title is text, not markup', () => {
+  Dialog.show({ title: 'Delete <img src=x onerror="window.pwned=1"> & <b>co</b>?', text: 'details' })
+  const options = vi.mocked(Swal.fire).mock.lastCall![0] as any
+  expect(options.title).not.toMatch(/[<>]/)
+  const rendered = document.createElement('div')
+  rendered.innerHTML = options.title
+  expect(rendered.children).toHaveLength(0)
+  expect(rendered.textContent).toBe('Delete <img src=x onerror="window.pwned=1"> & <b>co</b>?')
+  expect(options.text).toBe('details')
+})
+

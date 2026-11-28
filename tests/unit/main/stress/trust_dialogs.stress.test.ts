@@ -4,7 +4,6 @@ import { enableAutoUnmount, flushPromises, mount, VueWrapper } from '@vue/test-u
 import { defineComponent, h } from 'vue'
 import enMessages from '@root/locales/en.json'
 import { useWindowMock } from '@tests/mocks/window'
-import { bug } from './bug'
 
 // Dialogs are shown with SweetAlert2, which renders `title` and `html` as markup (only `text` is
 // escaped). Some of those strings are built from names the user did not write: the name of a
@@ -218,7 +217,7 @@ describe('dialogs: a document that cannot be added', () => {
     expect(injected(body())).toEqual([])
   })
 
-  bug.each(kMarkup.filter(([, markup]) => !markup.includes('/')))('%s in the name of a file is shown as text', async (_, markup) => {
+  test.each(kMarkup.filter(([, markup]) => !markup.includes('/')))('%s in the name of a file is shown as text', async (_, markup) => {
     // html: fileNames.join('<br/>') with the names of the files the user picked
     await addDocument(`/home/user/Downloads/${markup}.xyz`)
     expect(injected(body())).toEqual([])
