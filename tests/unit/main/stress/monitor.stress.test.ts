@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import Monitor from '@main/monitor'
-import { bug, isLinux } from './bug'
+import { isLinux } from './bug'
 
 // fs.watch semantics differ per OS; these expectations were established on Linux (inotify)
 describe.runIf(isLinux)('file monitor', () => {
@@ -49,7 +49,7 @@ describe.runIf(isLinux)('file monitor', () => {
     await expect(vi.waitUntil(() => callback.mock.calls.length > 0, { timeout: 600 })).rejects.toThrow()
   })
 
-  bug('changes are still reported after the file was replaced by a rename', async () => {
+  test('changes are still reported after the file was replaced by a rename', async () => {
     // editors and sync tools save through a temporary file: the watcher stays attached to the old inode
     replaceAtomically('{"a":1}')
     await vi.waitUntil(() => callback.mock.calls.length === 1, { timeout: 2000 })
